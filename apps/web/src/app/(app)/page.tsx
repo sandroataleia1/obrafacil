@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { BrickWall, Calculator, FileText, Plus } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -39,41 +40,46 @@ export default function HomePage() {
       />
 
       <div className="grid grid-cols-2 gap-3">
-        <ActionCard href="/orcamentos" icon={Plus} title="Novo orçamento" />
+        <ActionCard href="/orcamentos/novo" icon={Plus} title="Novo orçamento" />
         <ActionCard href="/obras" icon={BrickWall} title="Minhas obras" />
       </div>
 
       <section aria-labelledby="resumo-operacional" className="space-y-2.5">
         <SectionLabel id="resumo-operacional">Em andamento</SectionLabel>
 
-        <Card className="grid grid-cols-2 gap-0 divide-x divide-border py-0">
-          <div className="flex flex-col gap-1 p-4">
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <FileText className="size-3.5" aria-hidden="true" />
-              <span className="text-xs font-medium">Orçamentos</span>
+        <Link
+          href="/orcamentos"
+          className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Card className="grid grid-cols-2 gap-0 divide-x divide-border py-0">
+            <div className="flex flex-col gap-1 p-4">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <FileText className="size-3.5" aria-hidden="true" />
+                <span className="text-xs font-medium">Orçamentos</span>
+              </div>
+              <p className="text-2xl leading-none font-semibold text-foreground">
+                {operationalSummary.budgetsInProgress}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {operationalSummary.budgetsAwaitingApproval} aguardando
+                aprovação
+              </p>
             </div>
-            <p className="text-2xl leading-none font-semibold text-foreground">
-              {operationalSummary.budgetsInProgress}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {operationalSummary.budgetsAwaitingApproval} aguardando
-              aprovação
-            </p>
-          </div>
 
-          <div className="flex flex-col gap-1 p-4">
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <BrickWall className="size-3.5" aria-hidden="true" />
-              <span className="text-xs font-medium">Obras</span>
+            <div className="flex flex-col gap-1 p-4">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <BrickWall className="size-3.5" aria-hidden="true" />
+                <span className="text-xs font-medium">Obras</span>
+              </div>
+              <p className="text-2xl leading-none font-semibold text-foreground">
+                {operationalSummary.projectsInProgress}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {operationalSummary.projectsActive} em andamento
+              </p>
             </div>
-            <p className="text-2xl leading-none font-semibold text-foreground">
-              {operationalSummary.projectsInProgress}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {operationalSummary.projectsActive} em andamento
-            </p>
-          </div>
-        </Card>
+          </Card>
+        </Link>
       </section>
 
       <section aria-labelledby="atividade-recente" className="space-y-2.5">

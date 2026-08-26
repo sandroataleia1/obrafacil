@@ -1,7 +1,5 @@
-import { FileText } from "lucide-react";
-
-import { ComingSoon } from "@/components/shared/coming-soon";
+import { BudgetList } from "@/features/budgets/budget-list";
 
 export default function OrcamentosPage() {
-  return <ComingSoon title="Orçamentos" icon={FileText} />;
+  return <BudgetList />;
 }

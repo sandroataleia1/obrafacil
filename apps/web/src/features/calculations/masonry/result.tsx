@@ -7,6 +7,7 @@ import { CheckCircle2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatDecimal, formatInteger } from "@/lib/decimal";
+import { setPendingBudgetItem } from "@/features/budgets/prototype/pending-budget-item";
 import type { MasonryMaterial } from "@/mocks/calculations/masonry";
 import type { MasonryCalculationResult } from "./prototype-calculator";
 
@@ -31,6 +32,25 @@ export function ResultStep({
   onNewCalculation,
 }: ResultStepProps) {
   const [addedToBudget, setAddedToBudget] = useState(false);
+
+  function handleAddToBudget() {
+    setPendingBudgetItem({
+      source: "masonry-calculation",
+      title: "Alvenaria",
+      materialId: material.id,
+      materialName: `${material.name} ${material.dimensions}`,
+      quantity: result.units,
+      unit: "unidades",
+      netAreaM2: result.netAreaM2,
+      wastePercentage: result.wastePercentage,
+      auxiliaryMaterials: {
+        cementBags: result.auxiliary.cementBags,
+        limeBags: result.auxiliary.limeBags,
+        sandM3: result.auxiliary.sandM3,
+      },
+    });
+    setAddedToBudget(true);
+  }
 
   return (
     <div className="space-y-6">
@@ -122,7 +142,7 @@ export function ResultStep({
               size="lg"
               className="flex-1"
               nativeButton={false}
-              render={<Link href="/orcamentos">Criar novo orçamento</Link>}
+              render={<Link href="/orcamentos/novo">Criar novo orçamento</Link>}
             />
           </div>
         </div>
@@ -140,7 +160,7 @@ export function ResultStep({
           <Button
             type="button"
             size="lg"
-            onClick={() => setAddedToBudget(true)}
+            onClick={handleAddToBudget}
             className="flex-1"
           >
             Adicionar ao orçamento
