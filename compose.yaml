@@ -1,0 +1,64 @@
+services:
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: ../../infrastructure/docker/web/Dockerfile
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+      - web_next_cache:/app/.next
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: ../../infrastructure/docker/api/Dockerfile
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./apps/api:/app
+      - api_vendor:/app/vendor
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB:-obrafacil}
+      DB_USERNAME: ${POSTGRES_USER:-obrafacil}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-obrafacil}
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-obrafacil}
+      POSTGRES_USER: ${POSTGRES_USER:-obrafacil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-obrafacil}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_vendor:
+  web_node_modules:
+  web_next_cache:
