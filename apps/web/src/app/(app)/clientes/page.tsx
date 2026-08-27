@@ -1,7 +1,5 @@
-import { Users } from "lucide-react";
-
-import { ComingSoon } from "@/components/shared/coming-soon";
+import { CustomerList } from "@/features/customers/customer-list";
 
 export default function ClientesPage() {
-  return <ComingSoon title="Clientes" icon={Users} />;
+  return <CustomerList />;
 }

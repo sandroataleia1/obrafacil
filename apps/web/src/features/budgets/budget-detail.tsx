@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FileText, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
+import { setPendingProject } from "@/features/projects/prototype/pending-project";
 import { CalculatedStageCard } from "./components/calculated-stage-card";
 import { ManualStageCard } from "./components/manual-stage-card";
 import { ManualStageForm } from "./components/manual-stage-form";
@@ -46,6 +48,7 @@ function InfoRow({
 }
 
 export function BudgetDetail({ id }: { id: string }) {
+  const router = useRouter();
   const { budget, persist } = useBudget(id);
   const [otherCostsInput, setOtherCostsInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
@@ -66,6 +69,19 @@ export function BudgetDetail({ id }: { id: string }) {
   function updateStages(stages: BudgetStage[]) {
     if (!budget) return;
     persist({ ...budget, stages });
+  }
+
+  function handleCreateProject() {
+    if (!budget) return;
+    setPendingProject({
+      budgetId: budget.id,
+      budgetName: budget.name,
+      budgetTotal: calculateBudgetTotals(budget).total,
+      customerId: budget.customerId,
+      customerName: budget.customerName,
+      reference: budget.projectReference,
+    });
+    router.push("/obras/nova");
   }
 
   if (budget === undefined) return null;
@@ -203,6 +219,28 @@ export function BudgetDetail({ id }: { id: string }) {
         nativeButton={false}
         render={<Link href={`/proposta/${budget.proposalToken}`}>Visualizar proposta</Link>}
       />
+
+      {budget.status === "approved" ? (
+        budget.projectId ? (
+          <Button
+            variant="outline"
+            size="lg"
+            className="w-full"
+            nativeButton={false}
+            render={<Link href={`/obras/${budget.projectId}`}>Abrir obra</Link>}
+          />
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="w-full"
+            onClick={handleCreateProject}
+          >
+            Criar obra
+          </Button>
+        )
+      ) : null}
     </div>
   );
 }

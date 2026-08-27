@@ -76,6 +76,7 @@ export const budgets: Budget[] = [
     marginPercentage: 0,
     discountAmount: 0,
     proposalToken: "edicula-fundos",
+    projectId: "edicula-fundos-obra",
     createdAt: "2026-07-30",
     updatedAt: "2026-08-15",
   },

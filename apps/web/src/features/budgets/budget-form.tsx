@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -11,7 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { customers } from "@/mocks/customers";
+import { listAllCustomers } from "@/features/customers/prototype/customer-store";
+import type { Customer } from "@/features/customers/types";
 import { DEFAULT_MARGIN_PERCENTAGE } from "@/mocks/pricing";
 import { PendingItemPreview } from "./components/pending-item-preview";
 import {
@@ -25,19 +26,23 @@ import type { Budget } from "./types";
 
 export function BudgetForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const preselectedCustomerId = searchParams.get("customerId") ?? "";
 
   const [pendingItem, setPendingItem] = useState<PendingBudgetItem | null | undefined>(
     undefined
   );
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [name, setName] = useState("");
-  const [customerId, setCustomerId] = useState("");
+  const [customerId, setCustomerId] = useState(preselectedCustomerId);
   const [reference, setReference] = useState("");
 
   useEffect(() => {
-    // sessionStorage read after mount: server/hydration both render
-    // `undefined` first, so there is no mismatch.
+    // sessionStorage/localStorage read after mount: server/hydration both
+    // render `undefined`/`[]` first, so there is no mismatch.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingItem(getPendingBudgetItem());
+    setCustomers(listAllCustomers());
   }, []);
 
   const canSubmit = name.trim() !== "" && customerId !== "";

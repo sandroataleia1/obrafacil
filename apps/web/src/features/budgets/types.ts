@@ -42,6 +42,8 @@ export interface Budget {
   marginPercentage: number;
   discountAmount: number;
   proposalToken: string;
+  /** Set once a Project (Obra) has been created from this approved budget. */
+  projectId?: string;
   createdAt: string;
   updatedAt: string;
 }
