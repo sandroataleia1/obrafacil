@@ -4,11 +4,12 @@
  * There is no backend yet, so we use sessionStorage to carry just enough
  * information to render the item on the new-budget screen. This is a
  * temporary structure to validate the "Calculadora → Orçamento" flow —
- * it is NOT the definitive domain model for budget items.
+ * it is NOT the definitive domain model for budget items. Each calculator
+ * contributes its own variant, discriminated by `source`.
  */
 
-export interface PendingBudgetItem {
-  source: "masonry-calculation";
+export interface MasonryPendingBudgetItem {
+  source: "masonry";
   title: string;
   materialId: string;
   materialName: string;
@@ -22,6 +23,52 @@ export interface PendingBudgetItem {
     sandM3: number;
   };
 }
+
+export interface FloorPendingBudgetItem {
+  source: "floor";
+  title: string;
+  areaM2: number;
+  wastePercentage: number;
+  coveragePerBoxM2: number;
+  boxes: number;
+}
+
+export interface CeilingPendingBudgetItem {
+  source: "ceiling";
+  title: string;
+  areaM2: number;
+  wastePercentage: number;
+  panelLengthM: number;
+  panelWidthM: number;
+  panels: number;
+  rodaforroLengthM: number;
+  rodaforros: number;
+}
+
+export interface SlabPendingBudgetItem {
+  source: "slab";
+  title: string;
+  slabTypeLabel: string;
+  areaM2: number;
+  thicknessCm: number;
+  wastePercentage: number;
+  /** Base volume, before waste — kept for traceability. */
+  concreteVolumeM3: number;
+  /** Final estimated volume, already including waste — use this for
+   * anything shown to the user or used to price the stage. */
+  concreteVolumeWithWasteM3: number;
+  fillingName: string;
+  fillingUnits: number;
+  cementBags: number;
+  sandM3: number;
+  gravelM3: number;
+}
+
+export type PendingBudgetItem =
+  | MasonryPendingBudgetItem
+  | FloorPendingBudgetItem
+  | CeilingPendingBudgetItem
+  | SlabPendingBudgetItem;
 
 const STORAGE_KEY = "obrafacil:pending-budget-item";
 

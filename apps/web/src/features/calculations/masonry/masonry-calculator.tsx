@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation";
 import { parseDecimalInput } from "@/lib/decimal";
 import { masonryMaterials } from "@/mocks/calculations/masonry";
 import { DimensionsStep } from "./dimensions-step";
-import { FlowHeader } from "./flow-header";
+import { FlowHeader } from "../shared/flow-header";
 import { MaterialStep } from "./material-step";
 import { calculateMasonry } from "./prototype-calculator";
 import { OpeningsStep } from "./openings-step";
 import { ResultStep } from "./result";
-import { StepFooter } from "./step-footer";
+import { StepFooter } from "../shared/step-footer";
 import { MASONRY_STEPS, type MasonryStep, type OpeningItem } from "./types";
 import { WasteStep } from "./waste-step";
 

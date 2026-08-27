@@ -2,10 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BrickWall } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -13,9 +11,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatDecimal, formatInteger } from "@/lib/decimal";
 import { customers } from "@/mocks/customers";
 import { DEFAULT_MARGIN_PERCENTAGE } from "@/mocks/pricing";
+import { PendingItemPreview } from "./components/pending-item-preview";
 import {
   clearPendingBudgetItem,
   getPendingBudgetItem,
@@ -85,32 +83,7 @@ export function BudgetForm() {
         </p>
       </div>
 
-      {pendingItem ? (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="flex items-start gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <BrickWall className="size-4.5" aria-hidden="true" />
-            </span>
-            <div className="min-w-0 space-y-1">
-              <p className="text-xs font-semibold tracking-wide text-primary uppercase">
-                Item adicionado do cálculo
-              </p>
-              <p className="text-sm font-medium text-foreground">
-                {pendingItem.title}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {pendingItem.materialName}
-              </p>
-              <p className="text-sm text-foreground">
-                <span className="font-semibold">
-                  {formatInteger(pendingItem.quantity)}
-                </span>{" "}
-                {pendingItem.unit} · {formatDecimal(pendingItem.netAreaM2)} m²
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
+      {pendingItem ? <PendingItemPreview item={pendingItem} /> : null}
 
       <div className="space-y-4">
         <div className="space-y-1.5">

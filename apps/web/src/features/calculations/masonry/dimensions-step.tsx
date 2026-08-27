@@ -1,5 +1,5 @@
 import { formatDecimal, parseDecimalInput } from "@/lib/decimal";
-import { DecimalField } from "./decimal-field";
+import { DecimalField } from "../shared/decimal-field";
 
 interface DimensionsStepProps {
   length: string;

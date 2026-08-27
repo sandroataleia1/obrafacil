@@ -58,7 +58,6 @@ export function BudgetDetail({ id }: { id: string }) {
       // when a *different* budget loads, not on every persist() from editing.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setOtherCostsInput(String(budget.otherCosts).replace(".", ","));
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDiscountInput(String(budget.discountAmount).replace(".", ","));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,4 +1,9 @@
-const FOCUSED_FLOW_PREFIXES = ["/calcular/alvenaria"];
+const FOCUSED_FLOW_PREFIXES = [
+  "/calcular/alvenaria",
+  "/calcular/forro",
+  "/calcular/laje",
+  "/calcular/piso",
+];
 
 /**
  * Focused flows (multi-step calculators) hide the global mobile bottom

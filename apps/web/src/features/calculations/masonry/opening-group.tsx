@@ -5,7 +5,7 @@ import { Pencil, Plus, Trash2, type LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { formatDecimal, parseDecimalInput } from "@/lib/decimal";
-import { DecimalField } from "./decimal-field";
+import { DecimalField } from "../shared/decimal-field";
 import type { OpeningItem } from "./types";
 
 interface OpeningGroupProps {

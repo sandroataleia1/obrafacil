@@ -35,7 +35,7 @@ export function ResultStep({
 
   function handleAddToBudget() {
     setPendingBudgetItem({
-      source: "masonry-calculation",
+      source: "masonry",
       title: "Alvenaria",
       materialId: material.id,
       materialName: `${material.name} ${material.dimensions}`,

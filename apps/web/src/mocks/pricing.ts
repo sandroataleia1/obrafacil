@@ -13,6 +13,14 @@ export const auxiliaryMaterialPrice = {
   cementPerBag: 38,
   limePerBag: 18,
   sandPerM3: 150,
+  gravelPerM3: 120,
 };
+
+// Minimal mock prices for Piso, Forro and Laje — one generic figure per
+// material, not a catalog. Enough to produce a plausible budget total.
+export const floorMaterialPricePerSquareMeter = 45;
+export const ceilingPanelPricePerSquareMeter = 28;
+export const ceilingRodaforroPricePerBar = 18;
+export const slabFillingUnitPrice = 3.2;
 
 export const DEFAULT_MARGIN_PERCENTAGE = 20;

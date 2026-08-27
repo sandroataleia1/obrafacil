@@ -4,6 +4,8 @@ import {
   Grid3x3,
   Layers,
   PaintRoller,
+  PanelTop,
+  SquareStack,
   type LucideIcon,
 } from "lucide-react";
 
@@ -24,16 +26,31 @@ export const CALCULATOR_CATEGORIES: CalculatorCategory[] = [
     href: "/calcular/alvenaria",
   },
   {
+    id: "piso",
+    name: "Piso",
+    description: "Calcule área, caixas e perda",
+    icon: Grid3x3,
+    href: "/calcular/piso",
+  },
+  {
+    id: "forro",
+    name: "Forro",
+    description: "Calcule placas e acabamento",
+    icon: PanelTop,
+    href: "/calcular/forro",
+  },
+  {
+    id: "laje",
+    name: "Laje",
+    description: "Estime volume e materiais",
+    icon: SquareStack,
+    href: "/calcular/laje",
+  },
+  {
     id: "contrapiso",
     name: "Contrapiso",
     description: "Calcule área e materiais necessários",
     icon: Layers,
-  },
-  {
-    id: "piso",
-    name: "Piso",
-    description: "Calcule peças, área e perdas",
-    icon: Grid3x3,
   },
   {
     id: "pintura",
