@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileText } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, Receipt } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
 import { getBudget } from "@/features/budgets/prototype/budget-store";
+import { sumCosts } from "@/features/project-costs/prototype/cost-totals";
+import { useProjectCosts } from "@/features/project-costs/prototype/use-project-costs";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "./types";
 import { ProjectStatusBadge } from "./components/status-badge";
 import { useProject } from "./prototype/use-project";
@@ -19,10 +22,12 @@ function InfoRow({
   label,
   value,
   emphasis,
+  negative,
 }: {
   label: string;
   value: string;
   emphasis?: boolean;
+  negative?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between py-1.5">
@@ -31,9 +36,13 @@ function InfoRow({
       </span>
       <span
         className={
-          emphasis
-            ? "text-xl font-semibold tabular-nums text-foreground"
-            : "text-sm font-medium tabular-nums text-foreground"
+          negative
+            ? emphasis
+              ? "text-xl font-semibold tabular-nums text-destructive"
+              : "text-sm font-medium tabular-nums text-destructive"
+            : emphasis
+              ? "text-xl font-semibold tabular-nums text-foreground"
+              : "text-sm font-medium tabular-nums text-foreground"
         }
       >
         {value}
@@ -45,6 +54,7 @@ function InfoRow({
 export function ProjectDetail({ id }: { id: string }) {
   const router = useRouter();
   const { project, persist } = useProject(id);
+  const { costs } = useProjectCosts(id);
 
   if (project === undefined) return null;
 
@@ -60,6 +70,8 @@ export function ProjectDetail({ id }: { id: string }) {
 
   const budget = project.budgetId ? getBudget(project.budgetId) : null;
   const budgetTotal = budget ? calculateBudgetTotals(budget).total : null;
+  const registeredCost = costs ? sumCosts(costs) : 0;
+  const budgetBalance = budgetTotal !== null ? budgetTotal - registeredCost : null;
 
   return (
     <div className="space-y-6">
@@ -91,13 +103,23 @@ export function ProjectDetail({ id }: { id: string }) {
 
       <div className="rounded-xl border border-border bg-card p-4">
         <InfoRow label="Atualizado em" value={formatDate(project.updatedAt)} />
-        <div className="mt-2 border-t border-border pt-2">
-          <InfoRow
-            label="Valor orçado"
-            value={budgetTotal !== null ? formatCurrency(budgetTotal) : "Sem orçamento vinculado"}
-            emphasis
-          />
-        </div>
+        {budgetTotal !== null ? (
+          <>
+            <div className="mt-2 border-t border-border pt-2">
+              <InfoRow label="Valor do orçamento" value={formatCurrency(budgetTotal)} emphasis />
+            </div>
+            <InfoRow label="Custos registrados" value={formatCurrency(registeredCost)} />
+            <InfoRow
+              label="Diferença para o orçamento"
+              value={formatCurrency(budgetBalance ?? 0)}
+              negative={(budgetBalance ?? 0) < 0}
+            />
+          </>
+        ) : (
+          <div className="mt-2 border-t border-border pt-2">
+            <InfoRow label="Custos registrados" value={formatCurrency(registeredCost)} emphasis />
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -150,6 +172,47 @@ export function ProjectDetail({ id }: { id: string }) {
             title="Sem orçamento vinculado"
             description="Esta obra foi criada manualmente."
           />
+        )}
+      </section>
+
+      <section aria-labelledby="project-costs" className="space-y-2.5">
+        <h2
+          id="project-costs"
+          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        >
+          Custos da obra
+        </h2>
+        {costs === undefined ? null : costs.length > 0 ? (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Registrado</p>
+              <p className="text-lg font-semibold tabular-nums text-foreground">
+                {formatCurrency(registeredCost)}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/obras/${project.id}/custos`}>Ver custos</Link>}
+            />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <EmptyState
+              compact
+              icon={Receipt}
+              title="Nenhum custo registrado"
+              description="Registre materiais, serviços e outras despesas da obra."
+            />
+            <Button
+              variant="outline"
+              className="w-full"
+              nativeButton={false}
+              render={
+                <Link href={`/obras/${project.id}/custos/novo`}>Registrar custo</Link>
+              }
+            />
+          </div>
         )}
       </section>
     </div>

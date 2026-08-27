@@ -1,0 +1,36 @@
+import type { ProjectCost } from "@/features/project-costs/types";
+
+export const projectCosts: ProjectCost[] = [
+  {
+    id: "edicula-fundos-cost-1",
+    projectId: "edicula-fundos-obra",
+    date: "2026-08-18",
+    category: "materials",
+    description: "Cimento, areia e blocos",
+    amount: 2850,
+    supplier: "Casa dos Materiais Silva",
+    createdAt: "2026-08-18",
+    updatedAt: "2026-08-18",
+  },
+  {
+    id: "edicula-fundos-cost-2",
+    projectId: "edicula-fundos-obra",
+    date: "2026-08-21",
+    category: "labor",
+    description: "Serviço de alvenaria",
+    amount: 2400,
+    supplier: "Equipe do Zé Pedreiro",
+    createdAt: "2026-08-21",
+    updatedAt: "2026-08-21",
+  },
+  {
+    id: "edicula-fundos-cost-3",
+    projectId: "edicula-fundos-obra",
+    date: "2026-08-22",
+    category: "transport",
+    description: "Frete de materiais",
+    amount: 350,
+    createdAt: "2026-08-22",
+    updatedAt: "2026-08-22",
+  },
+];

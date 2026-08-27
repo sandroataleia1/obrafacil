@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 
+import { MoneyField } from "@/components/shared/money-field";
 import { Button } from "@/components/ui/button";
 import { parseCurrencyInput } from "@/lib/currency";
-import { MoneyField } from "./money-field";
 import type { ManualBudgetStage } from "../types";
 
 interface ManualStageFormProps {

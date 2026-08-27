@@ -14,7 +14,7 @@ import { CalculatedStageCard } from "./components/calculated-stage-card";
 import { ManualStageCard } from "./components/manual-stage-card";
 import { ManualStageForm } from "./components/manual-stage-form";
 import { MarginControl } from "./components/margin-control";
-import { MoneyField } from "./components/money-field";
+import { MoneyField } from "@/components/shared/money-field";
 import { StatusBadge } from "./components/status-badge";
 import { calculateBudgetTotals, isCalculatedStage, isManualStage } from "./prototype/budget-totals";
 import { useBudget } from "./prototype/use-budget";

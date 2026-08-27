@@ -3,11 +3,11 @@
 import { useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 
+import { MoneyField } from "@/components/shared/money-field";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
 import { formatInteger } from "@/lib/decimal";
-import { MoneyField } from "./money-field";
 import type { CalculatedBudgetStage } from "../types";
 
 interface CalculatedStageCardProps {
