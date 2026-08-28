@@ -8,7 +8,7 @@
  */
 
 import { projectCosts as seedProjectCosts } from "@/mocks/project-costs";
-import type { ProjectCost } from "../types";
+import type { ProjectCost, ProjectCostOriginType } from "../types";
 
 const STORAGE_KEY = "obrafacil:project-costs";
 const DELETED_KEY = "obrafacil:project-costs:deleted";
@@ -71,6 +71,17 @@ export function listCostsByProject(projectId: string): ProjectCost[] {
   return listAllProjectCosts().filter((cost) => cost.projectId === projectId);
 }
 
+export function findProjectCostByOrigin(
+  originType: ProjectCostOriginType,
+  originId: string
+): ProjectCost | null {
+  return (
+    listAllProjectCosts().find(
+      (cost) => cost.originType === originType && cost.originId === originId
+    ) ?? null
+  );
+}
+
 export function getProjectCost(id: string): ProjectCost | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
@@ -92,6 +103,37 @@ export function deleteProjectCost(id: string): void {
   const deleted = readDeleted();
   deleted.add(id);
   writeDeleted(deleted);
+}
+
+export function deleteProjectCostByOrigin(
+  originType: ProjectCostOriginType,
+  originId: string
+): void {
+  const existing = findProjectCostByOrigin(originType, originId);
+  if (existing) deleteProjectCost(existing.id);
+}
+
+/**
+ * Guarded entry points for the manual "Custos da obra" screen. A cost
+ * produced by a Payable (originType "payable") is owned by Contas a
+ * Pagar — it must not be edited or removed from here. These wrappers
+ * no-op (return false) instead of touching such a record; the manual
+ * form should never reach them for a payable-origin cost (it redirects
+ * away first), but the guard stays here too so the rule holds even if
+ * a future caller forgets that check.
+ */
+export function saveManualProjectCost(cost: ProjectCost): boolean {
+  const existing = getProjectCost(cost.id);
+  if (existing?.originType === "payable") return false;
+  saveProjectCost(cost);
+  return true;
+}
+
+export function deleteManualProjectCost(id: string): boolean {
+  const existing = getProjectCost(id);
+  if (existing?.originType === "payable") return false;
+  deleteProjectCost(id);
+  return true;
 }
 
 export function createProjectCostId(): string {

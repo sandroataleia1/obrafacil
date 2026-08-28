@@ -6,9 +6,15 @@
  * due date, payment status, installment, recurrence, or bank account
  * here; those concepts belong to the future Contas a Pagar module.
  *
+ * Origin: a ProjectCost created manually has no `originType`/`originId`
+ * — absence of origin represents a manual entry in this prototype, no
+ * migration needed for costs created before origin tracking existed.
+ * A ProjectCost produced by marking a Payable (conta a pagar) as paid
+ * carries `originType: "payable"` and `originId` pointing at that
+ * Payable, so the integration can guarantee a Payable never produces
+ * more than one ProjectCost (see `features/payables`).
+ *
  * Future relations (documented, not modeled yet):
- * - Future payables may produce or settle ProjectCost entries. This
- *   prototype records realized project costs only.
  * - Future employee/work-log payroll calculations may generate project
  *   costs in the "labor" category. No Employee/WorkLog/salary concept
  *   exists yet.
@@ -46,6 +52,8 @@ export const PROJECT_COST_CATEGORY_LABEL: Record<ProjectCostCategory, string> = 
   other: "Outros",
 };
 
+export type ProjectCostOriginType = "payable";
+
 export interface ProjectCost {
   id: string;
   projectId: string;
@@ -55,6 +63,8 @@ export interface ProjectCost {
   amount: number;
   supplier?: string;
   notes?: string;
+  originType?: ProjectCostOriginType;
+  originId?: string;
   createdAt: string;
   updatedAt: string;
 }

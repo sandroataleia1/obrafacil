@@ -17,9 +17,14 @@ import { useProjectCosts } from "./prototype/use-project-costs";
 import { PROJECT_COST_CATEGORY_LABEL, type ProjectCost } from "./types";
 
 function CostRow({ cost }: { cost: ProjectCost }) {
+  const href =
+    cost.originType === "payable" && cost.originId
+      ? `/financeiro/contas-a-pagar/${cost.originId}`
+      : `/obras/${cost.projectId}/custos/${cost.id}`;
+
   return (
     <Link
-      href={`/obras/${cost.projectId}/custos/${cost.id}`}
+      href={href}
       className="flex items-center gap-3 p-3.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="min-w-0 flex-1 space-y-0.5">
@@ -34,6 +39,9 @@ function CostRow({ cost }: { cost: ProjectCost }) {
         <p className="truncate text-sm font-medium text-foreground">{cost.description}</p>
         {cost.supplier ? (
           <p className="truncate text-xs text-muted-foreground">{cost.supplier}</p>
+        ) : null}
+        {cost.originType === "payable" ? (
+          <p className="text-[11px] text-muted-foreground/70">Conta a pagar</p>
         ) : null}
       </div>
       <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">
