@@ -1,18 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Users } from "lucide-react";
+import { ChevronRight, Receipt, Users } from "lucide-react";
 
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { MoneyField } from "@/components/shared/money-field";
 import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
-import { todayIso } from "@/lib/date";
+import { formatDate, todayIso } from "@/lib/date";
+import { getPayableStatus } from "@/features/payables/payable-status";
+import { PayableStatusBadge } from "@/features/payables/components/status-badge";
+import type { Payable } from "@/features/payables/types";
 import { getEmployee } from "./prototype/employee-store";
 import { calculatePeriodEstimate } from "./prototype/period-calculation";
 import { formatPeriodLabel } from "./prototype/period-label";
+import { findPayableForPeriod, generatePayableForPeriod } from "./prototype/period-payable";
 import { useWorkPeriod } from "./prototype/use-work-period";
 import { WorkPeriodStatusBadge } from "./components/status-badge";
 import { getWorkPeriodStatus } from "./types";
@@ -57,6 +62,18 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
   const [adjustmentAmountInput, setAdjustmentAmountInput] = useState("");
   const [notes, setNotes] = useState("");
   const [daysError, setDaysError] = useState<string | null>(null);
+  const [relatedPayable, setRelatedPayable] = useState<Payable | null | undefined>(undefined);
+  const [generatingPayable, setGeneratingPayable] = useState(false);
+  const [payableDueDate, setPayableDueDate] = useState("");
+  const [payableNotes, setPayableNotes] = useState("");
+  const [payableError, setPayableError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workPeriod) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRelatedPayable(findPayableForPeriod(workPeriod));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workPeriod?.id]);
 
   useEffect(() => {
     if (!workPeriod) return;
@@ -145,8 +162,29 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
   }
 
   function handleReopen() {
-    if (!workPeriod) return;
+    // relatedPayable !== null also blocks while it is still `undefined`
+    // (loading) — reopening must wait for a confirmed "no payable"
+    // result, not just a falsy one, or a fast click right after mount
+    // could slip through before the lookup resolves.
+    if (!workPeriod || relatedPayable !== null) return;
     persist({ ...workPeriod, closedAt: undefined });
+  }
+
+  function handleGeneratePayable() {
+    if (!workPeriod || !employee) return;
+    if (payableDueDate.trim() === "") {
+      setPayableError("Informe o vencimento.");
+      return;
+    }
+    setPayableError(null);
+    const created = generatePayableForPeriod(
+      workPeriod,
+      employee,
+      payableDueDate,
+      payableNotes.trim() || undefined
+    );
+    setRelatedPayable(created);
+    setGeneratingPayable(false);
   }
 
   return (
@@ -292,9 +330,122 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
       </div>
 
       {isClosed ? (
-        <Button type="button" variant="outline" size="lg" className="w-full" onClick={handleReopen}>
-          Reabrir período
-        </Button>
+        <section aria-labelledby="period-financeiro" className="space-y-2.5">
+          <h2
+            id="period-financeiro"
+            className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+          >
+            Financeiro
+          </h2>
+          {relatedPayable === undefined ? null : relatedPayable ? (
+            <Link
+              href={`/financeiro/contas-a-pagar/${relatedPayable.id}`}
+              className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-foreground">
+                  {formatCurrency(relatedPayable.amount)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {getPayableStatus(relatedPayable) === "paid" && relatedPayable.paidAt
+                    ? `Paga em ${formatDate(relatedPayable.paidAt)}`
+                    : `Vence ${formatDate(relatedPayable.dueDate)}`}
+                </p>
+              </div>
+              <PayableStatusBadge status={getPayableStatus(relatedPayable)} />
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </Link>
+          ) : generatingPayable ? (
+            <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+              <div className="space-y-1.5">
+                <label htmlFor="payable-due-date" className="text-sm font-medium text-foreground">
+                  Vencimento
+                </label>
+                <input
+                  id="payable-due-date"
+                  type="date"
+                  value={payableDueDate}
+                  onChange={(event) => setPayableDueDate(event.target.value)}
+                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="payable-notes" className="text-sm font-medium text-foreground">
+                  Observação <span className="text-muted-foreground">(opcional)</span>
+                </label>
+                <input
+                  id="payable-notes"
+                  type="text"
+                  value={payableNotes}
+                  onChange={(event) => setPayableNotes(event.target.value)}
+                  placeholder="Detalhes adicionais"
+                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              {payableError ? <p className="text-sm text-destructive">{payableError}</p> : null}
+              <div className="grid grid-cols-2 gap-2">
+                <Button type="button" variant="outline" onClick={() => setGeneratingPayable(false)}>
+                  Cancelar
+                </Button>
+                <Button type="button" onClick={handleGeneratePayable}>
+                  Gerar conta
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <EmptyState
+                compact
+                icon={Receipt}
+                title="Nenhuma conta a pagar gerada"
+                description="Transforme o valor previsto deste período em uma conta a pagar."
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setPayableDueDate("");
+                  setPayableNotes("");
+                  setPayableError(null);
+                  setGeneratingPayable(true);
+                }}
+              >
+                Gerar conta a pagar
+              </Button>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {isClosed ? (
+        relatedPayable === undefined ? null : relatedPayable ? (
+          <div className="space-y-3">
+            <div className="space-y-1 rounded-xl border border-border bg-card p-4">
+              <p className="text-sm text-muted-foreground">
+                {getPayableStatus(relatedPayable) === "paid"
+                  ? "Este período já possui uma conta paga."
+                  : "Este período possui uma conta a pagar gerada."}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {getPayableStatus(relatedPayable) === "paid"
+                  ? "Desfaça o pagamento e exclua a conta antes de reabrir o período."
+                  : "Exclua a conta antes de reabrir o período."}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="lg"
+              className="w-full"
+              nativeButton={false}
+              render={<Link href={`/financeiro/contas-a-pagar/${relatedPayable.id}`}>Abrir conta</Link>}
+            />
+          </div>
+        ) : (
+          <Button type="button" variant="outline" size="lg" className="w-full" onClick={handleReopen}>
+            Reabrir período
+          </Button>
+        )
       ) : (
         <Button type="button" size="lg" className="w-full" onClick={handleClose}>
           Fechar período

@@ -11,6 +11,9 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate, todayIso } from "@/lib/date";
 import { getProject } from "@/features/projects/prototype/project-store";
+import { getEmployee } from "@/features/employees/prototype/employee-store";
+import { getWorkPeriod } from "@/features/employees/prototype/work-period-store";
+import { formatPeriodShort } from "@/features/employees/prototype/period-label";
 import { PROJECT_COST_CATEGORY_LABEL } from "@/features/project-costs/types";
 import { deletePayable } from "./prototype/payable-store";
 import { markPayableAsPaid, undoPayablePayment } from "./prototype/payable-payment";
@@ -48,6 +51,11 @@ export function PayableDetail({ id }: { id: string }) {
   const status = getPayableStatus(payable);
   const project = payable.projectId ? getProject(payable.projectId) : null;
   const dueHint = status !== "paid" ? describeDueDate(payable.dueDate) : null;
+  const originWorkPeriod =
+    payable.originType === "employee-period" && payable.originId
+      ? getWorkPeriod(payable.originId)
+      : null;
+  const originEmployee = originWorkPeriod ? getEmployee(originWorkPeriod.employeeId) : null;
 
   function handleConfirmPayment() {
     if (!payable) return;
@@ -115,6 +123,17 @@ export function PayableDetail({ id }: { id: string }) {
           </div>
         ) : null}
         {payable.notes ? <InfoRow label="Observação" value={payable.notes} /> : null}
+        {originWorkPeriod && originEmployee ? (
+          <div className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-muted-foreground">Origem</span>
+            <Link
+              href={`/equipe/${originEmployee.id}/periodos/${originWorkPeriod.period}`}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              Equipe · {originEmployee.name} · {formatPeriodShort(originWorkPeriod.period)}
+            </Link>
+          </div>
+        ) : null}
       </div>
 
       {status === "paid" ? (

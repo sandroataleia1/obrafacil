@@ -20,6 +20,26 @@
  * represents a general/administrative expense and never produces a
  * ProjectCost even when paid.
  *
+ * Origin: a Payable created manually has no `originType`/`originId`
+ * — absence of origin represents a manual entry, no migration needed
+ * for payables created before origin tracking existed. A Payable
+ * produced by closing an EmployeeWorkPeriod (see `features/employees`)
+ * carries `originType: "employee-period"` and `originId` pointing at
+ * that period, so the integration can guarantee a period never
+ * produces more than one Payable (see `findPayableByOrigin`). Such a
+ * payable is a financial snapshot of the period's estimated pay —
+ * its description/supplier/amount/category derive from the period and
+ * are not directly editable here; only `dueDate`/`notes` are (see
+ * `payable-form.tsx`).
+ *
+ * Workforce payables (`originType: "employee-period"`) are always
+ * created with `projectId: undefined`. Employee work allocation across
+ * projects is not modeled yet, so paying one never produces a
+ * ProjectCost — creating a labor ProjectCost before project allocation
+ * would incorrectly assign the employee's full period cost to a
+ * single project. The existing "no project => no ProjectCost" rule
+ * already covers this; no special-casing was needed.
+ *
  * Due dates will later support reminder/notification workflows. No
  * notifications are sent in this prototype.
  *
@@ -35,6 +55,8 @@ import type { ProjectCostCategory } from "@/features/project-costs/types";
 
 export type PayableStatus = "pending" | "overdue" | "paid";
 
+export type PayableOriginType = "employee-period";
+
 export interface Payable {
   id: string;
   description: string;
@@ -45,6 +67,8 @@ export interface Payable {
   projectId?: string;
   paidAt?: string;
   notes?: string;
+  originType?: PayableOriginType;
+  originId?: string;
   createdAt: string;
   updatedAt: string;
 }

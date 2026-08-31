@@ -63,7 +63,26 @@ export function PayableForm({ payableId }: { payableId?: string }) {
     setNotes(existingPayable.notes ?? "");
   }, [existingPayable]);
 
+  const isRestricted = existingPayable?.originType === "employee-period";
+
   function handleSubmit() {
+    if (dueDate.trim() === "") {
+      setError("Informe o vencimento.");
+      return;
+    }
+
+    if (isRestricted && existingPayable) {
+      setError(null);
+      savePayable({
+        ...existingPayable,
+        dueDate,
+        notes: notes.trim() || undefined,
+        updatedAt: todayIso(),
+      });
+      router.push(`/financeiro/contas-a-pagar/${existingPayable.id}`);
+      return;
+    }
+
     const amount = parseCurrencyInput(amountInput);
 
     if (description.trim() === "") {
@@ -72,10 +91,6 @@ export function PayableForm({ payableId }: { payableId?: string }) {
     }
     if (amount === null || amount <= 0) {
       setError("Informe um valor maior que zero.");
-      return;
-    }
-    if (dueDate.trim() === "") {
-      setError("Informe o vencimento.");
       return;
     }
     setError(null);
@@ -145,58 +160,69 @@ export function PayableForm({ payableId }: { payableId?: string }) {
       </div>
 
       <div className="space-y-4">
-        <div className="space-y-1.5">
-          <label htmlFor="payable-description" className="text-sm font-medium text-foreground">
-            Descrição
-          </label>
-          <input
-            id="payable-description"
-            type="text"
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="Compra de cimento"
-            className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-          />
-        </div>
+        {isRestricted ? (
+          <p className="text-sm text-muted-foreground">
+            Descrição, fornecedor, categoria e valor vêm do período da Equipe e não podem ser
+            alterados aqui. Desfaça o fechamento do período para corrigi-los.
+          </p>
+        ) : null}
 
-        <div className="space-y-1.5">
-          <label htmlFor="payable-supplier" className="text-sm font-medium text-foreground">
-            Fornecedor / responsável <span className="text-muted-foreground">(opcional)</span>
-          </label>
-          <input
-            id="payable-supplier"
-            type="text"
-            value={supplier}
-            onChange={(event) => setSupplier(event.target.value)}
-            placeholder="Casa dos Materiais Silva"
-            className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-          />
-        </div>
+        {!isRestricted ? (
+          <>
+            <div className="space-y-1.5">
+              <label htmlFor="payable-description" className="text-sm font-medium text-foreground">
+                Descrição
+              </label>
+              <input
+                id="payable-description"
+                type="text"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Compra de cimento"
+                className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+              />
+            </div>
 
-        <div className="space-y-1.5">
-          <span className="text-sm font-medium text-foreground">Categoria</span>
-          <Select
-            value={category}
-            onValueChange={(value) => setCategory((value as ProjectCostCategory) ?? "materials")}
-          >
-            <SelectTrigger className="h-12 w-full px-4 text-base">
-              <SelectValue placeholder="Selecione uma categoria">
-                {(value: string | null) =>
-                  PROJECT_COST_CATEGORY_LABEL[(value as ProjectCostCategory) ?? "materials"]
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {PROJECT_COST_CATEGORIES.map((item) => (
-                <SelectItem key={item} value={item}>
-                  {PROJECT_COST_CATEGORY_LABEL[item]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+            <div className="space-y-1.5">
+              <label htmlFor="payable-supplier" className="text-sm font-medium text-foreground">
+                Fornecedor / responsável <span className="text-muted-foreground">(opcional)</span>
+              </label>
+              <input
+                id="payable-supplier"
+                type="text"
+                value={supplier}
+                onChange={(event) => setSupplier(event.target.value)}
+                placeholder="Casa dos Materiais Silva"
+                className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+              />
+            </div>
 
-        <MoneyField id="payable-amount" label="Valor" value={amountInput} onChange={setAmountInput} />
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium text-foreground">Categoria</span>
+              <Select
+                value={category}
+                onValueChange={(value) => setCategory((value as ProjectCostCategory) ?? "materials")}
+              >
+                <SelectTrigger className="h-12 w-full px-4 text-base">
+                  <SelectValue placeholder="Selecione uma categoria">
+                    {(value: string | null) =>
+                      PROJECT_COST_CATEGORY_LABEL[(value as ProjectCostCategory) ?? "materials"]
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {PROJECT_COST_CATEGORIES.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {PROJECT_COST_CATEGORY_LABEL[item]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <MoneyField id="payable-amount" label="Valor" value={amountInput} onChange={setAmountInput} />
+          </>
+        ) : null}
 
         <div className="space-y-1.5">
           <label htmlFor="payable-due-date" className="text-sm font-medium text-foreground">
@@ -211,30 +237,32 @@ export function PayableForm({ payableId }: { payableId?: string }) {
           />
         </div>
 
-        <div className="space-y-1.5">
-          <span className="text-sm font-medium text-foreground">
-            Obra <span className="text-muted-foreground">(opcional)</span>
-          </span>
-          <Select value={projectId} onValueChange={(value) => setProjectId(value ?? NO_PROJECT)}>
-            <SelectTrigger className="h-12 w-full px-4 text-base">
-              <SelectValue placeholder="Sem obra vinculada">
-                {(value: string | null) =>
-                  value && value !== NO_PROJECT
-                    ? (projects.find((project) => project.id === value)?.name ?? "Sem obra vinculada")
-                    : "Sem obra vinculada"
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_PROJECT}>Sem obra vinculada</SelectItem>
-              {projects.map((project) => (
-                <SelectItem key={project.id} value={project.id}>
-                  {project.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {!isRestricted ? (
+          <div className="space-y-1.5">
+            <span className="text-sm font-medium text-foreground">
+              Obra <span className="text-muted-foreground">(opcional)</span>
+            </span>
+            <Select value={projectId} onValueChange={(value) => setProjectId(value ?? NO_PROJECT)}>
+              <SelectTrigger className="h-12 w-full px-4 text-base">
+                <SelectValue placeholder="Sem obra vinculada">
+                  {(value: string | null) =>
+                    value && value !== NO_PROJECT
+                      ? (projects.find((project) => project.id === value)?.name ?? "Sem obra vinculada")
+                      : "Sem obra vinculada"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_PROJECT}>Sem obra vinculada</SelectItem>
+                {projects.map((project) => (
+                  <SelectItem key={project.id} value={project.id}>
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
 
         <div className="space-y-1.5">
           <label htmlFor="payable-notes" className="text-sm font-medium text-foreground">

@@ -8,7 +8,7 @@
  */
 
 import { payables as seedPayables } from "@/mocks/payables";
-import type { Payable } from "../types";
+import type { Payable, PayableOriginType } from "../types";
 
 const STORAGE_KEY = "obrafacil:payables";
 const DELETED_KEY = "obrafacil:payables:deleted";
@@ -69,6 +69,17 @@ export function listAllPayables(): Payable[] {
 
 export function listPayablesByProject(projectId: string): Payable[] {
   return listAllPayables().filter((payable) => payable.projectId === projectId);
+}
+
+export function findPayableByOrigin(
+  originType: PayableOriginType,
+  originId: string
+): Payable | null {
+  return (
+    listAllPayables().find(
+      (payable) => payable.originType === originType && payable.originId === originId
+    ) ?? null
+  );
 }
 
 export function getPayable(id: string): Payable | null {

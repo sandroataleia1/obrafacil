@@ -41,6 +41,9 @@ function PayableRow({ payable, projectName }: { payable: Payable; projectName?: 
         <p className="text-xs text-muted-foreground">
           {status === "paid" ? `Pago em ${formatDate(payable.paidAt!)}` : dueHint ?? `Vence ${formatDate(payable.dueDate)}`}
         </p>
+        {payable.originType === "employee-period" ? (
+          <p className="text-[11px] text-muted-foreground/70">Equipe</p>
+        ) : null}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         <span className="text-sm font-semibold tabular-nums text-foreground">
