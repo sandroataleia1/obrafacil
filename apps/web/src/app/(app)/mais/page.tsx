@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { BrickWall, ChevronRight, Receipt, Users } from "lucide-react";
+import { BrickWall, ChevronRight, HardHat, Receipt, Users } from "lucide-react";
 
 const GESTAO_LINKS = [
   { href: "/obras", label: "Obras", icon: BrickWall },
   { href: "/clientes", label: "Clientes", icon: Users },
+  { href: "/equipe", label: "Equipe", icon: HardHat },
 ];
 
 const FINANCEIRO_LINKS = [
