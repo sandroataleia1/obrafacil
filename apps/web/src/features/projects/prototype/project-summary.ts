@@ -39,6 +39,18 @@
  * - No `revenue`, `profit`, `cashFlow`, `progress`,
  *   `receivedAmount`, or `physicalProgress` field exists — none of
  *   those are computable safely from the data this prototype has.
+ * - `receivableTotal`/`receivableReceived`/`receivableOutstanding`/
+ *   `receivableOverdue`/`receivableUpcoming` are a separate dimension
+ *   (money owed BY the Customer) from every cost/payable figure above
+ *   (money owed BY the company). They are computed exclusively from
+ *   `Receivable`/`Receipt` — via the same `calculateReceivableTotals`
+ *   helper the global Contas a Receber list and the old ProjectDetail
+ *   card already used — and never feed into `realizedCost`,
+ *   `committedCost`, or any other cost-side figure. Receiving money
+ *   from a Customer is not a cost event and must never change them.
+ *   This is not a cash-flow figure (`receivableReceived -
+ *   pendingPayables` or similar) — no such combined metric exists in
+ *   this prototype yet; see Task 038 discovery notes.
  */
 
 import { formatCurrency } from "@/lib/currency";
@@ -48,6 +60,8 @@ import { sumCosts, sumCostsByCategory } from "@/features/project-costs/prototype
 import type { ProjectCost, ProjectCostCategory } from "@/features/project-costs/types";
 import { getPayableStatus } from "@/features/payables/payable-status";
 import type { Payable } from "@/features/payables/types";
+import { calculateReceivableTotals } from "@/features/receivables/prototype/receivable-totals";
+import type { Receipt, Receivable } from "@/features/receivables/types";
 import type { Project } from "../types";
 
 export type ProjectAlertSeverity = "info" | "warning" | "critical";
@@ -79,6 +93,12 @@ export interface ProjectManagementSummary {
   percentRealizedOfBudget: number | null;
   percentCommittedOfBudget: number | null;
 
+  receivableTotal: number;
+  receivableReceived: number;
+  receivableOutstanding: number;
+  receivableOverdue: number;
+  receivableUpcoming: number;
+
   alerts: ProjectAlert[];
 }
 
@@ -87,11 +107,13 @@ function buildAlerts({
   realizedCost,
   committedCost,
   overduePayables,
+  receivableOverdue,
 }: {
   referenceAmount: number | null;
   realizedCost: number;
   committedCost: number;
   overduePayables: number;
+  receivableOverdue: number;
 }): ProjectAlert[] {
   const alerts: ProjectAlert[] = [];
 
@@ -111,7 +133,14 @@ function buildAlerts({
   if (overduePayables > 0) {
     alerts.push({
       severity: "warning",
-      message: `Há contas vencidas totalizando ${formatCurrency(overduePayables)}.`,
+      message: `Há contas a pagar vencidas totalizando ${formatCurrency(overduePayables)}.`,
+    });
+  }
+
+  if (receivableOverdue > 0) {
+    alerts.push({
+      severity: "warning",
+      message: `Há contas a receber vencidas totalizando ${formatCurrency(receivableOverdue)}.`,
     });
   }
 
@@ -139,11 +168,15 @@ export function buildProjectManagementSummary({
   budget,
   costs,
   payables,
+  receivables,
+  receipts,
 }: {
   project: Project;
   budget: Budget | null;
   costs: ProjectCost[];
   payables: Payable[];
+  receivables: Receivable[];
+  receipts: Receipt[];
 }): ProjectManagementSummary {
   const referenceAmount =
     budget && budget.status === "approved" ? calculateBudgetTotals(budget).total : null;
@@ -181,7 +214,23 @@ export function buildProjectManagementSummary({
   const percentCommittedOfBudget =
     referenceAmount !== null && referenceAmount > 0 ? committedCost / referenceAmount : null;
 
-  const alerts = buildAlerts({ referenceAmount, realizedCost, committedCost, overduePayables });
+  const projectReceivables = receivables.filter((receivable) => receivable.projectId === project.id);
+  const receivableTotals = calculateReceivableTotals(projectReceivables, (receivableId) =>
+    receipts.filter((receipt) => receipt.receivableId === receivableId)
+  );
+  const receivableTotal = receivableTotals.totalReceivable;
+  const receivableReceived = receivableTotals.totalReceived;
+  const receivableOutstanding = receivableTotals.totalOutstanding;
+  const receivableOverdue = receivableTotals.overdueOutstanding;
+  const receivableUpcoming = receivableTotals.upcomingOutstanding;
+
+  const alerts = buildAlerts({
+    referenceAmount,
+    realizedCost,
+    committedCost,
+    overduePayables,
+    receivableOverdue,
+  });
 
   return {
     referenceAmount,
@@ -197,6 +246,11 @@ export function buildProjectManagementSummary({
     laborShareOfRealizedCost,
     percentRealizedOfBudget,
     percentCommittedOfBudget,
+    receivableTotal,
+    receivableReceived,
+    receivableOutstanding,
+    receivableOverdue,
+    receivableUpcoming,
     alerts,
   };
 }

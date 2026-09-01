@@ -18,7 +18,7 @@ import { listPayablesByProject } from "@/features/payables/prototype/payable-sto
 import type { Payable } from "@/features/payables/types";
 import { listReceivablesByProject } from "@/features/receivables/prototype/receivable-store";
 import { listReceiptsByReceivable } from "@/features/receivables/prototype/receipt-store";
-import { calculateReceivableTotals } from "@/features/receivables/prototype/receivable-totals";
+import type { Receipt as ReceiptModel, Receivable } from "@/features/receivables/types";
 import { buildProjectManagementSummary } from "./prototype/project-summary";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "./types";
 import { ProjectStatusBadge } from "./components/status-badge";
@@ -64,12 +64,15 @@ export function ProjectDetail({ id }: { id: string }) {
   const { project, persist } = useProject(id);
   const { costs } = useProjectCosts(id);
   const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
-  const [receivablesLoaded, setReceivablesLoaded] = useState(false);
+  const [receivables, setReceivables] = useState<Receivable[] | undefined>(undefined);
+  const [receipts, setReceipts] = useState<ReceiptModel[] | undefined>(undefined);
 
   useEffect(() => {
+    const projectReceivables = listReceivablesByProject(id);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPayables(listPayablesByProject(id));
-    setReceivablesLoaded(true);
+    setReceivables(projectReceivables);
+    setReceipts(projectReceivables.flatMap((receivable) => listReceiptsByReceivable(receivable.id)));
   }, [id]);
 
   if (project === undefined) return null;
@@ -87,13 +90,9 @@ export function ProjectDetail({ id }: { id: string }) {
   const budget = project.budgetId ? getBudget(project.budgetId) : null;
   const registeredCost = costs ? sumCosts(costs) : 0;
   const summary =
-    costs !== undefined && payables !== undefined
-      ? buildProjectManagementSummary({ project, budget, costs, payables })
+    costs !== undefined && payables !== undefined && receivables !== undefined && receipts !== undefined
+      ? buildProjectManagementSummary({ project, budget, costs, payables, receivables, receipts })
       : null;
-
-  const receivableTotals = receivablesLoaded
-    ? calculateReceivableTotals(listReceivablesByProject(project.id), listReceiptsByReceivable)
-    : null;
 
   return (
     <div className="space-y-6">
@@ -321,61 +320,66 @@ export function ProjectDetail({ id }: { id: string }) {
           >
             Financeiro
           </h2>
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
-            <div className="flex gap-6">
-              <div>
-                <p className="text-xs text-muted-foreground">Pendentes</p>
-                <p className="text-sm font-semibold tabular-nums text-foreground">
-                  {formatCurrency(summary.pendingPayables)}
-                </p>
+          <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              A pagar
+            </p>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex gap-6">
+                <div>
+                  <p className="text-xs text-muted-foreground">Pendentes</p>
+                  <p className="text-sm font-semibold tabular-nums text-foreground">
+                    {formatCurrency(summary.pendingPayables)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Vencidas</p>
+                  <p
+                    className={
+                      summary.overduePayables > 0
+                        ? "text-sm font-semibold tabular-nums text-destructive"
+                        : "text-sm font-semibold tabular-nums text-foreground"
+                    }
+                  >
+                    {formatCurrency(summary.overduePayables)}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Vencidas</p>
-                <p
-                  className={
-                    summary.overduePayables > 0
-                      ? "text-sm font-semibold tabular-nums text-destructive"
-                      : "text-sm font-semibold tabular-nums text-foreground"
-                  }
-                >
-                  {formatCurrency(summary.overduePayables)}
-                </p>
-              </div>
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={<Link href="/financeiro/contas-a-pagar">Ver contas a pagar</Link>}
+              />
             </div>
-            <Button
-              variant="outline"
-              nativeButton={false}
-              render={<Link href="/financeiro/contas-a-pagar">Ver contas</Link>}
-            />
           </div>
 
           <div className="space-y-3 rounded-xl border border-border bg-card p-4">
             <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              Contas a receber
+              A receber
             </p>
             <div className="flex items-center gap-6">
               <div>
                 <p className="text-xs text-muted-foreground">Recebido</p>
                 <p className="text-sm font-semibold tabular-nums text-foreground">
-                  {formatCurrency(receivableTotals?.totalReceived ?? 0)}
+                  {formatCurrency(summary.receivableReceived)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">A receber</p>
                 <p className="text-sm font-semibold tabular-nums text-foreground">
-                  {formatCurrency(receivableTotals?.totalOutstanding ?? 0)}
+                  {formatCurrency(summary.receivableOutstanding)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Vencido</p>
                 <p
                   className={
-                    (receivableTotals?.overdueOutstanding ?? 0) > 0
+                    summary.receivableOverdue > 0
                       ? "text-sm font-semibold tabular-nums text-destructive"
                       : "text-sm font-semibold tabular-nums text-foreground"
                   }
                 >
-                  {formatCurrency(receivableTotals?.overdueOutstanding ?? 0)}
+                  {formatCurrency(summary.receivableOverdue)}
                 </p>
               </div>
             </div>
@@ -384,7 +388,9 @@ export function ProjectDetail({ id }: { id: string }) {
                 variant="outline"
                 nativeButton={false}
                 render={
-                  <Link href={`/financeiro/contas-a-receber?projectId=${project.id}`}>Ver contas</Link>
+                  <Link href={`/financeiro/contas-a-receber?projectId=${project.id}`}>
+                    Ver contas a receber
+                  </Link>
                 }
               />
               <Button
