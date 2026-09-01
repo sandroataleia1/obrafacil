@@ -24,6 +24,13 @@ import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { getMaterial } from "@/features/materials/prototype/material-store";
 import { listRequirementsByProject } from "@/features/materials/prototype/material-requirement-store";
 import type { MaterialRequirement } from "@/features/materials/types";
+import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
+import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
+import {
+  calculateMaterialPlanning,
+  calculatePurchaseOrderTotal,
+} from "@/features/purchases/prototype/purchase-totals";
+import type { PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
 import { buildProjectManagementSummary } from "./prototype/project-summary";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "./types";
 import { ProjectStatusBadge } from "./components/status-badge";
@@ -72,14 +79,23 @@ export function ProjectDetail({ id }: { id: string }) {
   const [receivables, setReceivables] = useState<Receivable[] | undefined>(undefined);
   const [receipts, setReceipts] = useState<ReceiptModel[] | undefined>(undefined);
   const [requirements, setRequirements] = useState<MaterialRequirement[] | undefined>(undefined);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
+  const [purchaseOrderItems, setPurchaseOrderItems] = useState<PurchaseOrderItem[] | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     const projectReceivables = listReceivablesByProject(id);
+    const projectPurchaseOrders = listPurchaseOrdersByProject(id);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPayables(listPayablesByProject(id));
     setReceivables(projectReceivables);
     setReceipts(projectReceivables.flatMap((receivable) => listReceiptsByReceivable(receivable.id)));
     setRequirements(listRequirementsByProject(id));
+    setPurchaseOrders(projectPurchaseOrders);
+    setPurchaseOrderItems(
+      listItemsByPurchaseOrders(projectPurchaseOrders.map((purchaseOrder) => purchaseOrder.id))
+    );
   }, [id]);
 
   if (project === undefined) return null;
@@ -328,21 +344,50 @@ export function ProjectDetail({ id }: { id: string }) {
             Materiais
           </h2>
         </div>
-        {requirements === undefined ? null : requirements.length > 0 ? (
+        {requirements === undefined || purchaseOrders === undefined || purchaseOrderItems === undefined
+          ? null
+          : requirements.length > 0 ? (
           <div className="space-y-3">
             <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
               {requirements.map((requirement) => {
                 const material = getMaterial(requirement.materialId);
+                const planning = calculateMaterialPlanning(
+                  requirement.requiredQuantity,
+                  purchaseOrders,
+                  purchaseOrderItems,
+                  requirement.materialId
+                );
+                const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : "";
                 return (
-                  <div key={requirement.id} className="py-2.5">
+                  <div key={requirement.id} className="space-y-1 py-2.5">
                     <p className="text-sm font-medium text-foreground">
                       {material?.name ?? "Material não encontrado"}
                     </p>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">Necessário</span>
                       <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatQuantity(requirement.requiredQuantity)}{" "}
-                        {material ? formatMaterialUnit(material.defaultUnit) : ""}
+                        {formatQuantity(planning.required)} {unitLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Comprado</span>
+                      <span className="text-sm font-semibold tabular-nums text-foreground">
+                        {formatQuantity(planning.purchased)} {unitLabel}
+                        {planning.purchasedExcess > 0
+                          ? ` (excesso de ${formatQuantity(planning.purchasedExcess)} ${unitLabel})`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Falta comprar</span>
+                      <span
+                        className={
+                          planning.remainingToBuy > 0
+                            ? "text-sm font-semibold tabular-nums text-destructive"
+                            : "text-sm font-semibold tabular-nums text-foreground"
+                        }
+                      >
+                        {formatQuantity(planning.remainingToBuy)} {unitLabel}
                       </span>
                     </div>
                   </div>
@@ -372,6 +417,56 @@ export function ProjectDetail({ id }: { id: string }) {
             />
           </div>
         )}
+      </section>
+
+      <section aria-labelledby="project-purchases" className="space-y-2.5">
+        <h2
+          id="project-purchases"
+          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        >
+          Compras
+        </h2>
+        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-6">
+            <div>
+              <p className="text-xs text-muted-foreground">Pedidos realizados</p>
+              <p className="text-lg font-semibold tabular-nums text-foreground">
+                {formatCurrency(
+                  purchaseOrders !== undefined && purchaseOrderItems !== undefined
+                    ? calculatePurchaseOrderTotal(
+                        purchaseOrderItems.filter((item) =>
+                          purchaseOrders.some(
+                            (purchaseOrder) =>
+                              purchaseOrder.id === item.purchaseOrderId &&
+                              purchaseOrder.commercialStatus === "ordered"
+                          )
+                        )
+                      )
+                    : 0
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Rascunhos</p>
+              <p className="text-lg font-semibold tabular-nums text-foreground">
+                {purchaseOrders?.filter((purchaseOrder) => purchaseOrder.commercialStatus === "draft")
+                  .length ?? 0}
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href="/compras">Ver compras</Link>}
+            />
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/compras/nova?projectId=${project.id}`}>Nova compra</Link>}
+            />
+          </div>
+        </div>
       </section>
 
       {summary ? (

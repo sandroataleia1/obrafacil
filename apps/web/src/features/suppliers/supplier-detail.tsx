@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Truck } from "lucide-react";
@@ -7,8 +8,13 @@ import { Truck } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { formatPhoneInput } from "@/lib/phone";
+import { listPurchaseOrdersBySupplier } from "@/features/purchases/prototype/purchase-order-store";
+import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
+import { calculatePurchaseOrderTotal } from "@/features/purchases/prototype/purchase-totals";
+import type { PurchaseOrder } from "@/features/purchases/types";
 import { saveSupplier } from "./prototype/supplier-store";
 import { useSupplier } from "./prototype/use-supplier";
 import { SupplierStatusBadge } from "./components/status-badge";
@@ -25,6 +31,12 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 export function SupplierDetail({ id }: { id: string }) {
   const router = useRouter();
   const { supplier, refresh } = useSupplier(id);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPurchaseOrders(listPurchaseOrdersBySupplier(id));
+  }, [id]);
 
   if (supplier === undefined) return null;
 
@@ -80,6 +92,49 @@ export function SupplierDetail({ id }: { id: string }) {
           {supplier.status === "active" ? "Inativar" : "Ativar"}
         </Button>
       </div>
+
+      <section aria-labelledby="supplier-purchases" className="space-y-2.5">
+        <h2
+          id="supplier-purchases"
+          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        >
+          Compras
+        </h2>
+        <div className="flex items-center gap-6 rounded-xl border border-border bg-card p-4">
+          <div>
+            <p className="text-xs text-muted-foreground">Pedidos</p>
+            <p className="text-lg font-semibold tabular-nums text-foreground">
+              {purchaseOrders?.length ?? 0}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Total comprado</p>
+            <p className="text-lg font-semibold tabular-nums text-foreground">
+              {formatCurrency(
+                calculatePurchaseOrderTotal(
+                  listItemsByPurchaseOrders(
+                    (purchaseOrders ?? [])
+                      .filter((purchaseOrder) => purchaseOrder.commercialStatus === "ordered")
+                      .map((purchaseOrder) => purchaseOrder.id)
+                  )
+                )
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href="/compras">Ver compras</Link>}
+          />
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href={`/compras/nova?supplierId=${supplier.id}`}>Nova compra</Link>}
+          />
+        </div>
+      </section>
     </div>
   );
 }

@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { todayIso } from "@/lib/date";
-import { materialHasRequirements, updateMaterial } from "./prototype/material";
+import { materialHasDependencies, updateMaterial } from "./prototype/material";
 import { createMaterialId, saveMaterial } from "./prototype/material-store";
 import { useMaterial } from "./prototype/use-material";
 import { MATERIAL_UNIT_CODE_LABEL, MATERIAL_UNIT_CODES, type MaterialUnitCode } from "./types";
@@ -45,7 +45,7 @@ export function MaterialForm({ materialId }: { materialId?: string }) {
     setUnitCode(existingMaterial.defaultUnit.code);
     setCustomUnitLabel(existingMaterial.defaultUnit.customLabel ?? "");
     setNotes(existingMaterial.notes ?? "");
-    setUnitLocked(materialHasRequirements(existingMaterial.id));
+    setUnitLocked(materialHasDependencies(existingMaterial.id));
   }, [existingMaterial]);
 
   function handleSubmit() {
@@ -160,7 +160,7 @@ export function MaterialForm({ materialId }: { materialId?: string }) {
           )}
           {unitLocked ? (
             <p className="text-xs text-muted-foreground">
-              A unidade não pode ser alterada porque este material já está em uso em obras.
+              A unidade não pode ser alterada porque este material já possui planejamento ou compras.
             </p>
           ) : null}
         </div>
