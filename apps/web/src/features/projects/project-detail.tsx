@@ -19,6 +19,11 @@ import type { Payable } from "@/features/payables/types";
 import { listReceivablesByProject } from "@/features/receivables/prototype/receivable-store";
 import { listReceiptsByReceivable } from "@/features/receivables/prototype/receipt-store";
 import type { Receipt as ReceiptModel, Receivable } from "@/features/receivables/types";
+import { formatQuantity } from "@/lib/quantity";
+import { formatMaterialUnit } from "@/features/materials/material-unit";
+import { getMaterial } from "@/features/materials/prototype/material-store";
+import { listRequirementsByProject } from "@/features/materials/prototype/material-requirement-store";
+import type { MaterialRequirement } from "@/features/materials/types";
 import { buildProjectManagementSummary } from "./prototype/project-summary";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "./types";
 import { ProjectStatusBadge } from "./components/status-badge";
@@ -66,6 +71,7 @@ export function ProjectDetail({ id }: { id: string }) {
   const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
   const [receivables, setReceivables] = useState<Receivable[] | undefined>(undefined);
   const [receipts, setReceipts] = useState<ReceiptModel[] | undefined>(undefined);
+  const [requirements, setRequirements] = useState<MaterialRequirement[] | undefined>(undefined);
 
   useEffect(() => {
     const projectReceivables = listReceivablesByProject(id);
@@ -73,6 +79,7 @@ export function ProjectDetail({ id }: { id: string }) {
     setPayables(listPayablesByProject(id));
     setReceivables(projectReceivables);
     setReceipts(projectReceivables.flatMap((receivable) => listReceiptsByReceivable(receivable.id)));
+    setRequirements(listRequirementsByProject(id));
   }, [id]);
 
   if (project === undefined) return null;
@@ -311,6 +318,61 @@ export function ProjectDetail({ id }: { id: string }) {
           </div>
         </section>
       ) : null}
+
+      <section aria-labelledby="project-materials" className="space-y-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <h2
+            id="project-materials"
+            className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+          >
+            Materiais
+          </h2>
+        </div>
+        {requirements === undefined ? null : requirements.length > 0 ? (
+          <div className="space-y-3">
+            <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
+              {requirements.map((requirement) => {
+                const material = getMaterial(requirement.materialId);
+                return (
+                  <div key={requirement.id} className="py-2.5">
+                    <p className="text-sm font-medium text-foreground">
+                      {material?.name ?? "Material não encontrado"}
+                    </p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Necessário</span>
+                      <span className="text-sm font-semibold tabular-nums text-foreground">
+                        {formatQuantity(requirement.requiredQuantity)}{" "}
+                        {material ? formatMaterialUnit(material.defaultUnit) : ""}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              nativeButton={false}
+              render={<Link href={`/obras/${project.id}/materiais`}>Gerenciar materiais</Link>}
+            />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <EmptyState
+              compact
+              icon={Receipt}
+              title="Nenhum material planejado"
+              description="Registre a quantidade necessária de cada material desta obra."
+            />
+            <Button
+              variant="outline"
+              className="w-full"
+              nativeButton={false}
+              render={<Link href={`/obras/${project.id}/materiais`}>Gerenciar materiais</Link>}
+            />
+          </div>
+        )}
+      </section>
 
       {summary ? (
         <section aria-labelledby="project-financial" className="space-y-2.5">

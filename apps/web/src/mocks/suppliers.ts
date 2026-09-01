@@ -1,0 +1,48 @@
+import type { Supplier } from "@/features/suppliers/types";
+
+export const suppliers: Supplier[] = [
+  {
+    id: "supplier-casa-materiais-silva",
+    name: "Casa dos Materiais Silva",
+    document: "12.345.678/0001-90",
+    contactName: "Roberto Silva",
+    phone: "11988880001",
+    email: "contato@materiaissilva.com.br",
+    address: "Av. Industrial, 450 - São Paulo/SP",
+    status: "active",
+    createdAt: "2026-06-10",
+    updatedAt: "2026-08-20",
+  },
+  {
+    id: "supplier-deposito-sao-lucas",
+    name: "Depósito São Lucas",
+    document: "23.456.789/0001-01",
+    contactName: "Lucas Fernandes",
+    phone: "11988880002",
+    address: "Rua das Pedreiras, 88 - São Paulo/SP",
+    status: "active",
+    createdAt: "2026-06-15",
+    updatedAt: "2026-08-10",
+  },
+  {
+    id: "supplier-ferragens-central",
+    name: "Ferragens Central",
+    document: "34.567.890/0001-12",
+    contactName: "Marta Nogueira",
+    phone: "11988880003",
+    email: "vendas@ferragenscentral.com.br",
+    status: "active",
+    createdAt: "2026-07-01",
+    updatedAt: "2026-07-01",
+  },
+  {
+    id: "supplier-locadora-sao-jose",
+    name: "Locadora São José",
+    contactName: "Paulo Ramos",
+    phone: "11988880004",
+    status: "inactive",
+    notes: "Encerrou o contrato de locação de equipamentos em julho.",
+    createdAt: "2026-05-01",
+    updatedAt: "2026-07-25",
+  },
+];
