@@ -1,0 +1,52 @@
+import type { Receivable } from "@/features/receivables/types";
+
+export const receivables: Receivable[] = [
+  {
+    id: "receivable-pendente-cozinha",
+    description: "Parcela única - Reforma Cozinha",
+    customerId: "ana-martins",
+    projectId: "reforma-cozinha-martins",
+    amount: 5000,
+    dueDate: "2026-09-20",
+    createdAt: "2026-08-20",
+    updatedAt: "2026-08-20",
+  },
+  {
+    id: "receivable-vencida-geral",
+    description: "Consultoria técnica avulsa",
+    customerId: "joao-oliveira",
+    amount: 3000,
+    dueDate: "2026-08-10",
+    createdAt: "2026-07-30",
+    updatedAt: "2026-07-30",
+  },
+  {
+    id: "receivable-recebida-edicula",
+    description: "Entrada - Edícula Fundos",
+    customerId: "carlos-souza",
+    projectId: "edicula-fundos-obra",
+    amount: 10000,
+    dueDate: "2026-08-20",
+    createdAt: "2026-08-01",
+    updatedAt: "2026-08-18",
+  },
+  {
+    id: "receivable-parcial-mariana",
+    description: "Projeto de reforma - sinal",
+    customerId: "mariana-silva",
+    amount: 20000,
+    dueDate: "2026-09-25",
+    createdAt: "2026-08-10",
+    updatedAt: "2026-08-28",
+  },
+  {
+    id: "receivable-parcial-vencida-edicula",
+    description: "Parcela 2 - Edícula Fundos",
+    customerId: "carlos-souza",
+    projectId: "edicula-fundos-obra",
+    amount: 20000,
+    dueDate: "2026-08-20",
+    createdAt: "2026-08-01",
+    updatedAt: "2026-08-15",
+  },
+];

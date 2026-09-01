@@ -9,6 +9,7 @@ const GESTAO_LINKS = [
 
 const FINANCEIRO_LINKS = [
   { href: "/financeiro/contas-a-pagar", label: "Contas a pagar", icon: Receipt },
+  { href: "/financeiro/contas-a-receber", label: "Contas a receber", icon: Receipt },
 ];
 
 function LinkSection({

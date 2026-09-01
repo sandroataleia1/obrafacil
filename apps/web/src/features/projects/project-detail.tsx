@@ -16,6 +16,9 @@ import { useProjectCosts } from "@/features/project-costs/prototype/use-project-
 import { PROJECT_COST_CATEGORY_LABEL } from "@/features/project-costs/types";
 import { listPayablesByProject } from "@/features/payables/prototype/payable-store";
 import type { Payable } from "@/features/payables/types";
+import { listReceivablesByProject } from "@/features/receivables/prototype/receivable-store";
+import { listReceiptsByReceivable } from "@/features/receivables/prototype/receipt-store";
+import { calculateReceivableTotals } from "@/features/receivables/prototype/receivable-totals";
 import { buildProjectManagementSummary } from "./prototype/project-summary";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "./types";
 import { ProjectStatusBadge } from "./components/status-badge";
@@ -61,10 +64,12 @@ export function ProjectDetail({ id }: { id: string }) {
   const { project, persist } = useProject(id);
   const { costs } = useProjectCosts(id);
   const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
+  const [receivablesLoaded, setReceivablesLoaded] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPayables(listPayablesByProject(id));
+    setReceivablesLoaded(true);
   }, [id]);
 
   if (project === undefined) return null;
@@ -85,6 +90,10 @@ export function ProjectDetail({ id }: { id: string }) {
     costs !== undefined && payables !== undefined
       ? buildProjectManagementSummary({ project, budget, costs, payables })
       : null;
+
+  const receivableTotals = receivablesLoaded
+    ? calculateReceivableTotals(listReceivablesByProject(project.id), listReceiptsByReceivable)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -338,6 +347,56 @@ export function ProjectDetail({ id }: { id: string }) {
               nativeButton={false}
               render={<Link href="/financeiro/contas-a-pagar">Ver contas</Link>}
             />
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              Contas a receber
+            </p>
+            <div className="flex items-center gap-6">
+              <div>
+                <p className="text-xs text-muted-foreground">Recebido</p>
+                <p className="text-sm font-semibold tabular-nums text-foreground">
+                  {formatCurrency(receivableTotals?.totalReceived ?? 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">A receber</p>
+                <p className="text-sm font-semibold tabular-nums text-foreground">
+                  {formatCurrency(receivableTotals?.totalOutstanding ?? 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Vencido</p>
+                <p
+                  className={
+                    (receivableTotals?.overdueOutstanding ?? 0) > 0
+                      ? "text-sm font-semibold tabular-nums text-destructive"
+                      : "text-sm font-semibold tabular-nums text-foreground"
+                  }
+                >
+                  {formatCurrency(receivableTotals?.overdueOutstanding ?? 0)}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={
+                  <Link href={`/financeiro/contas-a-receber?projectId=${project.id}`}>Ver contas</Link>
+                }
+              />
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={
+                  <Link href={`/financeiro/contas-a-receber/nova?projectId=${project.id}`}>
+                    Adicionar conta
+                  </Link>
+                }
+              />
+            </div>
           </div>
         </section>
       ) : null}
