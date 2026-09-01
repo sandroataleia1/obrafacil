@@ -80,3 +80,35 @@ export const WORK_PERIOD_STATUS_LABEL: Record<WorkPeriodStatus, string> = {
 export function getWorkPeriodStatus(workPeriod: EmployeeWorkPeriod): WorkPeriodStatus {
   return workPeriod.closedAt ? "closed" : "open";
 }
+
+/**
+ * How a closed period's estimated pay is apportioned to a Project
+ * (Obra) as a realized labor cost — a separate concern from Payable
+ * (the financial obligation to the employee). Both hang off the same
+ * `EmployeeWorkPeriod`, independently:
+ *
+ *   EmployeeWorkPeriod (Fechado)
+ *       ├── Payable                        — obrigação financeira
+ *       └── EmployeePeriodAllocation[]      — custo apropriado à Obra
+ *
+ * `employeeId`/`period`/`year`/`month` are intentionally NOT stored
+ * here — they are always resolved by looking up `employeePeriodId`,
+ * mirroring how `Payable.originId` never duplicates the employee
+ * identity either. There is also no `payableId`/`projectCostId` link:
+ * an allocation's materialized ProjectCost is found the same way
+ * everything else in this codebase resolves provenance — by
+ * `originType`/`originId` lookup (see `features/project-costs`).
+ *
+ * One allocation per (employeePeriodId, projectId) pair. A period may
+ * be split across multiple projects, and partial allocation (money
+ * left "não alocado") is expected and valid — 100% allocation is not
+ * required.
+ */
+export interface EmployeePeriodAllocation {
+  id: string;
+  employeePeriodId: string;
+  projectId: string;
+  amount: number;
+  createdAt: string;
+  updatedAt: string;
+}

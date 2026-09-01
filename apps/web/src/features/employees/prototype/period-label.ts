@@ -26,3 +26,18 @@ export function formatPeriodShort(period: string): string {
   const monthName = MONTH_LABELS[Number(month) - 1] ?? month;
   return `${monthName}/${year}`;
 }
+
+/**
+ * "2026-02" -> "2026-02-28", "2028-02" -> "2028-02-29" (leap year),
+ * "2026-08" -> "2026-08-31". Used as the economic-competency date for
+ * costs allocated from a work period. `new Date(year, month, 0)` uses
+ * local numeric components (not string parsing), so it never hits the
+ * UTC-string-parsing pitfall that shifts a calendar day near midnight.
+ */
+export function lastDayOfPeriod(period: string): string {
+  const [yearStr, monthStr] = period.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${yearStr}-${monthStr.padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+}

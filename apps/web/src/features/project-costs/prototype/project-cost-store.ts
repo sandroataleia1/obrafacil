@@ -114,24 +114,27 @@ export function deleteProjectCostByOrigin(
 }
 
 /**
- * Guarded entry points for the manual "Custos da obra" screen. A cost
- * produced by a Payable (originType "payable") is owned by Contas a
- * Pagar — it must not be edited or removed from here. These wrappers
- * no-op (return false) instead of touching such a record; the manual
- * form should never reach them for a payable-origin cost (it redirects
- * away first), but the guard stays here too so the rule holds even if
- * a future caller forgets that check.
+ * Guarded entry points for the manual "Custos da obra" screen. ANY
+ * cost with a defined `originType` (currently "payable" or
+ * "employee-period-allocation") is owned by another module — it must
+ * not be edited or removed from here. These wrappers no-op (return
+ * false) instead of touching such a record; the manual form should
+ * never reach them for a derived cost (it redirects away first), but
+ * the guard stays here too so the rule holds even if a future caller
+ * forgets that check. Checking "any origin" instead of a specific
+ * origin value means a future new origin type is covered automatically,
+ * with no guard to update here.
  */
 export function saveManualProjectCost(cost: ProjectCost): boolean {
   const existing = getProjectCost(cost.id);
-  if (existing?.originType === "payable") return false;
+  if (existing?.originType !== undefined) return false;
   saveProjectCost(cost);
   return true;
 }
 
 export function deleteManualProjectCost(id: string): boolean {
   const existing = getProjectCost(id);
-  if (existing?.originType === "payable") return false;
+  if (existing?.originType !== undefined) return false;
   deleteProjectCost(id);
   return true;
 }

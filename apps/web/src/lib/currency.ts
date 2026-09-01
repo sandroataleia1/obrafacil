@@ -25,3 +25,13 @@ export function formatCurrency(value: number): string {
     currency: "BRL",
   });
 }
+
+/**
+ * Normalizes a monetary value to integer cents for comparisons/limits
+ * (e.g. "allocated <= expected"). Plain floats like `2909.0900000000006`
+ * can otherwise cause incorrect boundary checks. Values stay `number`
+ * (reais) everywhere else — this is only for validation math.
+ */
+export function toCents(value: number): number {
+  return Math.round(value * 100);
+}

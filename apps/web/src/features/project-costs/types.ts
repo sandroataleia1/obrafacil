@@ -9,15 +9,25 @@
  * Origin: a ProjectCost created manually has no `originType`/`originId`
  * — absence of origin represents a manual entry in this prototype, no
  * migration needed for costs created before origin tracking existed.
- * A ProjectCost produced by marking a Payable (conta a pagar) as paid
- * carries `originType: "payable"` and `originId` pointing at that
- * Payable, so the integration can guarantee a Payable never produces
- * more than one ProjectCost (see `features/payables`).
+ * Any ProjectCost WITH an `originType` is derived/materialized by
+ * another module and is not editable/deletable from the manual Custos
+ * da Obra screen — see `saveManualProjectCost`/`deleteManualProjectCost`
+ * in `prototype/project-cost-store.ts`, which guard on "any known
+ * origin", not on a specific origin value, so this rule automatically
+ * covers every origin type below without needing a new guard each time
+ * one is added.
+ *
+ * - `"payable"`: produced by marking a Payable (conta a pagar) as paid,
+ *   `originId` points at that Payable — guarantees a Payable never
+ *   produces more than one ProjectCost (see `features/payables`).
+ * - `"employee-period-allocation"`: produced by an
+ *   `EmployeePeriodAllocation` (see `features/employees`) — an
+ *   EmployeeWorkPeriod's estimated pay apportioned to this Project as
+ *   a realized labor cost, independent of whether/when the
+ *   corresponding Payable is paid. `originId` points at the
+ *   Allocation; exactly one ProjectCost per Allocation.
  *
  * Future relations (documented, not modeled yet):
- * - Future employee/work-log payroll calculations may generate project
- *   costs in the "labor" category. No Employee/WorkLog/salary concept
- *   exists yet.
  * - Future purchases may also generate ProjectCost entries once a
  *   Purchases module exists. No Purchase/PurchaseItem/Supplier entity
  *   is modeled here — "supplier" below is plain optional text.
@@ -52,7 +62,7 @@ export const PROJECT_COST_CATEGORY_LABEL: Record<ProjectCostCategory, string> = 
   other: "Outros",
 };
 
-export type ProjectCostOriginType = "payable";
+export type ProjectCostOriginType = "payable" | "employee-period-allocation";
 
 export interface ProjectCost {
   id: string;

@@ -11,16 +11,24 @@ import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
 import { getBudget } from "@/features/budgets/prototype/budget-store";
+import { resolveAllocationPeriodRoute } from "@/features/employees/prototype/period-allocation";
 import { useProject } from "@/features/projects/prototype/use-project";
 import { sumCosts, sumCostsByCategory } from "./prototype/cost-totals";
 import { useProjectCosts } from "./prototype/use-project-costs";
 import { PROJECT_COST_CATEGORY_LABEL, type ProjectCost } from "./types";
 
+function resolveCostHref(cost: ProjectCost): string {
+  if (cost.originType === "payable" && cost.originId) {
+    return `/financeiro/contas-a-pagar/${cost.originId}`;
+  }
+  if (cost.originType === "employee-period-allocation" && cost.originId) {
+    return resolveAllocationPeriodRoute(cost.originId) ?? `/obras/${cost.projectId}/custos`;
+  }
+  return `/obras/${cost.projectId}/custos/${cost.id}`;
+}
+
 function CostRow({ cost }: { cost: ProjectCost }) {
-  const href =
-    cost.originType === "payable" && cost.originId
-      ? `/financeiro/contas-a-pagar/${cost.originId}`
-      : `/obras/${cost.projectId}/custos/${cost.id}`;
+  const href = resolveCostHref(cost);
 
   return (
     <Link
@@ -42,6 +50,9 @@ function CostRow({ cost }: { cost: ProjectCost }) {
         ) : null}
         {cost.originType === "payable" ? (
           <p className="text-[11px] text-muted-foreground/70">Conta a pagar</p>
+        ) : null}
+        {cost.originType === "employee-period-allocation" ? (
+          <p className="text-[11px] text-muted-foreground/70">Equipe</p>
         ) : null}
       </div>
       <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">
