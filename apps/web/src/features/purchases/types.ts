@@ -95,3 +95,47 @@ export interface PurchaseOrderItem {
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * `GoodsReceipt` is one physical arrival of materials against a
+ * PurchaseOrder — internal name deliberately avoids "Receipt" to not
+ * collide with `features/receivables/types.ts#Receipt` (an entirely
+ * unrelated cash-received concept). It stores nothing derivable from
+ * the PurchaseOrder or its items: no `supplierId`/`projectId` (read
+ * via `purchaseOrderId`), no `status`/`total`/`receivedQuantity`
+ * (derived — see `prototype/fulfillment.ts`).
+ *
+ * A GoodsReceipt only records what physically arrived — it never
+ * creates a Payable, ProjectCost, or any financial entry. See Task
+ * 038 discovery: economic/financial recognition of a purchase still
+ * only happens through the existing Payable-paid path, unrelated to
+ * physical receipt.
+ */
+export interface GoodsReceipt {
+  id: string;
+
+  purchaseOrderId: string;
+
+  receivedAt: string;
+  notes?: string;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * `purchaseOrderItemId` is the only link — `materialId`/`description`/
+ * `unit`/`unitPrice` all resolve through the PurchaseOrderItem it
+ * references, never duplicated here. A domain invariant (enforced in
+ * `prototype/goods-receipt.ts`, not just the store) guarantees the
+ * referenced PurchaseOrderItem always belongs to the same
+ * `purchaseOrderId` as this GoodsReceiptItem's own GoodsReceipt.
+ */
+export interface GoodsReceiptItem {
+  id: string;
+
+  goodsReceiptId: string;
+  purchaseOrderItemId: string;
+
+  quantity: number;
+}

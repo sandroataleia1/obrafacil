@@ -11,7 +11,7 @@ export default function CalcularPage() {
         <p className="text-sm text-muted-foreground">O que você vai fazer?</p>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-3 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0 xl:grid-cols-3">
         {CALCULATOR_CATEGORIES.map((category) => (
           <CalculatorCard key={category.id} {...category} />
         ))}

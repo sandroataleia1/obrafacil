@@ -6,13 +6,15 @@
  * `src/mocks/suppliers.ts`. Laravel + PostgreSQL will replace this
  * storage entirely once the real API exists.
  *
- * `deleteSupplier()` is unconditional in this v1 — PurchaseOrder does
- * not exist yet, so there is no real dependency to guard against.
- * Task 040 must add a guard here (or in an orchestration layer) once
- * PurchaseOrder exists, mirroring `removeReceivable`'s Receipt guard.
+ * `deleteSupplier()` stays unconditional (used internally once a
+ * removal is already known to be safe). `removeSupplier()` is the
+ * guarded entry point — PurchaseOrder now exists, so a Supplier with
+ * any PurchaseOrder can no longer be deleted, mirroring
+ * `removeReceivable`'s Receipt guard.
  */
 
 import { suppliers as seedSuppliers } from "@/mocks/suppliers";
+import { listPurchaseOrdersBySupplier } from "@/features/purchases/prototype/purchase-order-store";
 import type { Supplier } from "../types";
 
 const STORAGE_KEY = "obrafacil:suppliers";
@@ -97,6 +99,20 @@ export function deleteSupplier(id: string): void {
   const deleted = readDeleted();
   deleted.add(id);
   writeDeleted(deleted);
+}
+
+export type SupplierResult = { ok: true } | { ok: false; error: string };
+
+export function removeSupplier(supplier: Supplier): SupplierResult {
+  const purchaseOrdersCount = listPurchaseOrdersBySupplier(supplier.id).length;
+  if (purchaseOrdersCount > 0) {
+    return {
+      ok: false,
+      error: "Este fornecedor possui compras vinculadas e não pode ser excluído.",
+    };
+  }
+  deleteSupplier(supplier.id);
+  return { ok: true };
 }
 
 export function createSupplierId(): string {

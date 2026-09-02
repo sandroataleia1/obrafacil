@@ -10,10 +10,11 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatQuantity } from "@/lib/quantity";
 import { useProject } from "@/features/projects/prototype/use-project";
+import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
 import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
 import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
 import { calculateMaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
-import type { PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
 import { formatMaterialUnit } from "./material-unit";
 import { getMaterial } from "./prototype/material-store";
 import { useRequirements } from "./prototype/use-requirements";
@@ -24,11 +25,13 @@ function RequirementRow({
   requirement,
   purchaseOrders,
   purchaseOrderItems,
+  receiptItems,
 }: {
   projectId: string;
   requirement: MaterialRequirement;
   purchaseOrders: PurchaseOrder[];
   purchaseOrderItems: PurchaseOrderItem[];
+  receiptItems: GoodsReceiptItem[];
 }) {
   const material = getMaterial(requirement.materialId);
   const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : "";
@@ -36,6 +39,7 @@ function RequirementRow({
     requirement.requiredQuantity,
     purchaseOrders,
     purchaseOrderItems,
+    receiptItems,
     requirement.materialId
   );
 
@@ -64,6 +68,15 @@ function RequirementRow({
           </span>
         </div>
         <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">Recebido</span>
+          <span className="text-sm font-semibold tabular-nums text-foreground">
+            {formatQuantity(planning.received)} {unitLabel}
+            {planning.receivedExcess > 0
+              ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})`
+              : ""}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">Falta comprar</span>
           <span
             className={
@@ -73,6 +86,18 @@ function RequirementRow({
             }
           >
             {formatQuantity(planning.remainingToBuy)} {unitLabel}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">Falta receber</span>
+          <span
+            className={
+              planning.remainingToReceive > 0
+                ? "text-sm font-semibold tabular-nums text-destructive"
+                : "text-sm font-semibold tabular-nums text-foreground"
+            }
+          >
+            {formatQuantity(planning.remainingToReceive)} {unitLabel}
           </span>
         </div>
       </div>
@@ -89,6 +114,7 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
   const [purchaseOrderItems, setPurchaseOrderItems] = useState<PurchaseOrderItem[] | undefined>(
     undefined
   );
+  const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
 
   useEffect(() => {
     const projectPurchaseOrders = listPurchaseOrdersByProject(projectId);
@@ -96,6 +122,11 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
     setPurchaseOrders(projectPurchaseOrders);
     setPurchaseOrderItems(
       listItemsByPurchaseOrders(projectPurchaseOrders.map((purchaseOrder) => purchaseOrder.id))
+    );
+    setReceiptItems(
+      projectPurchaseOrders.flatMap((purchaseOrder) =>
+        listReceiptItemsByPurchaseOrder(purchaseOrder.id)
+      )
     );
   }, [projectId]);
 
@@ -131,7 +162,10 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
         />
       </div>
 
-      {requirements === undefined || purchaseOrders === undefined || purchaseOrderItems === undefined ? null : requirements.length === 0 ? (
+      {requirements === undefined ||
+      purchaseOrders === undefined ||
+      purchaseOrderItems === undefined ||
+      receiptItems === undefined ? null : requirements.length === 0 ? (
         <div className="space-y-3">
           <EmptyState
             icon={Package}
@@ -154,6 +188,7 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
               requirement={requirement}
               purchaseOrders={purchaseOrders}
               purchaseOrderItems={purchaseOrderItems}
+              receiptItems={receiptItems}
             />
           ))}
         </div>

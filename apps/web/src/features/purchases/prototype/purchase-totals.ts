@@ -1,14 +1,15 @@
 /**
  * Pure derived totals for PurchaseOrder/PurchaseOrderItem, plus the
- * "how much of a Material has been purchased for this Obra" figure
- * that bridges into `MaterialRequirement` planning. Nothing here is
- * persisted; `PurchaseOrder`/`PurchaseOrderItem` never store a
- * `total` field.
+ * "how much of a Material has been purchased/received for this Obra"
+ * figures that bridge into `MaterialRequirement` planning. Nothing
+ * here is persisted; `PurchaseOrder`/`PurchaseOrderItem` never store a
+ * `total` field, and none of these figures are stored on the
+ * MaterialRequirement either.
  */
 
 import { toCents } from "@/lib/currency";
 import { toQuantityUnits } from "@/lib/quantity";
-import type { PurchaseOrder, PurchaseOrderItem } from "../types";
+import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "../types";
 
 export function calculatePurchaseItemTotal(item: PurchaseOrderItem): number {
   return toCents(item.quantity * item.unitPrice) / 100;
@@ -22,42 +23,79 @@ export function calculatePurchaseOrderTotal(items: PurchaseOrderItem[]): number 
 export interface MaterialPlanning {
   required: number;
   purchased: number;
+  received: number;
   remainingToBuy: number;
+  remainingToReceive: number;
   purchasedExcess: number;
+  receivedExcess: number;
 }
 
 /**
- * "Purchased" only counts items belonging to `ordered` PurchaseOrders
- * — a `draft` order is not yet a commitment, and a `cancelled` order
- * never happened. This will be refined in Task 041: once GoodsReceipt
- * exists, a cancelled order that already had physical deliveries must
- * keep the received quantity in history instead of dropping it to
- * zero — not implemented now because GoodsReceipt doesn't exist yet.
+ * Per-item contribution to "purchased" and "remaining to receive"
+ * depends on the owning PurchaseOrder's `commercialStatus`:
+ *
+ * - `draft`: contributes 0 to both — not yet a real commitment.
+ * - `ordered`: contributes its full `item.quantity` to `purchased`,
+ *   and `max(item.quantity - receivedQuantity, 0)` to
+ *   `remainingToReceive` — an open delivery expectation.
+ * - `cancelled`: contributes only what was physically
+ *   `receivedQuantity` to `purchased` (0 if nothing arrived before
+ *   cancellation), and 0 to `remainingToReceive` — nothing is still
+ *   expected. This is what makes the critical "cancel after partial
+ *   delivery" case correct: 40 of 100 already received before
+ *   cancelling stays counted as purchased/received; the other 60
+ *   drops out of both "purchased" and "expected delivery" and goes
+ *   back into `remainingToBuy` instead.
+ *
+ * `received` always sums every GoodsReceiptItem for the Material,
+ * regardless of the owning order's current status — physical history
+ * never disappears because a PurchaseOrder was later cancelled.
  */
 export function calculateMaterialPlanning(
   requiredQuantity: number,
   purchaseOrders: PurchaseOrder[],
   items: PurchaseOrderItem[],
+  receiptItems: GoodsReceiptItem[],
   materialId: string
 ): MaterialPlanning {
-  const orderedIds = new Set(
-    purchaseOrders
-      .filter((purchaseOrder) => purchaseOrder.commercialStatus === "ordered")
-      .map((purchaseOrder) => purchaseOrder.id)
-  );
+  const orderById = new Map(purchaseOrders.map((purchaseOrder) => [purchaseOrder.id, purchaseOrder]));
+  const materialItems = items.filter((item) => item.materialId === materialId);
 
-  const purchasedUnits = items
-    .filter((item) => item.materialId === materialId && orderedIds.has(item.purchaseOrderId))
-    .reduce((sum, item) => sum + toQuantityUnits(item.quantity), 0);
+  let purchasedUnits = 0;
+  let receivedUnits = 0;
+  let remainingToReceiveUnits = 0;
+
+  for (const item of materialItems) {
+    const order = orderById.get(item.purchaseOrderId);
+    if (!order) continue;
+
+    const itemReceivedUnits = receiptItems
+      .filter((receiptItem) => receiptItem.purchaseOrderItemId === item.id)
+      .reduce((sum, receiptItem) => sum + toQuantityUnits(receiptItem.quantity), 0);
+    receivedUnits += itemReceivedUnits;
+
+    if (order.commercialStatus === "ordered") {
+      const itemOrderedUnits = toQuantityUnits(item.quantity);
+      purchasedUnits += itemOrderedUnits;
+      remainingToReceiveUnits += Math.max(itemOrderedUnits - itemReceivedUnits, 0);
+    } else if (order.commercialStatus === "cancelled") {
+      purchasedUnits += itemReceivedUnits;
+    }
+    // draft contributes 0 to both purchased and remainingToReceive.
+  }
 
   const requiredUnits = toQuantityUnits(requiredQuantity);
   const remainingToBuyUnits = Math.max(requiredUnits - purchasedUnits, 0);
   const purchasedExcessUnits = Math.max(purchasedUnits - requiredUnits, 0);
+  const receivedExcessUnits = Math.max(receivedUnits - requiredUnits, 0);
 
   return {
     required: requiredQuantity,
     purchased: purchasedUnits / 1000,
+    received: receivedUnits / 1000,
     remainingToBuy: remainingToBuyUnits / 1000,
+    remainingToReceive: remainingToReceiveUnits / 1000,
     purchasedExcess: purchasedExcessUnits / 1000,
+    receivedExcess: receivedExcessUnits / 1000,
   };
 }

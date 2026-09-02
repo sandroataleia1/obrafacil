@@ -1,10 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
-import { DESKTOP_NAV_ITEMS } from "./nav-items";
+import {
+  DESKTOP_NAV_EXTRA_ITEMS,
+  DESKTOP_NAV_FINANCE_ITEMS,
+  DESKTOP_NAV_ITEMS,
+  type NavItem,
+} from "./nav-items";
+
+const MAIS_ITEM: NavItem = { href: "/mais", label: "Mais", icon: Menu };
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -19,7 +27,7 @@ function NavLink({
 }: {
   href: string;
   label: string;
-  icon: (typeof DESKTOP_NAV_ITEMS)[number]["icon"];
+  icon: NavItem["icon"];
   active: boolean;
 }) {
   return (
@@ -48,10 +56,30 @@ function NavLink({
   );
 }
 
+function NavGroup({ title, items, pathname }: { title?: string; items: NavItem[]; pathname: string }) {
+  return (
+    <ul className="hidden flex-col gap-1 lg:flex">
+      {title ? (
+        <li className="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          {title}
+        </li>
+      ) : null}
+      {items.map((item) => (
+        <li key={item.href}>
+          <NavLink
+            href={item.href}
+            label={item.label}
+            icon={item.icon}
+            active={isActive(pathname, item.href)}
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function DesktopSidebar() {
   const pathname = usePathname();
-  const mainItems = DESKTOP_NAV_ITEMS.filter((item) => item.href !== "/mais");
-  const moreItem = DESKTOP_NAV_ITEMS.find((item) => item.href === "/mais");
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-border bg-sidebar px-3 py-5 md:flex">
@@ -64,10 +92,10 @@ export function DesktopSidebar() {
 
       <nav
         aria-label="Navegação principal"
-        className="mt-6 flex flex-1 flex-col"
+        className="mt-6 flex flex-1 flex-col overflow-y-auto"
       >
         <ul className="flex flex-col gap-1">
-          {mainItems.map((item) => (
+          {DESKTOP_NAV_ITEMS.map((item) => (
             <li key={item.href}>
               <NavLink
                 href={item.href}
@@ -79,18 +107,19 @@ export function DesktopSidebar() {
           ))}
         </ul>
 
-        {moreItem ? (
-          <ul className="mt-auto flex flex-col gap-1 border-t border-border pt-3">
-            <li>
-              <NavLink
-                href={moreItem.href}
-                label={moreItem.label}
-                icon={moreItem.icon}
-                active={isActive(pathname, moreItem.href)}
-              />
-            </li>
-          </ul>
-        ) : null}
+        <NavGroup title="Gestão" items={DESKTOP_NAV_EXTRA_ITEMS} pathname={pathname} />
+        <NavGroup title="Financeiro" items={DESKTOP_NAV_FINANCE_ITEMS} pathname={pathname} />
+
+        <ul className="mt-auto flex flex-col gap-1 border-t border-border pt-3 lg:hidden">
+          <li>
+            <NavLink
+              href={MAIS_ITEM.href}
+              label={MAIS_ITEM.label}
+              icon={MAIS_ITEM.icon}
+              active={isActive(pathname, MAIS_ITEM.href)}
+            />
+          </li>
+        </ul>
       </nav>
     </aside>
   );

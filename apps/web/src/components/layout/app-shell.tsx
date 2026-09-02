@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               : "pb-[calc(5rem+env(safe-area-inset-bottom))]"
           )}
         >
-          <div className="mx-auto w-full max-w-xl px-4 py-6 sm:max-w-2xl sm:px-6 md:px-10 md:py-12 lg:max-w-2xl">
+          <div className="mx-auto w-full max-w-xl px-4 py-6 sm:max-w-2xl sm:px-6 md:max-w-2xl md:px-10 md:py-12 lg:max-w-none lg:px-12 xl:px-16">
             {children}
           </div>
         </main>

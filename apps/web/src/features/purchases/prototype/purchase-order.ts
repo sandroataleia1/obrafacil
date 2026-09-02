@@ -6,58 +6,63 @@
  * Status state machine (`commercialStatus`):
  *   draft      -> ordered   (validated: see `validateForOrdered`)
  *   draft      -> cancelled
- *   ordered    -> draft     (unrestricted in this v1 — no GoodsReceipt/
- *                            Payable exists yet to protect; Task 041/043
- *                            will likely restrict this once they do)
- *   ordered    -> cancelled
- *   cancelled  -> draft     (reactivation, unrestricted in this v1)
+ *   ordered    -> draft     (BLOCKED if the order has any GoodsReceipt
+ *                            — a physical fact already exists; remove
+ *                            the GoodsReceipts first, see Task 041)
+ *   ordered    -> cancelled (BLOCKED if fulfillment is already fully
+ *                            "received" — nothing remains to cancel)
+ *   cancelled  -> draft     (BLOCKED if the order has any GoodsReceipt,
+ *                            same reasoning as ordered -> draft)
  * Any other transition (including cancelled -> ordered directly) is
  * rejected — to confirm a cancelled order, reactivate it to draft
- * first, then confirm normally.
+ * first, then confirm normally. `hasGoodsReceipts` is passed in by the
+ * caller (derived from GoodsReceiptItem history — see
+ * `goods-receipt.ts`) rather than looked up here, keeping this module
+ * decoupled from the GoodsReceipt stores' internals.
  *
- * A `cancelled` PurchaseOrder is read-only: no field, item, or item
- * list may change while cancelled — every mutation below checks
- * `isCancelled` first. Reactivate to `draft` to edit.
+ * A `cancelled` PurchaseOrder is read-only for its own fields/items —
+ * no field, item, or item list may change while cancelled — every
+ * mutation below checks `isCancelled` first. Reactivate to `draft` to
+ * edit (blocked while GoodsReceipts exist, see above). A cancelled
+ * order CAN still hold GoodsReceipt history from before cancellation
+ * (partial delivery, rest cancelled) — that history is never touched
+ * by cancellation itself.
  *
  * `ordered` is a PERMANENT invariant, not just a one-time gate at
  * confirmation: an `ordered` PurchaseOrder must always keep at least
  * one item, every item's quantity normalized > 0, and every item's
- * unitPrice > 0. This is enforced continuously by making every
- * mutation that could break it impossible while `ordered`:
- *   - `addPurchaseOrderItem` requires `unitPrice > 0` while ordered
- *     (draft still allows R$0,00 — the order hasn't been confirmed
- *     as final, so an incomplete price is expected there);
+ * unitPrice > 0. This is enforced continuously:
+ *   - `addPurchaseOrderItem` requires `unitPrice > 0` while ordered,
+ *     and is blocked entirely once the order's fulfillment is fully
+ *     "received" (`isFullyReceived`) — adding scope to an order that
+ *     was already completely fulfilled would retroactively change
+ *     what "fully received" meant;
  *   - `updatePurchaseOrderItem` requires `unitPrice > 0` while ordered;
- *   - `removePurchaseOrderItem` refuses to remove the last remaining
- *     item while ordered (an order can never end up `ordered` with
- *     zero items — go back to `draft` first to remove everything).
- * Together these make a full re-validation on every mutation
- * unnecessary — no path can produce an invalid `ordered` state.
+ *     quantity can never drop below what was already physically
+ *     received (`receivedQuantity`, supplied by the caller), and is
+ *     fully frozen once the item itself is fully received (neither
+ *     increase nor decrease);
+ *   - `removePurchaseOrderItem` refuses to remove an item with any
+ *     `receivedQuantity`, and refuses to remove the last remaining
+ *     item while ordered.
  *
  * `ordered` also locks the order's identity: `supplierId`,
  * `projectId`, and `orderDate` cannot change while ordered (only
- * `expectedDeliveryDate`/`notes`/items are still editable). This is a
- * closed semantic decision for PurchaseOrder itself, independent of
- * GoodsReceipt/Payable not existing yet.
+ * `expectedDeliveryDate`/`notes`/items are still editable).
  *
- * Deletion is only allowed for `draft` orders (with no other
- * downstream dependency yet); it cascades to that order's items only.
- *
- * Quantity precision: every stored `quantity` is normalized to at
- * most 3 decimal places via `toQuantityUnits`/1000 before persisting
- * — the same precision `MaterialRequirement` and the material-planning
- * aggregation already use. A value whose normalized quantity rounds to
- * zero (e.g. 0.0004) is rejected outright, never silently stored as a
- * "positive" value that is actually zero once normalized.
+ * Deletion is only allowed for `draft` orders; it cascades to that
+ * order's items only (a `draft` order can never have a GoodsReceipt,
+ * since `registerGoodsReceipt` only accepts `ordered` orders).
  */
 
 import { toCents } from "@/lib/currency";
-import { toQuantityUnits } from "@/lib/quantity";
+import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
 import { todayIso } from "@/lib/date";
 import { getProject } from "@/features/projects/prototype/project-store";
 import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
 import { getMaterial } from "@/features/materials/prototype/material-store";
-import type { PurchaseOrder, PurchaseOrderCommercialStatus, PurchaseOrderItem } from "../types";
+import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderCommercialStatus, PurchaseOrderItem } from "../types";
+import { calculatePurchaseOrderFulfillment } from "./fulfillment";
 import {
   createPurchaseOrderId,
   deletePurchaseOrder as deletePurchaseOrderRecord,
@@ -94,15 +99,6 @@ function isCancelled(purchaseOrder: PurchaseOrder): boolean {
 
 function isOrdered(purchaseOrder: PurchaseOrder): boolean {
   return purchaseOrder.commercialStatus === "ordered";
-}
-
-/** Normalizes a quantity to at most 3 decimal places. */
-function normalizeQuantity(value: number): number {
-  return toQuantityUnits(value) / 1000;
-}
-
-function isValidQuantity(value: number): boolean {
-  return toQuantityUnits(value) > 0;
 }
 
 export function createPurchaseOrder(input: PurchaseOrderHeaderInput): PurchaseOrderResult {
@@ -148,7 +144,9 @@ export function updatePurchaseOrder(
   if (isOrdered(existing)) {
     // Identity fields are locked once the order is confirmed — only
     // expectedDeliveryDate/notes (and items, via the item functions
-    // below) remain editable.
+    // below) remain editable. This also transitively protects any
+    // GoodsReceipt history, since a GoodsReceipt only ever exists
+    // while the order is (or was) ordered.
     if (changes.supplierId !== existing.supplierId) {
       return { ok: false, error: "Não é possível alterar o fornecedor de um pedido já realizado." };
     }
@@ -210,10 +208,17 @@ export interface PurchaseOrderItemInput {
 
 export function addPurchaseOrderItem(
   purchaseOrder: PurchaseOrder,
-  input: PurchaseOrderItemInput
+  input: PurchaseOrderItemInput,
+  isFullyReceived: boolean = false
 ): PurchaseOrderItemResult {
   if (isCancelled(purchaseOrder)) {
     return { ok: false, error: "Pedido cancelado é somente leitura." };
+  }
+  if (isFullyReceived) {
+    return {
+      ok: false,
+      error: "Este pedido já foi totalmente recebido e não aceita novos itens.",
+    };
   }
 
   const material = getMaterial(input.materialId);
@@ -230,7 +235,7 @@ export function addPurchaseOrderItem(
   if (input.description.trim() === "") {
     return { ok: false, error: "Informe uma descrição." };
   }
-  if (!isValidQuantity(input.quantity)) {
+  if (!isPositiveQuantity(input.quantity)) {
     return { ok: false, error: "Informe uma quantidade maior que zero." };
   }
   const priceCents = toCents(input.unitPrice);
@@ -269,7 +274,8 @@ export interface PurchaseOrderItemChanges {
 export function updatePurchaseOrderItem(
   purchaseOrder: PurchaseOrder,
   existing: PurchaseOrderItem,
-  changes: PurchaseOrderItemChanges
+  changes: PurchaseOrderItemChanges,
+  receivedQuantity: number = 0
 ): PurchaseOrderItemResult {
   if (isCancelled(purchaseOrder)) {
     return { ok: false, error: "Pedido cancelado é somente leitura." };
@@ -277,9 +283,28 @@ export function updatePurchaseOrderItem(
   if (changes.description.trim() === "") {
     return { ok: false, error: "Informe uma descrição." };
   }
-  if (!isValidQuantity(changes.quantity)) {
+  if (!isPositiveQuantity(changes.quantity)) {
     return { ok: false, error: "Informe uma quantidade maior que zero." };
   }
+
+  const receivedUnits = toQuantityUnits(receivedQuantity);
+  const existingUnits = toQuantityUnits(existing.quantity);
+  const newUnits = toQuantityUnits(changes.quantity);
+  const itemFullyReceived = receivedUnits > 0 && receivedUnits >= existingUnits;
+
+  if (itemFullyReceived && newUnits !== existingUnits) {
+    return {
+      ok: false,
+      error: "Este item já foi totalmente recebido e sua quantidade não pode ser alterada.",
+    };
+  }
+  if (!itemFullyReceived && newUnits < receivedUnits) {
+    return {
+      ok: false,
+      error: "A quantidade não pode ficar abaixo do que já foi recebido.",
+    };
+  }
+
   const priceCents = toCents(changes.unitPrice);
   if (priceCents < 0) {
     return { ok: false, error: "Informe um preço unitário válido." };
@@ -304,10 +329,14 @@ export function updatePurchaseOrderItem(
 
 export function removePurchaseOrderItem(
   purchaseOrder: PurchaseOrder,
-  item: PurchaseOrderItem
+  item: PurchaseOrderItem,
+  receivedQuantity: number = 0
 ): DomainResult {
   if (isCancelled(purchaseOrder)) {
     return { ok: false, error: "Pedido cancelado é somente leitura." };
+  }
+  if (toQuantityUnits(receivedQuantity) > 0) {
+    return { ok: false, error: "Este item já possui material recebido." };
   }
   if (isOrdered(purchaseOrder) && listItemsByPurchaseOrder(purchaseOrder.id).length <= 1) {
     return {
@@ -323,7 +352,7 @@ function validateForOrdered(purchaseOrder: PurchaseOrder, items: PurchaseOrderIt
   if (!getSupplier(purchaseOrder.supplierId)) return "Fornecedor não encontrado.";
   if (!getProject(purchaseOrder.projectId)) return "Obra não encontrada.";
   if (items.length === 0) return "Adicione ao menos um item antes de confirmar o pedido.";
-  if (items.some((item) => !isValidQuantity(item.quantity))) {
+  if (items.some((item) => !isPositiveQuantity(item.quantity))) {
     return "Todos os itens precisam de quantidade maior que zero.";
   }
   if (items.some((item) => toCents(item.unitPrice) <= 0)) {
@@ -341,10 +370,28 @@ const ALLOWED_TRANSITIONS: Record<PurchaseOrderCommercialStatus, PurchaseOrderCo
 export function changePurchaseOrderStatus(
   purchaseOrder: PurchaseOrder,
   newStatus: PurchaseOrderCommercialStatus,
-  items: PurchaseOrderItem[]
+  items: PurchaseOrderItem[],
+  receiptItems: GoodsReceiptItem[]
 ): PurchaseOrderResult {
   if (!ALLOWED_TRANSITIONS[purchaseOrder.commercialStatus].includes(newStatus)) {
     return { ok: false, error: "Essa mudança de status não é permitida." };
+  }
+
+  const hasGoodsReceipts = receiptItems.length > 0;
+
+  if (newStatus === "draft" && hasGoodsReceipts) {
+    return {
+      ok: false,
+      error:
+        "Este pedido possui recebimentos registrados e não pode voltar para rascunho. Remova os recebimentos primeiro.",
+    };
+  }
+
+  if (newStatus === "cancelled") {
+    const fulfillment = calculatePurchaseOrderFulfillment(items, receiptItems);
+    if (fulfillment === "received") {
+      return { ok: false, error: "Este pedido já foi totalmente recebido." };
+    }
   }
 
   if (newStatus === "ordered") {

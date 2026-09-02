@@ -3,17 +3,18 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Plus } from "lucide-react";
+import { ChevronLeft, FileText, Plus, Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
+import { parseDecimalInput } from "@/lib/decimal";
 import { setPendingProject } from "@/features/projects/prototype/pending-project";
+import { AdditionalField } from "./components/additional-field";
 import { CalculatedStageCard } from "./components/calculated-stage-card";
 import { ManualStageCard } from "./components/manual-stage-card";
 import { ManualStageForm } from "./components/manual-stage-form";
-import { MarginControl } from "./components/margin-control";
 import { MoneyField } from "@/components/shared/money-field";
 import { StatusBadge } from "./components/status-badge";
 import { calculateBudgetTotals, isCalculatedStage, isManualStage } from "./prototype/budget-totals";
@@ -50,7 +51,7 @@ function InfoRow({
 export function BudgetDetail({ id }: { id: string }) {
   const router = useRouter();
   const { budget, persist } = useBudget(id);
-  const [otherCostsInput, setOtherCostsInput] = useState("");
+  const [additionalInput, setAdditionalInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
   const [addingStage, setAddingStage] = useState(false);
 
@@ -60,7 +61,7 @@ export function BudgetDetail({ id }: { id: string }) {
       // localStorage. Safe post-mount update (see useBudget); only re-syncs
       // when a *different* budget loads, not on every persist() from editing.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setOtherCostsInput(String(budget.otherCosts).replace(".", ","));
+      setAdditionalInput(String(budget.marginPercentage).replace(".", ","));
       setDiscountInput(String(budget.discountAmount).replace(".", ","));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,11 +89,21 @@ export function BudgetDetail({ id }: { id: string }) {
 
   if (budget === null) {
     return (
-      <EmptyState
-        icon={FileText}
-        title="Orçamento não encontrado"
-        description="Ele pode ter sido removido ou o link está incorreto."
-      />
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => router.push("/orcamentos")}
+          className="-ml-1.5 flex items-center gap-1 rounded-lg py-1.5 pr-3 pl-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+          Voltar
+        </button>
+        <EmptyState
+          icon={FileText}
+          title="Orçamento não encontrado"
+          description="Ele pode ter sido removido ou o link está incorreto."
+        />
+      </div>
     );
   }
 
@@ -101,6 +112,14 @@ export function BudgetDetail({ id }: { id: string }) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
+        <button
+          type="button"
+          onClick={() => router.push("/orcamentos")}
+          className="-ml-1.5 flex items-center gap-1 rounded-lg py-1.5 pr-3 pl-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+          Voltar
+        </button>
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
             {budget.name}
@@ -177,22 +196,16 @@ export function BudgetDetail({ id }: { id: string }) {
           <InfoRow label="Outras etapas" value={formatCurrency(totals.manualStagesTotal)} />
         ) : null}
 
-        <MoneyField
-          id="other-costs"
-          label="Outros custos"
-          value={otherCostsInput}
+        <AdditionalField
+          id="additional"
+          value={additionalInput}
           onChange={(raw) => {
-            setOtherCostsInput(raw);
-            const parsed = parseCurrencyInput(raw);
+            setAdditionalInput(raw);
+            const parsed = parseDecimalInput(raw);
             if (parsed !== null && parsed >= 0) {
-              persist({ ...budget, otherCosts: parsed });
+              persist({ ...budget, marginPercentage: parsed });
             }
           }}
-        />
-
-        <MarginControl
-          value={budget.marginPercentage}
-          onChange={(marginPercentage) => persist({ ...budget, marginPercentage })}
         />
 
         <MoneyField
@@ -213,8 +226,22 @@ export function BudgetDetail({ id }: { id: string }) {
         </div>
       </div>
 
+      {budget.status === "draft" || budget.status === "pending_approval" ? (
+        <div className="space-y-1.5">
+          <Button type="button" size="lg" className="w-full" disabled>
+            <Send className="size-4" aria-hidden="true" />
+            Enviar orçamento para cliente aprovar
+          </Button>
+          <p className="text-center text-xs text-muted-foreground">
+            Em breve: envio pelo WhatsApp com um link para o cliente aprovar
+            ou recusar a proposta.
+          </p>
+        </div>
+      ) : null}
+
       <Button
         size="lg"
+        variant="outline"
         className="w-full"
         nativeButton={false}
         render={<Link href={`/proposta/${budget.proposalToken}`}>Visualizar proposta</Link>}

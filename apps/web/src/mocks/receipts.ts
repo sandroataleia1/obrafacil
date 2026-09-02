@@ -25,4 +25,20 @@ export const receipts: Receipt[] = [
     createdAt: "2026-08-15",
     updatedAt: "2026-08-15",
   },
+  {
+    id: "receipt-recebida-lima-1",
+    receivableId: "receivable-recebida-lima",
+    amount: 5200,
+    receivedAt: "2026-08-20",
+    createdAt: "2026-08-20",
+    updatedAt: "2026-08-20",
+  },
+  {
+    id: "receipt-recebida-duarte-1",
+    receivableId: "receivable-recebida-duarte",
+    amount: 15000,
+    receivedAt: "2026-08-08",
+    createdAt: "2026-08-08",
+    updatedAt: "2026-08-08",
+  },
 ];

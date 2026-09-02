@@ -1,29 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/shared/empty-state";
+import { Users } from "lucide-react";
 import { formatPhoneInput, digitsOnly } from "@/lib/phone";
-import { createCustomer } from "./prototype/customer-store";
+import { createCustomer, saveCustomer } from "./prototype/customer-store";
+import { useCustomer } from "./prototype/use-customer";
 
-export function CustomerForm() {
+export function CustomerForm({ customerId }: { customerId?: string }) {
+  const isEditing = Boolean(customerId);
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
+  const { customer } = useCustomer(customerId ?? "");
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [document, setDocument] = useState("");
 
+  useEffect(() => {
+    if (customer) {
+      // Safe post-mount update — see useCustomer for the hydration
+      // reasoning. Only re-syncs when a *different* customer loads.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setName(customer.name);
+      setPhone(formatPhoneInput(customer.phone));
+      setEmail(customer.email ?? "");
+      setDocument(customer.document ?? "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer?.id]);
+
   const canSubmit = name.trim() !== "" && digitsOnly(phone).length >= 10;
+
+  if (isEditing && customer === null) {
+    return (
+      <EmptyState
+        icon={Users}
+        title="Cliente não encontrado"
+        description="Ele pode ter sido removido ou o link está incorreto."
+      />
+    );
+  }
 
   function handleSubmit() {
     if (!canSubmit) return;
 
-    const customer = createCustomer({
+    if (isEditing && customer) {
+      saveCustomer({
+        ...customer,
+        name: name.trim(),
+        phone: digitsOnly(phone),
+        email: email.trim() || undefined,
+        document: document.trim() || undefined,
+        updatedAt: new Date().toISOString().slice(0, 10),
+      });
+      router.push(`/clientes/${customer.id}`);
+      return;
+    }
+
+    const created = createCustomer({
       name: name.trim(),
       phone: digitsOnly(phone),
       email: email.trim() || undefined,
@@ -31,19 +72,26 @@ export function CustomerForm() {
     });
 
     if (returnTo) {
-      router.push(`${returnTo}?customerId=${customer.id}`);
+      router.push(`${returnTo}?customerId=${created.id}`);
     } else {
-      router.push(`/clientes/${customer.id}`);
+      router.push(`/clientes/${created.id}`);
     }
   }
 
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <BackHeader title="Novo cliente" onBack={() => router.push("/clientes")} />
-        <p className="pl-11 text-sm text-muted-foreground">
-          Informe o essencial para começar.
-        </p>
+        <BackHeader
+          title={isEditing ? "Editar cliente" : "Novo cliente"}
+          onBack={() =>
+            router.push(isEditing && customerId ? `/clientes/${customerId}` : "/clientes")
+          }
+        />
+        {isEditing ? null : (
+          <p className="pl-11 text-sm text-muted-foreground">
+            Informe o essencial para começar.
+          </p>
+        )}
       </div>
 
       <div className="space-y-4">
@@ -112,7 +160,7 @@ export function CustomerForm() {
         disabled={!canSubmit}
         className="w-full"
       >
-        Criar cliente
+        {isEditing ? "Salvar alterações" : "Criar cliente"}
       </Button>
     </div>
   );

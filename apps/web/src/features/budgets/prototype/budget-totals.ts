@@ -1,8 +1,8 @@
 /**
  * Prototype budget totals for UI validation only.
  *
- *   costTotal = materials + labor + manual stages + other costs
- *   total     = costTotal × (1 + margin / 100) − discount
+ *   costTotal = materials + labor + manual stages
+ *   total     = costTotal × (1 + additional / 100) − discount
  *
  * This is NOT the definitive commercial formula. It exists only to make
  * the Orçamentos prototype feel coherent end-to-end; the real pricing and
@@ -28,7 +28,6 @@ export interface BudgetTotals {
   materialsCost: number;
   laborCost: number;
   manualStagesTotal: number;
-  otherCosts: number;
   costTotal: number;
   marginAmount: number;
   totalBeforeDiscount: number;
@@ -36,7 +35,7 @@ export interface BudgetTotals {
 }
 
 export function calculateBudgetTotals(
-  budget: Pick<Budget, "stages" | "otherCosts" | "marginPercentage" | "discountAmount">
+  budget: Pick<Budget, "stages" | "marginPercentage" | "discountAmount">
 ): BudgetTotals {
   const calculatedStages = budget.stages.filter(isCalculatedStage);
   const manualStages = budget.stages.filter(isManualStage);
@@ -45,7 +44,7 @@ export function calculateBudgetTotals(
   const laborCost = calculatedStages.reduce((sum, stage) => sum + stage.laborCost, 0);
   const manualStagesTotal = manualStages.reduce((sum, stage) => sum + stage.value, 0);
 
-  const costTotal = materialsCost + laborCost + manualStagesTotal + budget.otherCosts;
+  const costTotal = materialsCost + laborCost + manualStagesTotal;
   const marginAmount = costTotal * (budget.marginPercentage / 100);
   const totalBeforeDiscount = costTotal + marginAmount;
   const total = Math.max(totalBeforeDiscount - budget.discountAmount, 0);
@@ -54,7 +53,6 @@ export function calculateBudgetTotals(
     materialsCost,
     laborCost,
     manualStagesTotal,
-    otherCosts: budget.otherCosts,
     costTotal,
     marginAmount,
     totalBeforeDiscount,
@@ -75,19 +73,9 @@ export interface ProposalLine {
  */
 export function getProposalLines(budget: Budget): ProposalLine[] {
   const markup = 1 + budget.marginPercentage / 100;
-  const lines: ProposalLine[] = budget.stages.map((stage) => ({
+  return budget.stages.map((stage) => ({
     id: stage.id,
     name: stage.name,
     amount: stageBaseAmount(stage) * markup,
   }));
-
-  if (budget.otherCosts > 0) {
-    lines.push({
-      id: "other-costs",
-      name: "Outros custos",
-      amount: budget.otherCosts * markup,
-    });
-  }
-
-  return lines;
 }

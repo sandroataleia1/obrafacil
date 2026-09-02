@@ -21,3 +21,21 @@ export function toQuantityUnits(value: number): number {
 export function formatQuantity(value: number): string {
   return value.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
 }
+
+/**
+ * Normalizes a quantity to at most 3 decimal places before persisting
+ * — the canonical precision this prototype stores everywhere
+ * (PurchaseOrderItem.quantity, GoodsReceiptItem.quantity). Using the
+ * same rounding here that `toQuantityUnits` uses for comparisons
+ * guarantees a value can never be "positive but normalizes to zero"
+ * once persisted (e.g. 0.0004 is rejected by `isPositiveQuantity`
+ * before this would ever run on it).
+ */
+export function normalizeQuantity(value: number): number {
+  return toQuantityUnits(value) / 1000;
+}
+
+/** True when the quantity's normalized (3-decimal) value is strictly positive. */
+export function isPositiveQuantity(value: number): boolean {
+  return toQuantityUnits(value) > 0;
+}

@@ -64,7 +64,6 @@ export function BudgetForm() {
       projectReference: reference.trim() || undefined,
       status: "draft",
       stages: pendingItem ? [pendingItemToStage(pendingItem)] : [],
-      otherCosts: 0,
       marginPercentage: DEFAULT_MARGIN_PERCENTAGE,
       discountAmount: 0,
       proposalToken: id,

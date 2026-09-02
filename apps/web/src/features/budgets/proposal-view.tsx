@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { CheckCircle2, ChevronLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/currency";
@@ -9,6 +10,7 @@ import { getProposalLines } from "./prototype/budget-totals";
 import { useBudgetByToken } from "./prototype/use-budget";
 
 export function ProposalView({ token }: { token: string }) {
+  const router = useRouter();
   const { budget, persist } = useBudgetByToken(token);
   const [justApproved, setJustApproved] = useState(false);
 
@@ -16,13 +18,23 @@ export function ProposalView({ token }: { token: string }) {
 
   if (budget === null) {
     return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-lg font-semibold text-foreground">
-          Proposta não encontrada
-        </p>
-        <p className="text-sm text-muted-foreground">
-          O link pode estar incorreto ou expirado.
-        </p>
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="flex items-center gap-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+          Voltar
+        </button>
+        <div className="space-y-2">
+          <p className="text-lg font-semibold text-foreground">
+            Proposta não encontrada
+          </p>
+          <p className="text-sm text-muted-foreground">
+            O link pode estar incorreto ou expirado.
+          </p>
+        </div>
       </main>
     );
   }
@@ -44,9 +56,20 @@ export function ProposalView({ token }: { token: string }) {
   return (
     <main className="min-h-dvh bg-background px-4 py-10 sm:px-6">
       <div className="mx-auto w-full max-w-md space-y-8">
-        <div className="text-lg font-semibold tracking-tight">
-          <span className="text-foreground">Obra</span>
-          <span className="text-primary">Fácil</span>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            aria-label="Voltar"
+            className="flex items-center gap-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronLeft className="size-4" aria-hidden="true" />
+            Voltar
+          </button>
+          <div className="text-lg font-semibold tracking-tight">
+            <span className="text-foreground">Obra</span>
+            <span className="text-primary">Fácil</span>
+          </div>
         </div>
 
         <div className="space-y-1">

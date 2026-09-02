@@ -38,7 +38,6 @@ export interface Budget {
   projectReference?: string;
   status: BudgetStatus;
   stages: BudgetStage[];
-  otherCosts: number;
   marginPercentage: number;
   discountAmount: number;
   proposalToken: string;

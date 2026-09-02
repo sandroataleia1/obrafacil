@@ -24,13 +24,15 @@ import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { getMaterial } from "@/features/materials/prototype/material-store";
 import { listRequirementsByProject } from "@/features/materials/prototype/material-requirement-store";
 import type { MaterialRequirement } from "@/features/materials/types";
+import { calculatePurchaseOrderFulfillment } from "@/features/purchases/prototype/fulfillment";
+import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
 import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
 import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
 import {
   calculateMaterialPlanning,
   calculatePurchaseOrderTotal,
 } from "@/features/purchases/prototype/purchase-totals";
-import type { PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
 import { buildProjectManagementSummary } from "./prototype/project-summary";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "./types";
 import { ProjectStatusBadge } from "./components/status-badge";
@@ -83,6 +85,9 @@ export function ProjectDetail({ id }: { id: string }) {
   const [purchaseOrderItems, setPurchaseOrderItems] = useState<PurchaseOrderItem[] | undefined>(
     undefined
   );
+  const [purchaseReceiptItems, setPurchaseReceiptItems] = useState<GoodsReceiptItem[] | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     const projectReceivables = listReceivablesByProject(id);
@@ -95,6 +100,11 @@ export function ProjectDetail({ id }: { id: string }) {
     setPurchaseOrders(projectPurchaseOrders);
     setPurchaseOrderItems(
       listItemsByPurchaseOrders(projectPurchaseOrders.map((purchaseOrder) => purchaseOrder.id))
+    );
+    setPurchaseReceiptItems(
+      projectPurchaseOrders.flatMap((purchaseOrder) =>
+        listReceiptItemsByPurchaseOrder(purchaseOrder.id)
+      )
     );
   }, [id]);
 
@@ -344,7 +354,10 @@ export function ProjectDetail({ id }: { id: string }) {
             Materiais
           </h2>
         </div>
-        {requirements === undefined || purchaseOrders === undefined || purchaseOrderItems === undefined
+        {requirements === undefined ||
+        purchaseOrders === undefined ||
+        purchaseOrderItems === undefined ||
+        purchaseReceiptItems === undefined
           ? null
           : requirements.length > 0 ? (
           <div className="space-y-3">
@@ -355,6 +368,7 @@ export function ProjectDetail({ id }: { id: string }) {
                   requirement.requiredQuantity,
                   purchaseOrders,
                   purchaseOrderItems,
+                  purchaseReceiptItems,
                   requirement.materialId
                 );
                 const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : "";
@@ -379,6 +393,15 @@ export function ProjectDetail({ id }: { id: string }) {
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Recebido</span>
+                      <span className="text-sm font-semibold tabular-nums text-foreground">
+                        {formatQuantity(planning.received)} {unitLabel}
+                        {planning.receivedExcess > 0
+                          ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">Falta comprar</span>
                       <span
                         className={
@@ -388,6 +411,18 @@ export function ProjectDetail({ id }: { id: string }) {
                         }
                       >
                         {formatQuantity(planning.remainingToBuy)} {unitLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Falta receber</span>
+                      <span
+                        className={
+                          planning.remainingToReceive > 0
+                            ? "text-sm font-semibold tabular-nums text-destructive"
+                            : "text-sm font-semibold tabular-nums text-foreground"
+                        }
+                      >
+                        {formatQuantity(planning.remainingToReceive)} {unitLabel}
                       </span>
                     </div>
                   </div>
@@ -444,6 +479,22 @@ export function ProjectDetail({ id }: { id: string }) {
                       )
                     : 0
                 )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Entregas pendentes</p>
+              <p className="text-lg font-semibold tabular-nums text-foreground">
+                {purchaseOrders === undefined || purchaseOrderItems === undefined || purchaseReceiptItems === undefined
+                  ? 0
+                  : purchaseOrders.filter((purchaseOrder) => {
+                      if (purchaseOrder.commercialStatus !== "ordered") return false;
+                      const orderItems = purchaseOrderItems.filter(
+                        (item) => item.purchaseOrderId === purchaseOrder.id
+                      );
+                      return (
+                        calculatePurchaseOrderFulfillment(orderItems, purchaseReceiptItems) !== "received"
+                      );
+                    }).length}
               </p>
             </div>
             <div>

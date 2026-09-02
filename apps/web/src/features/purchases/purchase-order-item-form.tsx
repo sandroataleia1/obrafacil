@@ -14,13 +14,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
+import { formatQuantity } from "@/lib/quantity";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { listActiveMaterials, getMaterial } from "@/features/materials/prototype/material-store";
 import type { Material } from "@/features/materials/types";
+import { calculateItemFulfillment, calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
+import { listReceiptItemsByPurchaseOrder } from "./prototype/goods-receipt-item-store";
 import { addPurchaseOrderItem, updatePurchaseOrderItem } from "./prototype/purchase-order";
 import { listItemsByPurchaseOrder } from "./prototype/purchase-order-item-store";
 import { usePurchaseOrder } from "./prototype/use-purchase-order";
 import { usePurchaseOrderItem } from "./prototype/use-purchase-order-item";
+import type { GoodsReceiptItem } from "./types";
 
 export function PurchaseOrderItemForm({
   purchaseOrderId,
@@ -40,9 +44,9 @@ export function PurchaseOrderItemForm({
   const [quantityInput, setQuantityInput] = useState("");
   const [priceInput, setPriceInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
 
   useEffect(() => {
-    if (isEditing) return;
     const usedMaterialIds = new Set(
       listItemsByPurchaseOrder(purchaseOrderId).map((item) => item.materialId)
     );
@@ -50,7 +54,8 @@ export function PurchaseOrderItemForm({
     setAvailableMaterials(
       listActiveMaterials().filter((material) => !usedMaterialIds.has(material.id))
     );
-  }, [purchaseOrderId, isEditing]);
+    setReceiptItems(listReceiptItemsByPurchaseOrder(purchaseOrderId));
+  }, [purchaseOrderId]);
 
   useEffect(() => {
     if (!existingItem) return;
@@ -86,11 +91,21 @@ export function PurchaseOrderItemForm({
     }
     const unitPrice = parseCurrencyInput(priceInput) ?? 0;
 
-    if (!purchaseOrder) return;
+    if (!purchaseOrder || receiptItems === undefined) return;
 
+    const orderItems = listItemsByPurchaseOrder(purchaseOrderId);
     const result = existingItem
-      ? updatePurchaseOrderItem(purchaseOrder, existingItem, { description, quantity, unitPrice })
-      : addPurchaseOrderItem(purchaseOrder, { materialId, description, quantity, unitPrice });
+      ? updatePurchaseOrderItem(
+          purchaseOrder,
+          existingItem,
+          { description, quantity, unitPrice },
+          calculateItemFulfillment(existingItem, receiptItems).receivedQuantity
+        )
+      : addPurchaseOrderItem(
+          purchaseOrder,
+          { materialId, description, quantity, unitPrice },
+          calculatePurchaseOrderFulfillment(orderItems, receiptItems) === "received"
+        );
 
     if (!result.ok) {
       setError(result.error);
@@ -194,6 +209,21 @@ export function PurchaseOrderItemForm({
               placeholder="0"
               className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground tabular-nums outline-none focus:border-primary focus:ring-2 focus:ring-ring"
             />
+            {isEditing && existingItem && receiptItems !== undefined ? (
+              (() => {
+                const itemFulfillment = calculateItemFulfillment(existingItem, receiptItems);
+                if (itemFulfillment.receivedQuantity <= 0) return null;
+                return itemFulfillment.state === "received" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Totalmente recebido — quantidade travada.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Já recebido: {formatQuantity(itemFulfillment.receivedQuantity)}
+                  </p>
+                );
+              })()
+            ) : null}
           </div>
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">Unidade</span>
