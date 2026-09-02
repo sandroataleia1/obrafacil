@@ -106,3 +106,33 @@ export interface MaterialRequirement {
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * A physical event: this much of a Material was used at a Project.
+ * Nothing financial — no cost, no ProjectCost, no Payable. Belongs to
+ * Project + Material only, not to a specific PurchaseOrder/GoodsReceipt
+ * (received quantity is aggregated across every delivery of that
+ * Material at that Project — no lot/FIFO tracking in this v1).
+ *
+ * Deliberately excludes projectName/materialName/unit (all resolved
+ * transitively, same pattern as PurchaseOrder/GoodsReceipt) and
+ * receivedQuantity/availableQuantity (always derived, never stored —
+ * see `prototype/material-consumption.ts`).
+ *
+ * No edit in this v1 — to correct an entry, delete and register again
+ * (same pattern as GoodsReceipt).
+ */
+export interface MaterialConsumption {
+  id: string;
+
+  projectId: string;
+  materialId: string;
+
+  quantity: number;
+  consumedAt: string;
+
+  notes?: string;
+
+  createdAt: string;
+  updatedAt: string;
+}

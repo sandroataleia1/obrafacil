@@ -31,4 +31,11 @@ export const goodsReceipts: GoodsReceipt[] = [
     createdAt: "2026-08-11",
     updatedAt: "2026-08-11",
   },
+  {
+    id: "goods-receipt-5",
+    purchaseOrderId: "purchase-order-tinta-edicula",
+    receivedAt: "2026-08-09",
+    createdAt: "2026-08-09",
+    updatedAt: "2026-08-09",
+  },
 ];

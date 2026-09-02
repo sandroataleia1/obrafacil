@@ -179,4 +179,15 @@ export const purchaseOrders: PurchaseOrder[] = [
     createdAt: "2026-07-28",
     updatedAt: "2026-07-29",
   },
+  {
+    id: "purchase-order-tinta-edicula",
+    supplierId: "supplier-casa-materiais-silva",
+    projectId: "edicula-fundos-obra",
+    orderDate: "2026-08-05",
+    expectedDeliveryDate: "2026-08-09",
+    commercialStatus: "ordered",
+    notes: "Comprado antes da tinta acrílica ser marcada como inativa no catálogo.",
+    createdAt: "2026-08-05",
+    updatedAt: "2026-08-09",
+  },
 ];

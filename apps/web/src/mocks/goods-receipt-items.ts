@@ -41,4 +41,12 @@ export const goodsReceiptItems: GoodsReceiptItem[] = [
     purchaseOrderItemId: "item-po3-vergalhao",
     quantity: 8,
   },
+  // goods-receipt-5: purchase-order-tinta-edicula, fully received (material
+  // later marked inactive in the catalog — still usable, see Task 042)
+  {
+    id: "goods-receipt-item-5-tinta",
+    goodsReceiptId: "goods-receipt-5",
+    purchaseOrderItemId: "item-po-tinta-edicula",
+    quantity: 10,
+  },
 ];

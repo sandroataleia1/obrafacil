@@ -21,8 +21,15 @@
 import { todayIso } from "@/lib/date";
 import { formatQuantity, isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
+import { getMaterial } from "@/features/materials/prototype/material-store";
+import {
+  isTimelineValid,
+  listConsumedEventsForProjectMaterial,
+  listReceivedEventsForProjectMaterial,
+} from "@/features/materials/prototype/material-consumption";
 import type { GoodsReceipt, GoodsReceiptItem, PurchaseOrder } from "../types";
 import { calculateItemFulfillment } from "./fulfillment";
+import { getPurchaseOrder } from "./purchase-order-store";
 import { listItemsByPurchaseOrder } from "./purchase-order-item-store";
 import {
   createGoodsReceiptId,
@@ -32,6 +39,7 @@ import {
 import {
   createGoodsReceiptItemId,
   deleteItemsByGoodsReceipt,
+  listItemsByGoodsReceipt,
   listReceiptItemsByPurchaseOrder,
   saveGoodsReceiptItem,
 } from "./goods-receipt-item-store";
@@ -126,6 +134,51 @@ export function registerGoodsReceipt(
 }
 
 export function removeGoodsReceipt(goodsReceipt: GoodsReceipt): DomainResult {
+  const purchaseOrder = getPurchaseOrder(goodsReceipt.purchaseOrderId);
+  if (!purchaseOrder) {
+    return { ok: false, error: "Pedido de compra não encontrado." };
+  }
+
+  const removedItems = listItemsByGoodsReceipt(goodsReceipt.id);
+  const orderItemById = new Map(
+    listItemsByPurchaseOrder(purchaseOrder.id).map((item) => [item.id, item])
+  );
+
+  // Every Material touched by this GoodsReceipt (e.g. cimento + areia in
+  // one delivery) must keep a valid *chronology* after the removal, not
+  // just a valid final total — a delivery removed from the middle of the
+  // timeline can leave a later date's cumulative balance negative even
+  // when today's grand total still looks fine (see
+  // features/materials/prototype/material-consumption.ts's module doc
+  // comment for the worked example). Every Material must stay valid or
+  // none of them are removed — atomicity.
+  const affectedMaterialIds = new Set<string>();
+  for (const receiptItem of removedItems) {
+    const orderItem = orderItemById.get(receiptItem.purchaseOrderItemId);
+    if (orderItem) affectedMaterialIds.add(orderItem.materialId);
+  }
+
+  for (const materialId of affectedMaterialIds) {
+    const receivedEvents = listReceivedEventsForProjectMaterial(
+      purchaseOrder.projectId,
+      materialId
+    ).filter((event) => event.goodsReceiptId !== goodsReceipt.id);
+    const consumedEvents = listConsumedEventsForProjectMaterial(purchaseOrder.projectId, materialId);
+
+    // ConsumedEvent.units is a positive magnitude — negate it into a
+    // signed ledger entry before validating (see material-consumption.ts).
+    const signedConsumedEvents = consumedEvents.map((event) => ({ date: event.date, units: -event.units }));
+    if (!isTimelineValid([...receivedEvents, ...signedConsumedEvents])) {
+      const material = getMaterial(materialId);
+      return {
+        ok: false,
+        error: material
+          ? `Este recebimento não pode ser excluído porque parte de "${material.name}" já foi utilizada na obra.`
+          : "Este recebimento não pode ser excluído porque parte do material já foi utilizada na obra.",
+      };
+    }
+  }
+
   deleteItemsByGoodsReceipt(goodsReceipt.id);
   deleteGoodsReceiptRecord(goodsReceipt.id);
   return { ok: true };

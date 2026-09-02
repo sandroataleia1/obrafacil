@@ -129,7 +129,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
       `Excluir o recebimento de ${formatDate(goodsReceipt.receivedAt)}? Esta ação não pode ser desfeita.`
     );
     if (!confirmed) return;
-    removeGoodsReceipt(goodsReceipt);
+    const result = removeGoodsReceipt(goodsReceipt);
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
+    }
     refreshAll();
   }
 

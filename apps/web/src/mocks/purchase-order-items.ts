@@ -221,4 +221,15 @@ export const purchaseOrderItems: PurchaseOrderItem[] = [
     createdAt: "2026-07-28",
     updatedAt: "2026-07-28",
   },
+  {
+    id: "item-po-tinta-edicula",
+    purchaseOrderId: "purchase-order-tinta-edicula",
+    materialId: "material-tinta-acrilica",
+    description: "Tinta acrílica",
+    unit: { code: "l" },
+    quantity: 10,
+    unitPrice: 32,
+    createdAt: "2026-08-05",
+    updatedAt: "2026-08-05",
+  },
 ];
