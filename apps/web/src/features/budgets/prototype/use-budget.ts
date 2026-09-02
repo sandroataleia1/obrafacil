@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { getBudget, getBudgetByToken, saveBudget } from "./budget-store";
+import { getBudget, getBudgetByToken } from "./budget-store";
 import type { Budget } from "../types";
 
 export function useBudget(id: string) {
@@ -16,13 +16,11 @@ export function useBudget(id: string) {
     setBudget(getBudget(id));
   }, [id]);
 
-  function persist(next: Budget) {
-    const updated = { ...next, updatedAt: new Date().toISOString().slice(0, 10) };
-    setBudget(updated);
-    saveBudget(updated);
+  function refresh() {
+    setBudget(getBudget(id));
   }
 
-  return { budget, persist };
+  return { budget, refresh };
 }
 
 export function useBudgetByToken(token: string) {
@@ -34,10 +32,9 @@ export function useBudgetByToken(token: string) {
     setBudget(getBudgetByToken(token));
   }, [token]);
 
-  function persist(next: Budget) {
-    setBudget(next);
-    saveBudget(next);
+  function refresh() {
+    setBudget(getBudgetByToken(token));
   }
 
-  return { budget, persist };
+  return { budget, refresh };
 }

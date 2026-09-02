@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, FileText, Plus, Send } from "lucide-react";
+import { ChevronLeft, Copy, FileText, Plus, Send, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -17,9 +17,12 @@ import { ManualStageCard } from "./components/manual-stage-card";
 import { ManualStageForm } from "./components/manual-stage-form";
 import { MoneyField } from "@/components/shared/money-field";
 import { StatusBadge } from "./components/status-badge";
+import { removeBudget, submitBudgetForApproval, updateBudgetComposition } from "./prototype/budget";
 import { calculateBudgetTotals, isCalculatedStage, isManualStage } from "./prototype/budget-totals";
 import { useBudget } from "./prototype/use-budget";
 import type { BudgetStage } from "./types";
+
+const EDITABLE_STATUSES = new Set(["draft", "pending_approval"]);
 
 function InfoRow({
   label,
@@ -50,10 +53,11 @@ function InfoRow({
 
 export function BudgetDetail({ id }: { id: string }) {
   const router = useRouter();
-  const { budget, persist } = useBudget(id);
+  const { budget, refresh } = useBudget(id);
   const [additionalInput, setAdditionalInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
   const [addingStage, setAddingStage] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
     if (budget) {
@@ -69,7 +73,52 @@ export function BudgetDetail({ id }: { id: string }) {
 
   function updateStages(stages: BudgetStage[]) {
     if (!budget) return;
-    persist({ ...budget, stages });
+    const result = updateBudgetComposition(budget, { stages });
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
+    }
+    refresh();
+  }
+
+  function handleSubmitForApproval() {
+    if (!budget) return;
+    const result = submitBudgetForApproval(budget);
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
+    }
+    refresh();
+  }
+
+  async function handleCopyLink() {
+    if (!budget) return;
+    const url = `${window.location.origin}/proposta/${budget.proposalToken}`;
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        window.prompt("Copie o link da proposta:", url);
+      }
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      window.prompt("Copie o link da proposta:", url);
+    }
+  }
+
+  function handleDelete() {
+    if (!budget) return;
+    const confirmed = window.confirm(
+      `Excluir o orçamento "${budget.name}"? Esta ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+    const result = removeBudget(budget);
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
+    }
+    router.push("/orcamentos");
   }
 
   function handleCreateProject() {
@@ -108,6 +157,7 @@ export function BudgetDetail({ id }: { id: string }) {
   }
 
   const totals = calculateBudgetTotals(budget);
+  const isComposable = EDITABLE_STATUSES.has(budget.status);
 
   return (
     <div className="space-y-6">
@@ -145,6 +195,7 @@ export function BudgetDetail({ id }: { id: string }) {
             <CalculatedStageCard
               key={stage.id}
               stage={stage}
+              readOnly={!isComposable}
               onUpdateLabor={(laborCost) =>
                 updateStages(
                   budget.stages.map((s) => (s.id === stage.id ? { ...s, laborCost } : s))
@@ -156,6 +207,7 @@ export function BudgetDetail({ id }: { id: string }) {
             <ManualStageCard
               key={stage.id}
               stage={stage}
+              readOnly={!isComposable}
               onUpdate={(update) =>
                 updateStages(
                   budget.stages.map((s) => (s.id === stage.id ? { ...s, ...update } : s))
@@ -166,7 +218,7 @@ export function BudgetDetail({ id }: { id: string }) {
           ) : null
         )}
 
-        {addingStage ? (
+        {!isComposable ? null : addingStage ? (
           <ManualStageForm
             onSave={(newStage) => {
               updateStages([
@@ -196,56 +248,90 @@ export function BudgetDetail({ id }: { id: string }) {
           <InfoRow label="Outras etapas" value={formatCurrency(totals.manualStagesTotal)} />
         ) : null}
 
-        <AdditionalField
-          id="additional"
-          value={additionalInput}
-          onChange={(raw) => {
-            setAdditionalInput(raw);
-            const parsed = parseDecimalInput(raw);
-            if (parsed !== null && parsed >= 0) {
-              persist({ ...budget, marginPercentage: parsed });
-            }
-          }}
-        />
+        {isComposable ? (
+          <>
+            <AdditionalField
+              id="additional"
+              value={additionalInput}
+              onChange={(raw) => {
+                setAdditionalInput(raw);
+                const parsed = parseDecimalInput(raw);
+                if (parsed !== null && parsed >= 0) {
+                  const result = updateBudgetComposition(budget, { marginPercentage: parsed });
+                  if (result.ok) refresh();
+                }
+              }}
+            />
 
-        <MoneyField
-          id="discount"
-          label="Desconto"
-          value={discountInput}
-          onChange={(raw) => {
-            setDiscountInput(raw);
-            const parsed = parseCurrencyInput(raw);
-            if (parsed !== null && parsed >= 0) {
-              persist({ ...budget, discountAmount: parsed });
-            }
-          }}
-        />
+            <MoneyField
+              id="discount"
+              label="Desconto"
+              value={discountInput}
+              onChange={(raw) => {
+                setDiscountInput(raw);
+                const parsed = parseCurrencyInput(raw);
+                if (parsed !== null && parsed >= 0) {
+                  const result = updateBudgetComposition(budget, { discountAmount: parsed });
+                  if (result.ok) refresh();
+                }
+              }}
+            />
+          </>
+        ) : (
+          <>
+            <InfoRow label="Adicional" value={`${budget.marginPercentage}%`} />
+            {budget.discountAmount > 0 ? (
+              <InfoRow label="Desconto" value={`-${formatCurrency(budget.discountAmount)}`} />
+            ) : null}
+          </>
+        )}
 
         <div className="space-y-1 border-t border-border pt-3">
           <InfoRow label="Total do orçamento" value={formatCurrency(totals.total)} emphasis />
         </div>
       </div>
 
-      {budget.status === "draft" || budget.status === "pending_approval" ? (
-        <div className="space-y-1.5">
-          <Button type="button" size="lg" className="w-full" disabled>
-            <Send className="size-4" aria-hidden="true" />
-            Enviar orçamento para cliente aprovar
+      <div className="space-y-2">
+        {budget.status === "draft" ? (
+          <>
+            <Button type="button" size="lg" className="w-full" onClick={handleSubmitForApproval}>
+              <Send className="size-4" aria-hidden="true" />
+              Disponibilizar para aprovação
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full"
+              nativeButton={false}
+              render={<Link href={`/orcamentos/${budget.id}/editar`}>Editar</Link>}
+            />
+          </>
+        ) : EDITABLE_STATUSES.has(budget.status) ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/orcamentos/${budget.id}/editar`}>Editar</Link>}
+            />
+            <Button type="button" variant="outline" onClick={handleCopyLink}>
+              <Copy className="size-4" aria-hidden="true" />
+              {linkCopied ? "Link copiado" : "Copiar link"}
+            </Button>
+          </div>
+        ) : (
+          <Button type="button" variant="outline" className="w-full" onClick={handleCopyLink}>
+            <Copy className="size-4" aria-hidden="true" />
+            {linkCopied ? "Link copiado" : "Copiar link"}
           </Button>
-          <p className="text-center text-xs text-muted-foreground">
-            Em breve: envio pelo WhatsApp com um link para o cliente aprovar
-            ou recusar a proposta.
-          </p>
-        </div>
-      ) : null}
+        )}
 
-      <Button
-        size="lg"
-        variant="outline"
-        className="w-full"
-        nativeButton={false}
-        render={<Link href={`/proposta/${budget.proposalToken}`}>Visualizar proposta</Link>}
-      />
+        <Button
+          size="lg"
+          variant="outline"
+          className="w-full"
+          nativeButton={false}
+          render={<Link href={`/proposta/${budget.proposalToken}`}>Visualizar proposta</Link>}
+        />
+      </div>
 
       {budget.status === "approved" ? (
         budget.projectId ? (
@@ -267,6 +353,13 @@ export function BudgetDetail({ id }: { id: string }) {
             Criar obra
           </Button>
         )
+      ) : null}
+
+      {EDITABLE_STATUSES.has(budget.status) ? (
+        <Button type="button" variant="destructive" className="w-full" onClick={handleDelete}>
+          <Trash2 className="size-4" aria-hidden="true" />
+          Excluir
+        </Button>
       ) : null}
     </div>
   );

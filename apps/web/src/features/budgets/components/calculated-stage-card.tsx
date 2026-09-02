@@ -14,12 +14,16 @@ interface CalculatedStageCardProps {
   stage: CalculatedBudgetStage;
   onUpdateLabor: (laborCost: number) => void;
   onRemove: () => void;
+  /** Terminal (approved/rejected) Budgets are read-only: no edit/remove
+   * controls, just the decided values. */
+  readOnly?: boolean;
 }
 
 export function CalculatedStageCard({
   stage,
   onUpdateLabor,
   onRemove,
+  readOnly,
 }: CalculatedStageCardProps) {
   const [editing, setEditing] = useState(false);
   const [laborInput, setLaborInput] = useState(String(stage.laborCost).replace(".", ","));
@@ -44,14 +48,16 @@ export function CalculatedStageCard({
             {stage.item.unit}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onRemove}
-          aria-label="Remover etapa"
-          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-        >
-          <Trash2 className="size-3.5" aria-hidden="true" />
-        </button>
+        {readOnly ? null : (
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label="Remover etapa"
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="size-3.5" aria-hidden="true" />
+          </button>
+        )}
       </div>
 
       <div className="space-y-2 border-t border-border px-4 pt-3">
@@ -62,7 +68,7 @@ export function CalculatedStageCard({
           </span>
         </div>
 
-        {editing ? (
+        {editing && !readOnly ? (
           <div className="space-y-2 pt-1">
             <MoneyField
               id={`labor-${stage.id}`}
@@ -92,14 +98,16 @@ export function CalculatedStageCard({
               <span className="font-medium text-foreground">
                 {formatCurrency(stage.laborCost)}
               </span>
-              <button
-                type="button"
-                onClick={() => setEditing(true)}
-                aria-label="Editar mão de obra"
-                className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <Pencil className="size-3" aria-hidden="true" />
-              </button>
+              {readOnly ? null : (
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  aria-label="Editar mão de obra"
+                  className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Pencil className="size-3" aria-hidden="true" />
+                </button>
+              )}
             </span>
           </div>
         )}
