@@ -8,17 +8,26 @@
  *   draft      -> cancelled
  *   ordered    -> draft     (BLOCKED if the order has any GoodsReceipt
  *                            — a physical fact already exists; remove
- *                            the GoodsReceipts first, see Task 041)
+ *                            the GoodsReceipts first, see Task 041 —
+ *                            OR any Payable generated from it — a
+ *                            financial fact already exists; remove the
+ *                            Payables first, see Task 043)
  *   ordered    -> cancelled (BLOCKED if fulfillment is already fully
  *                            "received" — nothing remains to cancel)
- *   cancelled  -> draft     (BLOCKED if the order has any GoodsReceipt,
- *                            same reasoning as ordered -> draft)
+ *   cancelled  -> draft     (BLOCKED if the order has any GoodsReceipt
+ *                            or any Payable, same reasoning as
+ *                            ordered -> draft)
  * Any other transition (including cancelled -> ordered directly) is
  * rejected — to confirm a cancelled order, reactivate it to draft
- * first, then confirm normally. `hasGoodsReceipts` is passed in by the
- * caller (derived from GoodsReceiptItem history — see
- * `goods-receipt.ts`) rather than looked up here, keeping this module
- * decoupled from the GoodsReceipt stores' internals.
+ * first, then confirm normally. `hasGoodsReceipts`/`hasPayables` are
+ * passed in by the caller (derived from GoodsReceiptItem/Payable
+ * history — see `goods-receipt.ts`/`purchase-payable.ts`) rather than
+ * looked up here, keeping this module decoupled from those stores'
+ * internals.
+ *
+ * A cancelled order can still be a PARENT of Payables — cancellation
+ * is a commercial fact, not a financial one; it never deletes or
+ * syncs the Payables it already generated (see Task 043).
  *
  * A `cancelled` PurchaseOrder is read-only for its own fields/items —
  * no field, item, or item list may change while cancelled — every
@@ -187,11 +196,25 @@ export function updatePurchaseOrder(
   return { ok: true, purchaseOrder: updated };
 }
 
-export function removePurchaseOrder(purchaseOrder: PurchaseOrder): DomainResult {
+export function removePurchaseOrder(
+  purchaseOrder: PurchaseOrder,
+  hasPayables: boolean = false
+): DomainResult {
   if (purchaseOrder.commercialStatus !== "draft") {
     return {
       ok: false,
       error: "Somente pedidos em rascunho podem ser excluídos. Cancele o pedido para preservá-lo no histórico.",
+    };
+  }
+  // Defense-in-depth: a `draft` order can never actually have a
+  // Payable (generation is blocked while draft), but the guard stays
+  // here too so the rule holds even against a future caller or status
+  // rework that forgets that check (mirrors Task 043's `ordered`/
+  // `cancelled` -> `draft` guard below).
+  if (hasPayables) {
+    return {
+      ok: false,
+      error: "Este pedido possui contas a pagar geradas e não pode ser excluído.",
     };
   }
   deleteItemsByPurchaseOrder(purchaseOrder.id);
@@ -371,7 +394,8 @@ export function changePurchaseOrderStatus(
   purchaseOrder: PurchaseOrder,
   newStatus: PurchaseOrderCommercialStatus,
   items: PurchaseOrderItem[],
-  receiptItems: GoodsReceiptItem[]
+  receiptItems: GoodsReceiptItem[],
+  hasPayables: boolean = false
 ): PurchaseOrderResult {
   if (!ALLOWED_TRANSITIONS[purchaseOrder.commercialStatus].includes(newStatus)) {
     return { ok: false, error: "Essa mudança de status não é permitida." };
@@ -384,6 +408,14 @@ export function changePurchaseOrderStatus(
       ok: false,
       error:
         "Este pedido possui recebimentos registrados e não pode voltar para rascunho. Remova os recebimentos primeiro.",
+    };
+  }
+
+  if (newStatus === "draft" && hasPayables) {
+    return {
+      ok: false,
+      error:
+        "Este pedido possui contas a pagar geradas e não pode voltar para rascunho. Remova as contas primeiro.",
     };
   }
 

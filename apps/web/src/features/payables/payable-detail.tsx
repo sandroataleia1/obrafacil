@@ -14,8 +14,9 @@ import { getProject } from "@/features/projects/prototype/project-store";
 import { getEmployee } from "@/features/employees/prototype/employee-store";
 import { getWorkPeriod } from "@/features/employees/prototype/work-period-store";
 import { formatPeriodShort } from "@/features/employees/prototype/period-label";
+import { getPurchaseOrder } from "@/features/purchases/prototype/purchase-order-store";
 import { PROJECT_COST_CATEGORY_LABEL } from "@/features/project-costs/types";
-import { deletePayable } from "./prototype/payable-store";
+import { removePayable } from "./prototype/payable";
 import { markPayableAsPaid, undoPayablePayment } from "./prototype/payable-payment";
 import { usePayable } from "./prototype/use-payable";
 import { describeDueDate, getPayableStatus } from "./payable-status";
@@ -56,6 +57,10 @@ export function PayableDetail({ id }: { id: string }) {
       ? getWorkPeriod(payable.originId)
       : null;
   const originEmployee = originWorkPeriod ? getEmployee(originWorkPeriod.employeeId) : null;
+  const originPurchaseOrder =
+    payable.originType === "purchase-order" && payable.originId
+      ? getPurchaseOrder(payable.originId)
+      : null;
 
   function handleConfirmPayment() {
     if (!payable) return;
@@ -80,7 +85,11 @@ export function PayableDetail({ id }: { id: string }) {
       `Remover a conta "${payable.description}"? Esta ação não pode ser desfeita.`
     );
     if (!confirmed) return;
-    deletePayable(payable.id);
+    const result = removePayable(payable);
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
+    }
     router.push("/financeiro/contas-a-pagar");
   }
 
@@ -131,6 +140,17 @@ export function PayableDetail({ id }: { id: string }) {
               className="text-sm font-medium text-primary hover:underline"
             >
               Equipe · {originEmployee.name} · {formatPeriodShort(originWorkPeriod.period)}
+            </Link>
+          </div>
+        ) : null}
+        {originPurchaseOrder ? (
+          <div className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-muted-foreground">Origem</span>
+            <Link
+              href={`/compras/${originPurchaseOrder.id}`}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              Compra · {payable.supplier ?? "Fornecedor"} · {formatDate(originPurchaseOrder.orderDate)}
             </Link>
           </div>
         ) : null}

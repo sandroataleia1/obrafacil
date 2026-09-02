@@ -32,6 +32,18 @@
  * are not directly editable here; only `dueDate`/`notes` are (see
  * `payable-form.tsx`).
  *
+ * A Payable produced from a PurchaseOrder (see
+ * `features/purchases/prototype/purchase-payable.ts`) carries
+ * `originType: "purchase-order"` with `originId` pointing at the
+ * PurchaseOrder. Unlike `"employee-period"`, this origin is NOT 1:1 —
+ * one PurchaseOrder can generate many Payables (down payment, balance,
+ * additional installments), so `findPayableByOrigin` must never be
+ * called with `"purchase-order"` (its signature is restricted to
+ * `"employee-period"` for that reason); use `listPayablesByOrigin`
+ * instead. `projectId`/`supplier`/`category` derive from the
+ * PurchaseOrder/Supplier and are not editable here; only
+ * `description`/`amount`/`dueDate`/`notes` are.
+ *
  * Workforce payables (`originType: "employee-period"`) are always
  * created with `projectId: undefined`. Employee work allocation across
  * projects is not modeled yet, so paying one never produces a
@@ -55,7 +67,7 @@ import type { ProjectCostCategory } from "@/features/project-costs/types";
 
 export type PayableStatus = "pending" | "overdue" | "paid";
 
-export type PayableOriginType = "employee-period";
+export type PayableOriginType = "employee-period" | "purchase-order";
 
 export interface Payable {
   id: string;

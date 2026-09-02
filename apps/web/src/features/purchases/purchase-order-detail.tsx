@@ -14,6 +14,10 @@ import { formatQuantity } from "@/lib/quantity";
 import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
 import { getProject } from "@/features/projects/prototype/project-store";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
+import { listPayablesByOrigin } from "@/features/payables/prototype/payable-store";
+import { getPayableStatus } from "@/features/payables/payable-status";
+import { PayableStatusBadge } from "@/features/payables/components/status-badge";
+import type { Payable } from "@/features/payables/types";
 import { calculateItemFulfillment, calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
 import {
   changePurchaseOrderStatus,
@@ -27,6 +31,7 @@ import {
   listReceiptItemsByPurchaseOrder,
 } from "./prototype/goods-receipt-item-store";
 import { calculatePurchaseItemTotal, calculatePurchaseOrderTotal } from "./prototype/purchase-totals";
+import { calculatePurchaseFinancialSummary } from "./prototype/purchase-financial-summary";
 import { usePurchaseOrder } from "./prototype/use-purchase-order";
 import { PurchaseOrderStatusBadge } from "./components/status-badge";
 import type { GoodsReceipt, GoodsReceiptItem, PurchaseOrderCommercialStatus } from "./types";
@@ -51,20 +56,28 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const { purchaseOrder, items, refresh } = usePurchaseOrder(id);
   const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[] | undefined>(undefined);
   const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
+  const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setGoodsReceipts(listGoodsReceiptsByPurchaseOrder(id));
     setReceiptItems(listReceiptItemsByPurchaseOrder(id));
+    setPayables(listPayablesByOrigin("purchase-order", id));
   }, [id]);
 
   function refreshAll() {
     refresh();
     setGoodsReceipts(listGoodsReceiptsByPurchaseOrder(id));
     setReceiptItems(listReceiptItemsByPurchaseOrder(id));
+    setPayables(listPayablesByOrigin("purchase-order", id));
   }
 
-  if (purchaseOrder === undefined || goodsReceipts === undefined || receiptItems === undefined) {
+  if (
+    purchaseOrder === undefined ||
+    goodsReceipts === undefined ||
+    receiptItems === undefined ||
+    payables === undefined
+  ) {
     return null;
   }
 
@@ -83,13 +96,15 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const total = calculatePurchaseOrderTotal(items);
   const status = purchaseOrder.commercialStatus;
   const hasGoodsReceipts = receiptItems.length > 0;
+  const hasPayables = payables.length > 0;
   const fulfillment = calculatePurchaseOrderFulfillment(items, receiptItems);
   const isFullyReceived = fulfillment === "received";
+  const financialSummary = calculatePurchaseFinancialSummary(total, payables);
 
   function handleStatusChange(newStatus: PurchaseOrderCommercialStatus, confirmMessage?: string) {
     if (!purchaseOrder) return;
     if (confirmMessage && !window.confirm(confirmMessage)) return;
-    const result = changePurchaseOrderStatus(purchaseOrder, newStatus, items, receiptItems ?? []);
+    const result = changePurchaseOrderStatus(purchaseOrder, newStatus, items, receiptItems ?? [], hasPayables);
     if (!result.ok) {
       window.alert(result.error);
       return;
@@ -116,7 +131,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     if (!purchaseOrder) return;
     const confirmed = window.confirm("Excluir este pedido de compra? Esta ação não pode ser desfeita.");
     if (!confirmed) return;
-    const result = removePurchaseOrder(purchaseOrder);
+    const result = removePurchaseOrder(purchaseOrder, hasPayables);
     if (!result.ok) {
       window.alert(result.error);
       return;
@@ -345,6 +360,69 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         </section>
       ) : null}
 
+      {status !== "draft" ? (
+        <section aria-labelledby="purchase-order-financial" className="space-y-2.5">
+          <h2
+            id="purchase-order-financial"
+            className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+          >
+            Financeiro
+          </h2>
+          <div className="rounded-xl border border-border bg-card p-4">
+            <InfoRow label="Valor do pedido" value={formatCurrency(financialSummary.purchaseTotal)} />
+            <InfoRow label="Contas geradas" value={formatCurrency(financialSummary.generatedPayables)} />
+            <InfoRow label="Pago" value={formatCurrency(financialSummary.paidPayables)} />
+            <InfoRow label="Pendente" value={formatCurrency(financialSummary.pendingPayables)} />
+            {financialSummary.uncoveredAmount > 0 ? (
+              <InfoRow label="Ainda sem conta" value={formatCurrency(financialSummary.uncoveredAmount)} />
+            ) : null}
+            {financialSummary.overGeneratedAmount > 0 ? (
+              <InfoRow
+                label="Contas acima do valor do pedido"
+                value={formatCurrency(financialSummary.overGeneratedAmount)}
+              />
+            ) : null}
+          </div>
+          <Button
+            size="lg"
+            className="w-full"
+            nativeButton={false}
+            render={<Link href={`/financeiro/contas-a-pagar/nova?purchaseOrderId=${id}`}>Gerar conta a pagar</Link>}
+          />
+
+          {payables.length > 0 ? (
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Contas</h3>
+              {payables.map((payable) => {
+                const payableStatus = getPayableStatus(payable);
+                return (
+                  <Link
+                    key={payable.id}
+                    href={`/financeiro/contas-a-pagar/${payable.id}`}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">{payable.description}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {payableStatus === "paid" && payable.paidAt
+                          ? `Pago em ${formatDate(payable.paidAt)}`
+                          : `Vence ${formatDate(payable.dueDate)}`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-sm font-semibold tabular-nums text-foreground">
+                        {formatCurrency(payable.amount)}
+                      </span>
+                      <PayableStatusBadge status={payableStatus} />
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="space-y-2">
         {status === "draft" ? (
           <>
@@ -386,7 +464,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 nativeButton={false}
                 render={<Link href={`/compras/${id}/editar`}>Editar</Link>}
               />
-              {!hasGoodsReceipts ? (
+              {!hasGoodsReceipts && !hasPayables ? (
                 <Button type="button" variant="outline" onClick={() => handleStatusChange("draft")}>
                   Voltar para rascunho
                 </Button>
@@ -402,18 +480,28 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 Cancelar pedido
               </Button>
             ) : null}
-            {hasGoodsReceipts ? (
+            {hasGoodsReceipts || hasPayables ? (
               <p className="text-center text-xs text-muted-foreground">
-                Este pedido possui recebimentos e não pode voltar para rascunho.
+                Este pedido possui {hasGoodsReceipts && hasPayables
+                  ? "recebimentos e contas a pagar"
+                  : hasGoodsReceipts
+                    ? "recebimentos"
+                    : "contas a pagar"}{" "}
+                e não pode voltar para rascunho.
               </p>
             ) : null}
           </>
         ) : null}
 
         {status === "cancelled" ? (
-          hasGoodsReceipts ? (
+          hasGoodsReceipts || hasPayables ? (
             <p className="text-center text-xs text-muted-foreground">
-              Este pedido possui recebimentos históricos e não pode voltar para rascunho.
+              Este pedido possui {hasGoodsReceipts && hasPayables
+                ? "recebimentos históricos e contas a pagar"
+                : hasGoodsReceipts
+                  ? "recebimentos históricos"
+                  : "contas a pagar"}{" "}
+              e não pode voltar para rascunho.
             </p>
           ) : (
             <Button

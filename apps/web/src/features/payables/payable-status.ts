@@ -6,6 +6,15 @@ export function getPayableStatus(payable: Payable): PayableStatus {
   return payable.dueDate < todayIso() ? "overdue" : "pending";
 }
 
+/** Short origin label for list display — `null` for a manual entry
+ * (no badge shown), matching the "absence of origin = manual" rule in
+ * `types.ts`. */
+export function getPayableOriginLabel(payable: Payable): string | null {
+  if (payable.originType === "employee-period") return "Equipe";
+  if (payable.originType === "purchase-order") return "Compra";
+  return null;
+}
+
 export function matchesStatusFilter(payable: Payable, filter: PayableStatusFilter): boolean {
   if (filter === "all") return true;
   const status = getPayableStatus(payable);

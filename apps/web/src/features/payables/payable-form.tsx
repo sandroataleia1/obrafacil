@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
@@ -22,16 +22,37 @@ import {
   PROJECT_COST_CATEGORY_LABEL,
   type ProjectCostCategory,
 } from "@/features/project-costs/types";
-import { createPayableId, savePayable } from "./prototype/payable-store";
+import { getPurchaseOrder } from "@/features/purchases/prototype/purchase-order-store";
+import { listItemsByPurchaseOrder } from "@/features/purchases/prototype/purchase-order-item-store";
+import { calculatePurchaseOrderTotal } from "@/features/purchases/prototype/purchase-totals";
+import { calculatePurchaseFinancialSummary } from "@/features/purchases/prototype/purchase-financial-summary";
+import { generatePayableFromPurchaseOrder } from "@/features/purchases/prototype/purchase-payable";
+import type { PurchaseOrder } from "@/features/purchases/types";
+import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
+import type { Supplier } from "@/features/suppliers/types";
+import { createPayableId, listPayablesByOrigin, savePayable } from "./prototype/payable-store";
+import { updatePayable } from "./prototype/payable";
 import { usePayable } from "./prototype/use-payable";
 import { getPayableStatus } from "./payable-status";
 
 const NO_PROJECT = "none";
 
+interface PurchaseOrderContext {
+  purchaseOrder: PurchaseOrder;
+  supplier: Supplier;
+  uncoveredAmount: number;
+}
+
 export function PayableForm({ payableId }: { payableId?: string }) {
   const router = useRouter();
-  const { payable: existingPayable } = usePayable(payableId ?? "");
+  const searchParams = useSearchParams();
   const isEditing = Boolean(payableId);
+  const purchaseOrderId = !isEditing ? searchParams.get("purchaseOrderId") : null;
+
+  const { payable: existingPayable } = usePayable(payableId ?? "");
+  const [purchaseOrderContext, setPurchaseOrderContext] = useState<
+    PurchaseOrderContext | null | undefined
+  >(purchaseOrderId ? undefined : null);
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [description, setDescription] = useState("");
@@ -63,7 +84,44 @@ export function PayableForm({ payableId }: { payableId?: string }) {
     setNotes(existingPayable.notes ?? "");
   }, [existingPayable]);
 
+  useEffect(() => {
+    if (!purchaseOrderId) return;
+    const purchaseOrder = getPurchaseOrder(purchaseOrderId);
+    if (!purchaseOrder) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPurchaseOrderContext(null);
+      return;
+    }
+    const supplierRecord = getSupplier(purchaseOrder.supplierId);
+    if (!supplierRecord) {
+      setPurchaseOrderContext(null);
+      return;
+    }
+    const purchaseTotal = calculatePurchaseOrderTotal(listItemsByPurchaseOrder(purchaseOrderId));
+    const existingPayables = listPayablesByOrigin("purchase-order", purchaseOrderId);
+    const summary = calculatePurchaseFinancialSummary(purchaseTotal, existingPayables);
+    setPurchaseOrderContext({
+      purchaseOrder,
+      supplier: supplierRecord,
+      uncoveredAmount: summary.uncoveredAmount,
+    });
+  }, [purchaseOrderId]);
+
+  useEffect(() => {
+    if (!purchaseOrderContext) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDescription(`Compra · ${purchaseOrderContext.supplier.name}`);
+    setSupplier(purchaseOrderContext.supplier.name);
+    setCategory("materials");
+    setProjectId(purchaseOrderContext.purchaseOrder.projectId);
+    if (purchaseOrderContext.uncoveredAmount > 0) {
+      setAmountInput(String(purchaseOrderContext.uncoveredAmount).replace(".", ","));
+    }
+  }, [purchaseOrderContext]);
+
   const isRestricted = existingPayable?.originType === "employee-period";
+  const isPurchaseOriginated = existingPayable?.originType === "purchase-order";
+  const lockedFieldsFromPurchase = isPurchaseOriginated || Boolean(purchaseOrderContext);
 
   function handleSubmit() {
     if (dueDate.trim() === "") {
@@ -71,20 +129,61 @@ export function PayableForm({ payableId }: { payableId?: string }) {
       return;
     }
 
-    if (isRestricted && existingPayable) {
+    if (purchaseOrderContext) {
+      const amount = parseCurrencyInput(amountInput);
+      if (description.trim() === "") {
+        setError("Informe uma descrição.");
+        return;
+      }
+      if (amount === null || amount <= 0) {
+        setError("Informe um valor maior que zero.");
+        return;
+      }
+      const result = generatePayableFromPurchaseOrder(
+        purchaseOrderContext.purchaseOrder,
+        purchaseOrderContext.supplier,
+        {
+          amount,
+          dueDate,
+          description: description.trim(),
+          notes: notes.trim() || undefined,
+        }
+      );
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
       setError(null);
-      savePayable({
-        ...existingPayable,
+      router.push(`/compras/${purchaseOrderContext.purchaseOrder.id}`);
+      return;
+    }
+
+    if (existingPayable) {
+      // Editing an existing Payable (manual, employee-period, or
+      // purchase-order originated) — `updatePayable` enforces every
+      // origin/paid restriction itself, regardless of what these form
+      // fields currently hold (see its doc comment).
+      const amount = parseCurrencyInput(amountInput);
+      const result = updatePayable(existingPayable, {
+        description: description.trim(),
+        supplier: supplier.trim() || undefined,
+        category,
+        amount: amount ?? existingPayable.amount,
         dueDate,
+        projectId: projectId === NO_PROJECT ? undefined : projectId,
         notes: notes.trim() || undefined,
-        updatedAt: todayIso(),
       });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setError(null);
       router.push(`/financeiro/contas-a-pagar/${existingPayable.id}`);
       return;
     }
 
+    // Brand-new manual Payable — no origin to preserve.
     const amount = parseCurrencyInput(amountInput);
-
     if (description.trim() === "") {
       setError("Informe uma descrição.");
       return;
@@ -97,7 +196,7 @@ export function PayableForm({ payableId }: { payableId?: string }) {
 
     const now = todayIso();
     savePayable({
-      id: existingPayable?.id ?? createPayableId(),
+      id: createPayableId(),
       description: description.trim(),
       supplier: supplier.trim() || undefined,
       category,
@@ -105,16 +204,26 @@ export function PayableForm({ payableId }: { payableId?: string }) {
       dueDate,
       projectId: projectId === NO_PROJECT ? undefined : projectId,
       notes: notes.trim() || undefined,
-      createdAt: existingPayable?.createdAt ?? now,
+      createdAt: now,
       updatedAt: now,
     });
 
-    router.push(
-      existingPayable ? `/financeiro/contas-a-pagar/${existingPayable.id}` : "/financeiro/contas-a-pagar"
-    );
+    router.push("/financeiro/contas-a-pagar");
   }
 
   if (isEditing && existingPayable === undefined) return null;
+  if (!isEditing && purchaseOrderId && purchaseOrderContext === undefined) return null;
+
+  if (!isEditing && purchaseOrderId && purchaseOrderContext === null) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Pedido não encontrado" onBack={() => router.push("/compras")} />
+        <p className="pl-11 text-sm text-muted-foreground">
+          O pedido de compra pode ter sido removido ou o link está incorreto.
+        </p>
+      </div>
+    );
+  }
 
   if (isEditing && existingPayable === null) {
     return (
@@ -148,12 +257,14 @@ export function PayableForm({ payableId }: { payableId?: string }) {
     <div className="space-y-6 pb-6">
       <div className="space-y-1">
         <BackHeader
-          title={isEditing ? "Editar conta" : "Nova conta a pagar"}
+          title={isEditing ? "Editar conta" : purchaseOrderContext ? "Gerar conta a pagar" : "Nova conta a pagar"}
           onBack={() =>
             router.push(
-              existingPayable
-                ? `/financeiro/contas-a-pagar/${existingPayable.id}`
-                : "/financeiro/contas-a-pagar"
+              purchaseOrderContext
+                ? `/compras/${purchaseOrderContext.purchaseOrder.id}`
+                : existingPayable
+                  ? `/financeiro/contas-a-pagar/${existingPayable.id}`
+                  : "/financeiro/contas-a-pagar"
             )
           }
         />
@@ -164,6 +275,12 @@ export function PayableForm({ payableId }: { payableId?: string }) {
           <p className="text-sm text-muted-foreground">
             Descrição, fornecedor, categoria e valor vêm do período da Equipe e não podem ser
             alterados aqui. Desfaça o fechamento do período para corrigi-los.
+          </p>
+        ) : null}
+
+        {lockedFieldsFromPurchase ? (
+          <p className="text-sm text-muted-foreground">
+            Fornecedor, obra e categoria vêm do pedido de compra e não podem ser alterados aqui.
           </p>
         ) : null}
 
@@ -183,42 +300,46 @@ export function PayableForm({ payableId }: { payableId?: string }) {
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label htmlFor="payable-supplier" className="text-sm font-medium text-foreground">
-                Fornecedor / responsável <span className="text-muted-foreground">(opcional)</span>
-              </label>
-              <input
-                id="payable-supplier"
-                type="text"
-                value={supplier}
-                onChange={(event) => setSupplier(event.target.value)}
-                placeholder="Casa dos Materiais Silva"
-                className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-              />
-            </div>
+            {!lockedFieldsFromPurchase ? (
+              <div className="space-y-1.5">
+                <label htmlFor="payable-supplier" className="text-sm font-medium text-foreground">
+                  Fornecedor / responsável <span className="text-muted-foreground">(opcional)</span>
+                </label>
+                <input
+                  id="payable-supplier"
+                  type="text"
+                  value={supplier}
+                  onChange={(event) => setSupplier(event.target.value)}
+                  placeholder="Casa dos Materiais Silva"
+                  className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            ) : null}
 
-            <div className="space-y-1.5">
-              <span className="text-sm font-medium text-foreground">Categoria</span>
-              <Select
-                value={category}
-                onValueChange={(value) => setCategory((value as ProjectCostCategory) ?? "materials")}
-              >
-                <SelectTrigger className="h-12 w-full px-4 text-base">
-                  <SelectValue placeholder="Selecione uma categoria">
-                    {(value: string | null) =>
-                      PROJECT_COST_CATEGORY_LABEL[(value as ProjectCostCategory) ?? "materials"]
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {PROJECT_COST_CATEGORIES.map((item) => (
-                    <SelectItem key={item} value={item}>
-                      {PROJECT_COST_CATEGORY_LABEL[item]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {!lockedFieldsFromPurchase ? (
+              <div className="space-y-1.5">
+                <span className="text-sm font-medium text-foreground">Categoria</span>
+                <Select
+                  value={category}
+                  onValueChange={(value) => setCategory((value as ProjectCostCategory) ?? "materials")}
+                >
+                  <SelectTrigger className="h-12 w-full px-4 text-base">
+                    <SelectValue placeholder="Selecione uma categoria">
+                      {(value: string | null) =>
+                        PROJECT_COST_CATEGORY_LABEL[(value as ProjectCostCategory) ?? "materials"]
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROJECT_COST_CATEGORIES.map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {PROJECT_COST_CATEGORY_LABEL[item]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
 
             <MoneyField id="payable-amount" label="Valor" value={amountInput} onChange={setAmountInput} />
           </>
@@ -237,7 +358,7 @@ export function PayableForm({ payableId }: { payableId?: string }) {
           />
         </div>
 
-        {!isRestricted ? (
+        {!isRestricted && !lockedFieldsFromPurchase ? (
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">
               Obra <span className="text-muted-foreground">(opcional)</span>
@@ -282,7 +403,7 @@ export function PayableForm({ payableId }: { payableId?: string }) {
       </div>
 
       <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
-        {isEditing ? "Salvar alterações" : "Criar conta"}
+        {isEditing ? "Salvar alterações" : purchaseOrderContext ? "Gerar conta a pagar" : "Criar conta"}
       </Button>
     </div>
   );

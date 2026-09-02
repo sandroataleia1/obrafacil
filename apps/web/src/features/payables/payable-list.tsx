@@ -10,8 +10,8 @@ import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
-import { describeDueDate, getPayableStatus, matchesStatusFilter } from "./payable-status";
-import { deletePayable } from "./prototype/payable-store";
+import { describeDueDate, getPayableOriginLabel, getPayableStatus, matchesStatusFilter } from "./payable-status";
+import { removePayable } from "./prototype/payable";
 import { usePayables } from "./prototype/use-payables";
 import { PayableStatusBadge } from "./components/status-badge";
 import {
@@ -67,6 +67,16 @@ function RowActions({ payable, onDelete }: RowActionsProps) {
   );
 }
 
+function OriginBadge({ payable }: { payable: Payable }) {
+  const label = getPayableOriginLabel(payable);
+  if (!label) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+      {label}
+    </span>
+  );
+}
+
 function PayableCard({
   payable,
   projectName,
@@ -87,6 +97,7 @@ function PayableCard({
             {payable.supplier ?? payable.description}
           </p>
           <PayableStatusBadge status={status} />
+          <OriginBadge payable={payable} />
         </div>
         {payable.supplier ? (
           <p className="truncate text-xs text-muted-foreground">{payable.description}</p>
@@ -124,9 +135,12 @@ function PayableTableRow({
   return (
     <div className={cn("flex items-center px-4 py-3.5", TABLE_ROW_GRID)}>
       <div className="min-w-0 space-y-0.5">
-        <p className="truncate text-sm font-medium text-foreground">
-          {payable.supplier ?? payable.description}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-medium text-foreground">
+            {payable.supplier ?? payable.description}
+          </p>
+          <OriginBadge payable={payable} />
+        </div>
         {payable.supplier ? (
           <p className="truncate text-xs text-muted-foreground">{payable.description}</p>
         ) : projectName ? (
@@ -246,7 +260,11 @@ export function PayableList() {
       `Remover a conta "${payable.description}"? Esta ação não pode ser desfeita.`
     );
     if (!confirmed) return;
-    deletePayable(payable.id);
+    const result = removePayable(payable);
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
+    }
     refresh();
   }
 

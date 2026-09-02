@@ -71,14 +71,29 @@ export function listPayablesByProject(projectId: string): Payable[] {
   return listAllPayables().filter((payable) => payable.projectId === projectId);
 }
 
+/**
+ * Restricted to `"employee-period"` — the only origin that is truly
+ * 1:1 with its Payable. `"purchase-order"` is 1:N (see
+ * `features/purchases/prototype/purchase-payable.ts`); calling this
+ * with that origin would silently return just one of several Payables.
+ * Use `listPayablesByOrigin` for any origin that isn't guaranteed 1:1.
+ */
 export function findPayableByOrigin(
-  originType: PayableOriginType,
+  originType: "employee-period",
   originId: string
 ): Payable | null {
   return (
     listAllPayables().find(
       (payable) => payable.originType === originType && payable.originId === originId
     ) ?? null
+  );
+}
+
+/** Every Payable produced by one origin record — the correct lookup
+ * for any 1:N origin (currently `"purchase-order"`). */
+export function listPayablesByOrigin(originType: PayableOriginType, originId: string): Payable[] {
+  return listAllPayables().filter(
+    (payable) => payable.originType === originType && payable.originId === originId
   );
 }
 
