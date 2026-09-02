@@ -147,4 +147,12 @@ export const materials: Material[] = [
     createdAt: "2026-06-30",
     updatedAt: "2026-08-05",
   },
+  {
+    id: "material-vidro-temperado-8mm",
+    name: "Vidro temperado 8 mm",
+    defaultUnit: { code: "m2" },
+    status: "active",
+    createdAt: "2026-08-21",
+    updatedAt: "2026-08-21",
+  },
 ];

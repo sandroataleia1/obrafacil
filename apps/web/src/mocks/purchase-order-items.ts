@@ -92,7 +92,7 @@ export const purchaseOrderItems: PurchaseOrderItem[] = [
   {
     id: "item-po-vidro-nunes",
     purchaseOrderId: "purchase-order-vidro-nunes",
-    materialId: "material-tinta-acrilica",
+    materialId: "material-vidro-temperado-8mm",
     description: "Vidro temperado 8mm",
     unit: { code: "m2" },
     quantity: 12,

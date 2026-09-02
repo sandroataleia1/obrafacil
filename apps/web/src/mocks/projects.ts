@@ -21,7 +21,7 @@ export const projects: Project[] = [
     customerName: "Ana Martins",
     reference: "Reforma pontual",
     address: "Av. Brasil, 980 - São Paulo/SP",
-    status: "planning",
+    status: "in_progress",
     createdAt: "2026-08-20",
     updatedAt: "2026-08-20",
   },
