@@ -160,7 +160,15 @@ export function ProjectDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground">Atualizado em {formatDate(project.updatedAt)}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">Atualizado em {formatDate(project.updatedAt)}</p>
+        <Link
+          href={`/obras/${project.id}/editar`}
+          className="text-xs font-medium text-primary hover:underline"
+        >
+          Editar obra
+        </Link>
+      </div>
 
       <section aria-labelledby="project-summary" className="space-y-2.5">
         <h2
@@ -528,7 +536,7 @@ export function ProjectDetail({ id }: { id: string }) {
             <Button
               variant="outline"
               nativeButton={false}
-              render={<Link href="/compras">Ver compras</Link>}
+              render={<Link href={`/compras?projectId=${project.id}`}>Ver compras</Link>}
             />
             <Button
               variant="outline"
@@ -575,7 +583,11 @@ export function ProjectDetail({ id }: { id: string }) {
               <Button
                 variant="outline"
                 nativeButton={false}
-                render={<Link href="/financeiro/contas-a-pagar">Ver contas a pagar</Link>}
+                render={
+                  <Link href={`/financeiro/contas-a-pagar?projectId=${project.id}`}>
+                    Ver contas a pagar
+                  </Link>
+                }
               />
             </div>
           </div>

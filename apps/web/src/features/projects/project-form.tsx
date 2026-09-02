@@ -8,6 +8,8 @@ import { CheckCircle2, Plus } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/shared/empty-state";
+import { FileText } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -24,13 +26,18 @@ import {
   getPendingProject,
   type PendingProject,
 } from "./prototype/pending-project";
+import { updateProjectDetails } from "./prototype/project";
 import { createProjectId, saveProject } from "./prototype/project-store";
+import { useProject } from "./prototype/use-project";
 import type { Project } from "./types";
 
-export function ProjectForm() {
+export function ProjectForm({ projectId }: { projectId?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const preselectedCustomerId = searchParams.get("customerId") ?? "";
+  const isEditing = Boolean(projectId);
+
+  const { project: existingProject } = useProject(projectId ?? "");
 
   const [pendingProject, setPendingProject] = useState<
     PendingProject | null | undefined
@@ -42,10 +49,11 @@ export function ProjectForm() {
   const [reference, setReference] = useState("");
   const [address, setAddress] = useState("");
   const [expectedStartDate, setExpectedStartDate] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Safe post-mount reads — same hydration reasoning as useBudget.
-    const pending = getPendingProject();
+    const pending = isEditing ? null : getPendingProject();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingProject(pending);
     setCustomers(listAllCustomers());
@@ -55,13 +63,44 @@ export function ProjectForm() {
       setCustomerId(pending.customerId);
       setReference(pending.reference ?? "");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fromBudget = Boolean(pendingProject);
+  useEffect(() => {
+    if (!existingProject) return;
+    // Seed the form once the existing project loads from localStorage.
+    // Safe post-mount update (see useProject); only runs when the
+    // record becomes available.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setName(existingProject.name);
+    setCustomerId(existingProject.customerId);
+    setReference(existingProject.reference ?? "");
+    setAddress(existingProject.address ?? "");
+    setExpectedStartDate(existingProject.expectedStartDate ?? "");
+  }, [existingProject]);
+
+  const fromBudget = Boolean(pendingProject) || (isEditing && Boolean(existingProject?.budgetId));
   const canSubmit = name.trim() !== "" && customerId !== "";
 
   function handleSubmit() {
     if (!canSubmit) return;
+
+    if (isEditing && existingProject) {
+      const result = updateProjectDetails(existingProject, {
+        name,
+        customerId,
+        reference,
+        address,
+        expectedStartDate,
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setError(null);
+      router.push(`/obras/${existingProject.id}`);
+      return;
+    }
 
     const customer = customers.find((item) => item.id === customerId);
     if (!customer) return;
@@ -94,12 +133,32 @@ export function ProjectForm() {
     router.push(`/obras/${project.id}`);
   }
 
+  if (isEditing && existingProject === undefined) return null;
+
+  if (isEditing && existingProject === null) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Obra não encontrada" onBack={() => router.push("/obras")} />
+        <EmptyState
+          icon={FileText}
+          title="Obra não encontrada"
+          description="Ela pode ter sido removida ou o link está incorreto."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 pb-6">
       <div className="space-y-1">
-        <BackHeader title="Nova obra" onBack={() => router.push("/obras")} />
+        <BackHeader
+          title={isEditing ? "Editar obra" : "Nova obra"}
+          onBack={() => router.push(isEditing && existingProject ? `/obras/${existingProject.id}` : "/obras")}
+        />
         <p className="pl-11 text-sm text-muted-foreground">
-          Informe o essencial para começar a acompanhar a execução.
+          {isEditing
+            ? "Corrija o nome, o cliente ou o endereço da obra."
+            : "Informe o essencial para começar a acompanhar a execução."}
         </p>
       </div>
 
@@ -146,8 +205,13 @@ export function ProjectForm() {
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">Cliente</span>
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
-              {pendingProject?.customerName}
+              {pendingProject?.customerName ?? existingProject?.customerName}
             </div>
+            {isEditing ? (
+              <p className="text-xs text-muted-foreground">
+                Esta obra está vinculada a um orçamento e não pode trocar de cliente.
+              </p>
+            ) : null}
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -224,6 +288,8 @@ export function ProjectForm() {
             className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
           />
         </div>
+
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
 
       <Button
@@ -233,7 +299,7 @@ export function ProjectForm() {
         disabled={!canSubmit}
         className="w-full"
       >
-        Criar obra
+        {isEditing ? "Salvar alterações" : "Criar obra"}
       </Button>
     </div>
   );

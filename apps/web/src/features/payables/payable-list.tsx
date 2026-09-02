@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, Eye, Pencil, Plus, Receipt, Search, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -254,6 +255,9 @@ export function PayableList() {
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
   const projects = listAllProjects();
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId");
+  const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
 
   function handleDelete(payable: Payable) {
     const confirmed = window.confirm(
@@ -268,19 +272,21 @@ export function PayableList() {
     refresh();
   }
 
-  const openTotal = payables
-    ? payables
-        .filter((payable) => getPayableStatus(payable) === "pending" || getPayableStatus(payable) === "overdue")
-        .reduce((total, payable) => total + payable.amount, 0)
-    : 0;
-  const overdueTotal = payables
-    ? payables
-        .filter((payable) => getPayableStatus(payable) === "overdue")
-        .reduce((total, payable) => total + payable.amount, 0)
-    : 0;
+  // Project scope is the base filter — financial-status filter and
+  // search both apply on top of it, never around it (Demo-Ready 003).
+  // No origin is excluded: manual/Equipe/Compra all stay as long as
+  // they belong to the Obra.
+  const scoped = (payables ?? []).filter((payable) => !projectId || payable.projectId === projectId);
+
+  const openTotal = scoped
+    .filter((payable) => getPayableStatus(payable) === "pending" || getPayableStatus(payable) === "overdue")
+    .reduce((total, payable) => total + payable.amount, 0);
+  const overdueTotal = scoped
+    .filter((payable) => getPayableStatus(payable) === "overdue")
+    .reduce((total, payable) => total + payable.amount, 0);
 
   const normalizedSearch = normalize(search.trim());
-  const filtered = (payables ?? []).filter((payable) => {
+  const filtered = scoped.filter((payable) => {
     if (!matchesStatusFilter(payable, statusFilter)) return false;
     if (normalizedSearch === "") return true;
     return (
@@ -317,7 +323,13 @@ export function PayableList() {
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Contas a pagar</h1>
-          <p className="text-sm text-muted-foreground">Acompanhe contas e vencimentos da empresa.</p>
+          <p className="text-sm text-muted-foreground">
+            {project
+              ? `Contas a pagar · ${project.name}`
+              : projectId
+                ? "Obra não encontrada"
+                : "Acompanhe contas e vencimentos da empresa."}
+          </p>
         </div>
         <Button
           size="sm"
@@ -331,6 +343,15 @@ export function PayableList() {
         />
       </div>
 
+      {projectId ? (
+        <Link
+          href="/financeiro/contas-a-pagar"
+          className="inline-block text-xs font-medium text-primary hover:underline"
+        >
+          Ver todas as contas
+        </Link>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-xl border border-border bg-card p-4">
           <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Em aberto</p>
@@ -342,7 +363,7 @@ export function PayableList() {
         </div>
       </div>
 
-      {payables === undefined || payables.length === 0 ? null : (
+      {payables === undefined || scoped.length === 0 ? null : (
         <div className="space-y-3">
           <div className="relative">
             <Search
@@ -379,11 +400,15 @@ export function PayableList() {
         </div>
       )}
 
-      {payables === undefined ? null : payables.length === 0 ? (
+      {payables === undefined ? null : scoped.length === 0 ? (
         <EmptyState
           icon={Receipt}
-          title="Nenhuma conta a pagar"
-          description="Cadastre contas de materiais, serviços e despesas administrativas."
+          title={projectId ? "Nenhuma conta a pagar para esta obra" : "Nenhuma conta a pagar"}
+          description={
+            projectId
+              ? "Contas geradas por compras, equipe ou lançadas manualmente para esta obra aparecerão aqui."
+              : "Cadastre contas de materiais, serviços e despesas administrativas."
+          }
         />
       ) : filtered.length === 0 ? (
         <EmptyState
@@ -413,7 +438,7 @@ export function PayableList() {
         </>
       )}
 
-      {payables !== undefined && payables.length === 0 ? (
+      {payables !== undefined && scoped.length === 0 ? (
         <Button
           size="lg"
           className="w-full"

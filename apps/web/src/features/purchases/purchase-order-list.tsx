@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, ClipboardList, Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -257,6 +258,9 @@ export function PurchaseOrderList() {
   const [desktopPage, setDesktopPage] = useState(0);
   const suppliers = listSuppliers();
   const projects = listAllProjects();
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId");
+  const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
 
   function handleDelete(purchaseOrder: PurchaseOrder) {
     const confirmed = window.confirm(
@@ -271,17 +275,25 @@ export function PurchaseOrderList() {
     refresh();
   }
 
+  // Project scope is the base filter — commercial-status filter and
+  // search both apply on top of it, never around it (Demo-Ready 003).
+  const scoped = (purchaseOrders ?? []).filter(
+    (purchaseOrder) => !projectId || purchaseOrder.projectId === projectId
+  );
+
   const normalizedSearch = normalize(search.trim());
-  const filtered = (purchaseOrders ?? []).filter((purchaseOrder) => {
+  const filtered = scoped.filter((purchaseOrder) => {
     if (!matchesFilter(purchaseOrder, statusFilter)) return false;
     if (normalizedSearch === "") return true;
     const supplierName = suppliers.find((supplier) => supplier.id === purchaseOrder.supplierId)?.name ?? "";
-    const projectName = projects.find((project) => project.id === purchaseOrder.projectId)?.name ?? "";
+    const projectName = projects.find((item) => item.id === purchaseOrder.projectId)?.name ?? "";
     return (
       normalize(supplierName).includes(normalizedSearch) ||
       normalize(projectName).includes(normalizedSearch)
     );
   });
+
+  const newHref = projectId ? `/compras/nova?projectId=${projectId}` : "/compras/nova";
 
   function updateSearch(value: string) {
     setSearch(value);
@@ -311,13 +323,19 @@ export function PurchaseOrderList() {
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Compras</h1>
-          <p className="text-sm text-muted-foreground">Pedidos de compra de materiais.</p>
+          <p className="text-sm text-muted-foreground">
+            {project
+              ? `Compras · ${project.name}`
+              : projectId
+                ? "Obra não encontrada"
+                : "Pedidos de compra de materiais."}
+          </p>
         </div>
         <Button
           size="sm"
           nativeButton={false}
           render={
-            <Link href="/compras/nova">
+            <Link href={newHref}>
               <Plus className="size-4" aria-hidden="true" />
               Nova
             </Link>
@@ -325,7 +343,13 @@ export function PurchaseOrderList() {
         />
       </div>
 
-      {purchaseOrders === undefined || purchaseOrders.length === 0 ? null : (
+      {projectId ? (
+        <Link href="/compras" className="inline-block text-xs font-medium text-primary hover:underline">
+          Ver todas as compras
+        </Link>
+      ) : null}
+
+      {purchaseOrders === undefined || scoped.length === 0 ? null : (
         <div className="space-y-3">
           <div className="relative">
             <Search
@@ -362,11 +386,15 @@ export function PurchaseOrderList() {
         </div>
       )}
 
-      {purchaseOrders === undefined ? null : purchaseOrders.length === 0 ? (
+      {purchaseOrders === undefined ? null : scoped.length === 0 ? (
         <EmptyState
           icon={ClipboardList}
-          title="Nenhuma compra ainda"
-          description="Registre pedidos de compra de materiais para as obras."
+          title={projectId ? "Nenhuma compra para esta obra" : "Nenhuma compra ainda"}
+          description={
+            projectId
+              ? "Registre um pedido de compra para esta obra."
+              : "Registre pedidos de compra de materiais para as obras."
+          }
         />
       ) : filtered.length === 0 ? (
         <EmptyState
@@ -402,12 +430,12 @@ export function PurchaseOrderList() {
         </>
       )}
 
-      {purchaseOrders !== undefined && purchaseOrders.length === 0 ? (
+      {purchaseOrders !== undefined && scoped.length === 0 ? (
         <Button
           size="lg"
           className="w-full"
           nativeButton={false}
-          render={<Link href="/compras/nova">Registrar primeira compra</Link>}
+          render={<Link href={newHref}>Registrar primeira compra</Link>}
         />
       ) : null}
     </div>
