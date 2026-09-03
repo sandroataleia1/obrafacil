@@ -33,7 +33,7 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [supplierId, setSupplierId] = useState(lockedSupplierId ?? NONE);
+  const [supplierId, setSupplierId] = useState(NONE);
   const [projectId, setProjectId] = useState(lockedProjectId ?? NONE);
   const [orderDate, setOrderDate] = useState(todayIso());
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
@@ -41,9 +41,24 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const loadedSuppliers = listSuppliers();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSuppliers(listSuppliers());
+    setSuppliers(loadedSuppliers);
     setProjects(listAllProjects());
+
+    // `?supplierId=` only pre-selects on create, and only for a Supplier
+    // that both exists and is active — an inactive or unknown id is
+    // silently ignored rather than pre-selected (D008 defense-in-depth:
+    // a deep link can't hand the form a supplier the picker itself would
+    // never offer). Editing an existing Purchase is seeded separately
+    // below, from the record itself, never from this query param.
+    if (!isEditing && lockedSupplierId) {
+      const locked = loadedSuppliers.find((supplier) => supplier.id === lockedSupplierId);
+      if (locked && locked.status === "active") {
+        setSupplierId(locked.id);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -59,6 +74,15 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
   }, [existingPurchaseOrder]);
 
   const isCancelled = existingPurchaseOrder?.commercialStatus === "cancelled";
+
+  // Inactive suppliers stay out of new commercial relationships (D008) —
+  // but a Purchase already tied to one keeps showing its real supplier as
+  // the current value, never a blank/mismatched selection. The domain
+  // (`purchase-order.ts`) already blocks the same rule server-side; this
+  // is only the UI half of that defense-in-depth pair.
+  const selectableSuppliers = suppliers.filter(
+    (supplier) => supplier.status === "active" || supplier.id === existingPurchaseOrder?.supplierId
+  );
 
   function handleSubmit() {
     if (supplierId === NONE) {
@@ -134,13 +158,15 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
           <Select value={supplierId} onValueChange={(value) => setSupplierId(value ?? NONE)}>
             <SelectTrigger className="h-12 w-full px-4 text-base">
               <SelectValue placeholder="Selecione um fornecedor">
-                {(value: string | null) =>
-                  suppliers.find((supplier) => supplier.id === value)?.name ?? "Selecione um fornecedor"
-                }
+                {(value: string | null) => {
+                  const selected = suppliers.find((supplier) => supplier.id === value);
+                  if (!selected) return "Selecione um fornecedor";
+                  return selected.status === "inactive" ? `${selected.name} (inativo)` : selected.name;
+                }}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {suppliers.map((supplier) => (
+              {selectableSuppliers.map((supplier) => (
                 <SelectItem key={supplier.id} value={supplier.id}>
                   {supplier.name}
                   {supplier.status === "inactive" ? " (inativo)" : ""}

@@ -122,17 +122,20 @@ export function SupplierDetail({ id }: { id: string }) {
             </p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className={supplier.status === "active" ? "grid grid-cols-2 gap-2" : undefined}>
           <Button
             variant="outline"
+            className={supplier.status === "active" ? undefined : "w-full"}
             nativeButton={false}
             render={<Link href="/compras">Ver compras</Link>}
           />
-          <Button
-            variant="outline"
-            nativeButton={false}
-            render={<Link href={`/compras/nova?supplierId=${supplier.id}`}>Nova compra</Link>}
-          />
+          {supplier.status === "active" ? (
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/compras/nova?supplierId=${supplier.id}`}>Nova compra</Link>}
+            />
+          ) : null}
         </div>
       </section>
     </div>
