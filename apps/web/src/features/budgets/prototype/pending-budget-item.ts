@@ -33,14 +33,26 @@ export interface FloorPendingBudgetItem {
   boxes: number;
 }
 
+export interface CeilingPanelsByLength {
+  panelLengthM: number;
+  physicalBars: number;
+  safetyBars: number;
+  purchaseBars: number;
+  finalPurchasedLengthM: number;
+}
+
 export interface CeilingPendingBudgetItem {
   source: "ceiling";
   title: string;
   areaM2: number;
   wastePercentage: number;
-  panelLengthM: number;
   panelWidthM: number;
-  panels: number;
+  /** Breakdown by commercial bar length — rooms can use different
+   * lengths, so a single scalar length/quantity can't represent the
+   * purchase without losing information (see Demo-Ready 005B/005C). */
+  panelsByLength: CeilingPanelsByLength[];
+  totalPurchaseBars: number;
+  totalFinalPurchasedLengthM: number;
   rodaforroLengthM: number;
   rodaforros: number;
 }

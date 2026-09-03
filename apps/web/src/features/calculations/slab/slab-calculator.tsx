@@ -15,20 +15,22 @@ import {
   SLAB_GRAVEL_M3_PER_M3,
   SLAB_SAND_M3_PER_M3,
 } from "@/mocks/calculations/slab";
+import { AreaRoomGroup } from "../shared/area-room-group";
+import { areaRoomAreaM2, totalAreaM2, type AreaRoom } from "../shared/area-room";
 import { DecimalField } from "../shared/decimal-field";
 import { FlowHeader } from "../shared/flow-header";
 import { StepFooter } from "../shared/step-footer";
 
 type SlabStep =
+  | "rooms"
   | "type"
-  | "dimensions"
   | "filling"
   | "thickness"
   | "waste"
   | "result";
 type SlabType = "foam" | "block";
 
-const STEPS: SlabStep[] = ["type", "dimensions", "filling", "thickness", "waste"];
+const STEPS: SlabStep[] = ["rooms", "type", "filling", "thickness", "waste"];
 
 const SLAB_TYPES: { id: SlabType; name: string; description: string }[] = [
   {
@@ -64,23 +66,20 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export function SlabCalculator() {
   const router = useRouter();
-  const [step, setStep] = useState<SlabStep>("type");
+  const [step, setStep] = useState<SlabStep>("rooms");
+  const [rooms, setRooms] = useState<AreaRoom[]>([]);
   const [slabType, setSlabType] = useState<SlabType | null>(null);
-  const [length, setLength] = useState("");
-  const [width, setWidth] = useState("");
   const [fillingCoverage, setFillingCoverage] = useState("");
   const [thickness, setThickness] = useState("");
   const [waste, setWaste] = useState(5);
   const [addedToBudget, setAddedToBudget] = useState(false);
 
-  const lengthValue = parseDecimalInput(length);
-  const widthValue = parseDecimalInput(width);
   const thicknessValue = parseDecimalInput(thickness);
   const fillingCoverageValue = parseDecimalInput(fillingCoverage);
-  const dimensionsValid = positive(lengthValue) && positive(widthValue);
+  const roomsValid = rooms.length > 0;
   const fillingValid = positive(fillingCoverageValue);
   const thicknessValid = positive(thicknessValue);
-  const area = dimensionsValid ? lengthValue * widthValue : 0;
+  const area = roomsValid ? totalAreaM2(rooms) : 0;
   const concreteVolume = thicknessValid ? area * (thicknessValue / 100) : 0;
   const volumeWithWaste = concreteVolume * (1 + waste / 100);
   const areaWithWaste = area * (1 + waste / 100);
@@ -99,7 +98,7 @@ export function SlabCalculator() {
   const stepIndex = STEPS.indexOf(step);
 
   function back() {
-    if (step === "type") {
+    if (step === "rooms") {
       router.push("/calcular");
     } else if (step === "result") {
       setStep("waste");
@@ -109,18 +108,17 @@ export function SlabCalculator() {
   }
 
   function next() {
-    if (step === "type" && slabType) setStep("dimensions");
-    if (step === "dimensions" && dimensionsValid) setStep("filling");
+    if (step === "rooms" && roomsValid) setStep("type");
+    if (step === "type" && slabType) setStep("filling");
     if (step === "filling" && fillingValid) setStep("thickness");
     if (step === "thickness" && thicknessValid) setStep("waste");
     if (step === "waste") setStep("result");
   }
 
   function reset() {
-    setStep("type");
+    setStep("rooms");
+    setRooms([]);
     setSlabType(null);
-    setLength("");
-    setWidth("");
     setFillingCoverage("");
     setThickness("");
     setWaste(5);
@@ -156,6 +154,20 @@ export function SlabCalculator() {
       />
 
       <div className="pt-2">
+        {step === "rooms" ? (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                Quais são os ambientes da laje?
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Adicione cada ambiente com suas medidas.
+              </p>
+            </div>
+            <AreaRoomGroup items={rooms} onChange={setRooms} />
+          </div>
+        ) : null}
+
         {step === "type" ? (
           <div className="space-y-4">
             <div className="space-y-1.5">
@@ -189,24 +201,6 @@ export function SlabCalculator() {
                 );
               })}
             </div>
-          </div>
-        ) : null}
-
-        {step === "dimensions" ? (
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold tracking-tight text-foreground">
-              Qual o tamanho da laje?
-            </h2>
-            <DecimalField id="slab-length" label="Comprimento" unit="m" value={length} onChange={setLength} placeholder="0,00" />
-            <FieldError value={length} />
-            <DecimalField id="slab-width" label="Largura" unit="m" value={width} onChange={setWidth} placeholder="0,00" />
-            <FieldError value={width} />
-            {dimensionsValid ? (
-              <div className="flex justify-between rounded-lg bg-muted px-4 py-3 text-sm">
-                <span className="text-muted-foreground">Área</span>
-                <span className="font-semibold">{formatDecimal(area)} m²</span>
-              </div>
-            ) : null}
           </div>
         ) : null}
 
@@ -291,22 +285,41 @@ export function SlabCalculator() {
               <span className="text-5xl font-semibold tabular-nums">{formatDecimal(volumeWithWaste)}</span>
               <span className="text-sm text-primary-foreground/80">m³</span>
             </div>
-            <Card size="sm" className="divide-y divide-border py-0">
-              <InfoRow
-                label="Tipo de laje"
-                value={SLAB_TYPES.find((item) => item.id === slabType)?.name ?? ""}
-              />
-              <InfoRow label="Área da laje" value={`${formatDecimal(area)} m²`} />
-              <InfoRow label="Espessura" value={`${formatDecimal(thicknessValue ?? 0)} cm`} />
-              <InfoRow label="Volume sem perda" value={`${formatDecimal(concreteVolume)} m³`} />
-              <InfoRow label="Perda considerada" value={`${waste}%`} />
-            </Card>
-            <Card size="sm" className="divide-y divide-border py-0">
-              <InfoRow label={fillingName} value={`${fillingUnits} unidades`} />
-              <InfoRow label="Cimento" value={`${cementBags} sacos de 50 kg`} />
-              <InfoRow label="Areia" value={`${formatDecimal(sandM3)} m³`} />
-              <InfoRow label="Brita" value={`${formatDecimal(gravelM3)} m³`} />
-            </Card>
+            <div className="space-y-1.5">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Áreas consideradas
+              </h3>
+              <Card size="sm" className="divide-y divide-border py-0">
+                {rooms.map((room) => (
+                  <InfoRow
+                    key={room.id}
+                    label={room.name}
+                    value={`${formatDecimal(areaRoomAreaM2(room))} m²`}
+                  />
+                ))}
+                <InfoRow label="Área total" value={`${formatDecimal(area)} m²`} />
+              </Card>
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Materiais para a área total
+              </h3>
+              <Card size="sm" className="divide-y divide-border py-0">
+                <InfoRow
+                  label="Tipo de laje"
+                  value={SLAB_TYPES.find((item) => item.id === slabType)?.name ?? ""}
+                />
+                <InfoRow label="Espessura" value={`${formatDecimal(thicknessValue ?? 0)} cm`} />
+                <InfoRow label="Volume sem perda" value={`${formatDecimal(concreteVolume)} m³`} />
+                <InfoRow label="Perda considerada" value={`${waste}%`} />
+              </Card>
+              <Card size="sm" className="divide-y divide-border py-0">
+                <InfoRow label={fillingName} value={`${fillingUnits} unidades`} />
+                <InfoRow label="Cimento" value={`${cementBags} sacos de 50 kg`} />
+                <InfoRow label="Areia" value={`${formatDecimal(sandM3)} m³`} />
+                <InfoRow label="Brita" value={`${formatDecimal(gravelM3)} m³`} />
+              </Card>
+            </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
               Estimativa preliminar de materiais. Esta calculadora não dimensiona a
               estrutura da laje. Armaduras, vigotas, formas, espessuras e
@@ -348,12 +361,12 @@ export function SlabCalculator() {
 
       {step !== "result" ? (
         <StepFooter
-          onBack={step === "type" ? undefined : back}
+          onBack={step === "rooms" ? undefined : back}
           onContinue={next}
           continueLabel={step === "waste" ? "Ver resultado" : "Continuar"}
           continueDisabled={
+            (step === "rooms" && !roomsValid) ||
             (step === "type" && !slabType) ||
-            (step === "dimensions" && !dimensionsValid) ||
             (step === "filling" && !fillingValid) ||
             (step === "thickness" && !thicknessValid)
           }

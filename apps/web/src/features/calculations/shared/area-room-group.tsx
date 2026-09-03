@@ -5,12 +5,12 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { formatDecimal, parseDecimalInput } from "@/lib/decimal";
-import { DecimalField } from "../shared/decimal-field";
-import { ceilingRoomAreaM2, type CeilingRoom } from "./types";
+import { DecimalField } from "./decimal-field";
+import { areaRoomAreaM2, totalAreaM2, type AreaRoom } from "./area-room";
 
-interface RoomGroupProps {
-  items: CeilingRoom[];
-  onChange: (items: CeilingRoom[]) => void;
+interface AreaRoomGroupProps {
+  items: AreaRoom[];
+  onChange: (items: AreaRoom[]) => void;
 }
 
 interface DraftState {
@@ -21,10 +21,17 @@ interface DraftState {
 }
 
 function emptyDraft(nextIndex: number): DraftState {
-  return { id: null, name: `Cômodo ${nextIndex}`, length: "", width: "" };
+  return { id: null, name: `Ambiente ${nextIndex}`, length: "", width: "" };
 }
 
-export function RoomGroup({ items, onChange }: RoomGroupProps) {
+function createRoomId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `room-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function AreaRoomGroup({ items, onChange }: AreaRoomGroupProps) {
   const [draft, setDraft] = useState<DraftState | null>(null);
 
   const lengthValue = draft ? parseDecimalInput(draft.length) : null;
@@ -40,7 +47,7 @@ export function RoomGroup({ items, onChange }: RoomGroupProps) {
     setDraft(emptyDraft(items.length + 1));
   }
 
-  function startEdit(item: CeilingRoom) {
+  function startEdit(item: AreaRoom) {
     setDraft({
       id: item.id,
       name: item.name,
@@ -67,13 +74,11 @@ export function RoomGroup({ items, onChange }: RoomGroupProps) {
         )
       );
     } else {
-      const item: CeilingRoom = {
-        id: `room-${Date.now()}`,
+      const item: AreaRoom = {
+        id: createRoomId(),
         name: draft.name.trim(),
         lengthM: lengthValue,
         widthM: widthValue,
-        panelLengthM: null,
-        direction: null,
       };
       onChange([...items, item]);
     }
@@ -103,7 +108,7 @@ export function RoomGroup({ items, onChange }: RoomGroupProps) {
                 </span>
                 <span className="text-xs text-muted-foreground">
                   {formatDecimal(item.lengthM)} × {formatDecimal(item.widthM)} m ·{" "}
-                  {formatDecimal(ceilingRoomAreaM2(item))} m²
+                  {formatDecimal(areaRoomAreaM2(item))} m²
                 </span>
               </button>
               <div className="flex shrink-0 items-center gap-1">
@@ -127,26 +132,39 @@ export function RoomGroup({ items, onChange }: RoomGroupProps) {
             </li>
           ))}
         </ul>
+      ) : (
+        <p className="rounded-lg bg-muted px-4 py-3 text-sm text-muted-foreground">
+          Nenhum ambiente adicionado.
+        </p>
+      )}
+
+      {items.length > 0 ? (
+        <div className="flex items-center justify-between rounded-lg bg-muted px-4 py-3 text-sm">
+          <span className="text-muted-foreground">Área total</span>
+          <span className="font-semibold text-foreground">
+            {formatDecimal(totalAreaM2(items))} m²
+          </span>
+        </div>
       ) : null}
 
       {draft ? (
         <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-3.5">
           <div className="space-y-1.5">
-            <label htmlFor="room-name" className="text-sm font-medium text-foreground">
-              Nome do cômodo
+            <label htmlFor="area-room-name" className="text-sm font-medium text-foreground">
+              Nome do ambiente
             </label>
             <input
-              id="room-name"
+              id="area-room-name"
               type="text"
               value={draft.name}
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              placeholder="Ex: Sala, Quarto 1"
+              placeholder="Ex.: Sala"
               className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <DecimalField
-              id="room-length"
+              id="area-room-length"
               label="Comprimento"
               unit="m"
               value={draft.length}
@@ -154,7 +172,7 @@ export function RoomGroup({ items, onChange }: RoomGroupProps) {
               placeholder="0,00"
             />
             <DecimalField
-              id="room-width"
+              id="area-room-width"
               label="Largura"
               unit="m"
               value={draft.width}
@@ -190,7 +208,7 @@ export function RoomGroup({ items, onChange }: RoomGroupProps) {
           className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
         >
           <Plus className="size-4" aria-hidden="true" />
-          Adicionar cômodo
+          Adicionar ambiente
         </button>
       )}
     </div>

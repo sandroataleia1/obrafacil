@@ -73,18 +73,25 @@ function floorItemToStage(item: FloorPendingBudgetItem): CalculatedBudgetStage {
 }
 
 function ceilingItemToStage(item: CeilingPendingBudgetItem): CalculatedBudgetStage {
+  // Pricing stays area-based (materials catalog is genuinely R$/m² for
+  // this product) — purchaseBars is the logistics quantity shown to the
+  // user, not the pricing driver. See Demo-Ready 005C.
   const materialsCost =
     item.areaM2 * ceilingPanelPricePerSquareMeter +
     item.rodaforros * ceilingRodaforroPricePerBar;
+
+  const materialName = item.panelsByLength
+    .map((group) => `${group.panelLengthM} m`)
+    .join(" + ");
 
   return {
     id: stageId(item.title),
     kind: "calculated",
     name: item.title,
     item: {
-      materialName: `Placa ${item.panelLengthM} × ${item.panelWidthM} m`,
-      quantity: item.panels,
-      unit: "placas",
+      materialName: `Placa de forro PVC (${materialName})`,
+      quantity: item.totalPurchaseBars,
+      unit: "barras",
     },
     materialsCost: round2(materialsCost),
     laborCost: 0,

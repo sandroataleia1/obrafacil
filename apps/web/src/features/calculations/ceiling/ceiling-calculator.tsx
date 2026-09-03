@@ -21,7 +21,14 @@ import {
 import { FlowHeader } from "../shared/flow-header";
 import { StepFooter } from "../shared/step-footer";
 import { RoomGroup } from "./room-group";
-import { ceilingRoomAreaM2, ceilingRoomPerimeterM, type CeilingRoom } from "./types";
+import { ceilingRoomAreaM2, ceilingRoomPerimeterM, type CeilingDirection, type CeilingRoom } from "./types";
+import {
+  computeCeilingYield,
+  groupPurchaseByPanelLength,
+  isSquareRoom,
+  recommendDirection,
+  type CeilingRoomYield,
+} from "./panel-yield";
 
 type CeilingStep = "rooms" | "panel" | "waste" | "result";
 
@@ -56,10 +63,32 @@ function MaterialRow({
   );
 }
 
-interface RoomYield {
-  room: CeilingRoom;
-  panelArea: number;
-  panels: number;
+const DIRECTION_LABEL: Record<CeilingDirection, string> = {
+  length: "Ao longo do comprimento",
+  width: "Ao longo da largura",
+};
+
+/** Both directions for a room, given the chosen panel length and current
+ * waste. For a square room, only "length" is meaningful — the two
+ * directions are geometrically identical, so "width" is not computed. */
+function roomDirectionYields(
+  room: CeilingRoom,
+  panelLengthM: number,
+  waste: number
+): { length: CeilingRoomYield; width: CeilingRoomYield | null } {
+  const length = computeCeilingYield(room, "length", panelLengthM, CEILING_PANEL_WIDTH_M, waste);
+  const width = isSquareRoom(room)
+    ? null
+    : computeCeilingYield(room, "width", panelLengthM, CEILING_PANEL_WIDTH_M, waste);
+  return { length, width };
+}
+
+function effectiveYield(room: CeilingRoom, waste: number): CeilingRoomYield | null {
+  if (room.panelLengthM === null) return null;
+  const { length, width } = roomDirectionYields(room, room.panelLengthM, waste);
+  if (width === null) return length;
+  const direction = room.direction ?? recommendDirection(length, width);
+  return direction === "width" ? width : length;
 }
 
 export function CeilingCalculator() {
@@ -70,47 +99,59 @@ export function CeilingCalculator() {
   const [addedToBudget, setAddedToBudget] = useState(false);
 
   const roomsValid = rooms.length > 0;
-  const panelValid = roomsValid && rooms.every((room) => room.panelLengthM !== null);
+  const roomYields = rooms.map((room) => effectiveYield(room, waste));
+  const panelValid =
+    roomsValid && roomYields.every((yieldItem) => yieldItem?.viability === "viable");
   const area = rooms.reduce((sum, room) => sum + ceilingRoomAreaM2(room), 0);
   const perimeter = rooms.reduce((sum, room) => sum + ceilingRoomPerimeterM(room), 0);
-  const areaWithWaste = area * (1 + waste / 100);
 
   function setRoomPanelLength(roomId: string, panelLengthM: number) {
     setRooms((current) =>
-      current.map((room) => (room.id === roomId ? { ...room, panelLengthM } : room))
+      current.map((room) => {
+        if (room.id !== roomId) return room;
+        if (isSquareRoom(room)) {
+          return { ...room, panelLengthM, direction: "length" };
+        }
+        const { length, width } = roomDirectionYields(room, panelLengthM, waste);
+        const currentDirectionStillViable =
+          room.direction === "length"
+            ? length.viability === "viable"
+            : room.direction === "width" && width
+              ? width.viability === "viable"
+              : false;
+        const direction = currentDirectionStillViable
+          ? room.direction
+          : width
+            ? recommendDirection(length, width)
+            : "length";
+        return { ...room, panelLengthM, direction };
+      })
     );
   }
 
-  // Prototype calculation for UI validation only.
-  // Laravel Calculation Engine will be the source of truth.
-  // Each room picks its own panel length, so coverage and panel count are
-  // computed per room, then summed — a leftover cut from one room's panel
-  // can't be reused in another, so rounding up per room (not on the
-  // combined total area) gives a realistic purchase quantity.
-  const roomYields: RoomYield[] = rooms.map((room) => {
-    const panelArea = room.panelLengthM !== null ? room.panelLengthM * CEILING_PANEL_WIDTH_M : 0;
-    const panels =
-      panelArea > 0
-        ? Math.ceil((ceilingRoomAreaM2(room) * (1 + waste / 100)) / panelArea)
-        : 0;
-    return { room, panelArea, panels };
-  });
-  const panels = roomYields.reduce((sum, item) => sum + item.panels, 0);
+  function setRoomDirection(roomId: string, direction: CeilingDirection) {
+    setRooms((current) =>
+      current.map((room) => (room.id === roomId ? { ...room, direction } : room))
+    );
+  }
+
+  const viableYields = roomYields.filter(
+    (item): item is CeilingRoomYield => item !== null && item.viability === "viable"
+  );
+  const totalPurchaseBars = viableYields.reduce((sum, item) => sum + item.purchaseBars, 0);
+  const totalFinalPurchasedLengthM = viableYields.reduce(
+    (sum, item) => sum + item.finalPurchasedLengthM,
+    0
+  );
+  const panelsByLength = groupPurchaseByPanelLength(viableYields);
+
+  // Rodaforro is intentionally left unchanged (aggregated globally across
+  // all rooms) — the 005C spec preserves this behavior; not enough
+  // evidence to justify moving it to a per-room model in this pass.
   const rodaforros = Math.ceil(perimeter / CEILING_RODAFORRO_LENGTH_M);
   const screws = rodaforros * CEILING_SCREWS_PER_RODAFORRO;
   const anchors = rodaforros * CEILING_ANCHORS_PER_RODAFORRO;
   const wire = CEILING_WIRE_TOTAL;
-
-  // Grand total broken down by panel length — rooms can use different
-  // lengths, so a single "N placas de X m" figure wouldn't be accurate.
-  const panelsByLength = roomYields.reduce<Map<number, number>>((map, item) => {
-    if (item.room.panelLengthM === null) return map;
-    map.set(item.room.panelLengthM, (map.get(item.room.panelLengthM) ?? 0) + item.panels);
-    return map;
-  }, new Map());
-  const panelsByLengthList = [...panelsByLength.entries()]
-    .sort((a, b) => b[0] - a[0])
-    .map(([length, count]) => ({ length, count }));
 
   const stepIndex = STEPS.indexOf(step);
 
@@ -138,19 +179,15 @@ export function CeilingCalculator() {
   }
 
   function handleAddToBudget() {
-    // Most-used panel length across rooms — the budget hand-off carries a
-    // single representative length/width for the line-item label; pricing
-    // itself is by total area, so this doesn't affect the cost.
-    const mostUsedLength = panelsByLengthList[0]?.length ?? 0;
-
     setPendingBudgetItem({
       source: "ceiling",
       title: "Forro",
       areaM2: area,
       wastePercentage: waste,
-      panelLengthM: mostUsedLength,
       panelWidthM: CEILING_PANEL_WIDTH_M,
-      panels,
+      panelsByLength,
+      totalPurchaseBars,
+      totalFinalPurchasedLengthM,
       rodaforroLengthM: CEILING_RODAFORRO_LENGTH_M,
       rodaforros,
     });
@@ -199,49 +236,112 @@ export function CeilingCalculator() {
             </div>
 
             <div className="space-y-3">
-              {roomYields.map(({ room, panelArea, panels: roomPanels }) => (
-                <div key={room.id} className="space-y-2.5 rounded-xl border border-border bg-card p-3.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-foreground">{room.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatDecimal(ceilingRoomAreaM2(room))} m²
-                    </span>
-                  </div>
-                  <div
-                    role="radiogroup"
-                    aria-label={`Comprimento da placa — ${room.name}`}
-                    className="grid grid-cols-4 gap-1.5"
-                  >
-                    {CEILING_PANEL_LENGTHS_M.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        role="radio"
-                        aria-checked={room.panelLengthM === item}
-                        onClick={() => setRoomPanelLength(room.id, item)}
-                        className={cn(
-                          "rounded-lg border bg-card py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          room.panelLengthM === item
-                            ? "border-primary bg-primary/5 text-primary"
-                            : "border-border text-foreground hover:border-primary/30"
-                        )}
-                      >
-                        {item} m
-                      </button>
-                    ))}
-                  </div>
-                  {room.panelLengthM !== null ? (
-                    <div className="flex items-center justify-between px-0.5 text-xs">
-                      <span className="text-muted-foreground">
-                        Cobertura por placa: {formatDecimal(panelArea)} m²
-                      </span>
-                      <span className="font-medium text-foreground">
-                        ~{formatInteger(roomPanels)} placa{roomPanels === 1 ? "" : "s"}
+              {rooms.map((room) => {
+                const square = isSquareRoom(room);
+                const yields =
+                  room.panelLengthM !== null
+                    ? roomDirectionYields(room, room.panelLengthM, waste)
+                    : null;
+                const chosenDirection: CeilingDirection | null =
+                  yields === null
+                    ? null
+                    : square
+                      ? "length"
+                      : (room.direction ??
+                        (yields.width ? recommendDirection(yields.length, yields.width) : "length"));
+                const chosenYield =
+                  yields === null ? null : chosenDirection === "width" ? yields.width : yields.length;
+
+                return (
+                  <div key={room.id} className="space-y-2.5 rounded-xl border border-border bg-card p-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-foreground">{room.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatDecimal(ceilingRoomAreaM2(room))} m²
                       </span>
                     </div>
-                  ) : null}
-                </div>
-              ))}
+                    <div
+                      role="radiogroup"
+                      aria-label={`Comprimento da placa — ${room.name}`}
+                      className="grid grid-cols-4 gap-1.5"
+                    >
+                      {CEILING_PANEL_LENGTHS_M.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          role="radio"
+                          aria-checked={room.panelLengthM === item}
+                          onClick={() => setRoomPanelLength(room.id, item)}
+                          className={cn(
+                            "rounded-lg border bg-card py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            room.panelLengthM === item
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-border text-foreground hover:border-primary/30"
+                          )}
+                        >
+                          {item} m
+                        </button>
+                      ))}
+                    </div>
+
+                    {yields !== null && yields.width !== null ? (
+                      <div className="space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">Direção</span>
+                        <div role="radiogroup" aria-label={`Direção — ${room.name}`} className="grid grid-cols-2 gap-1.5">
+                          {(["length", "width"] as CeilingDirection[]).map((direction) => {
+                            const directionYield = direction === "length" ? yields.length : yields.width!;
+                            const viable = directionYield.viability === "viable";
+                            const selected = chosenDirection === direction;
+                            return (
+                              <button
+                                key={direction}
+                                type="button"
+                                role="radio"
+                                aria-checked={selected}
+                                disabled={!viable}
+                                onClick={() => setRoomDirection(room.id, direction)}
+                                className={cn(
+                                  "rounded-lg border px-2 py-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                  !viable
+                                    ? "cursor-not-allowed border-dashed border-destructive/40 bg-destructive/5 text-destructive/70"
+                                    : selected
+                                      ? "border-primary bg-primary/5 text-primary"
+                                      : "border-border bg-card text-foreground hover:border-primary/30"
+                                )}
+                              >
+                                <span className="block">{DIRECTION_LABEL[direction]}</span>
+                                <span className="block text-[11px] font-normal opacity-80">
+                                  {viable ? `${formatInteger(directionYield.purchaseBars)} barras` : "Exige emenda"}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {chosenYield !== null ? (
+                      chosenYield.viability === "viable" ? (
+                        <div className="flex items-center justify-between px-0.5 text-xs">
+                          <span className="text-muted-foreground">
+                            {formatInteger(chosenYield.strips)} faixas · {formatInteger(chosenYield.cutsPerBar)}{" "}
+                            corte{chosenYield.cutsPerBar === 1 ? "" : "s"}/barra
+                          </span>
+                          <span className="font-medium text-foreground">
+                            ~{formatInteger(chosenYield.purchaseBars)} barra
+                            {chosenYield.purchaseBars === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      ) : (
+                        <p className="px-0.5 text-xs text-destructive">
+                          Esse comprimento não cobre o sentido escolhido sem emenda. Escolha outro
+                          comprimento comercial ou, se disponível, a outra direção.
+                        </p>
+                      )
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -289,9 +389,9 @@ export function CeilingCalculator() {
               <Card size="sm" className="divide-y divide-border py-0">
                 <MaterialRow
                   label="Placas de forro PVC"
-                  value={`${formatInteger(panels)} un`}
-                  helper={panelsByLengthList
-                    .map((item) => `${formatInteger(item.count)} de ${item.length} m`)
+                  value={`${formatInteger(totalPurchaseBars)} barras`}
+                  helper={panelsByLength
+                    .map((item) => `${formatInteger(item.purchaseBars)} de ${item.panelLengthM} m`)
                     .join(" · ")}
                 />
                 <MaterialRow
@@ -307,23 +407,52 @@ export function CeilingCalculator() {
 
             <div className="space-y-1.5">
               <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                Por cômodo
+                Por comprimento comercial
               </span>
               <Card size="sm" className="divide-y divide-border py-0">
-                {roomYields.map(({ room, panels: roomPanels }) => (
+                {panelsByLength.map((item) => (
                   <InfoRow
-                    key={room.id}
-                    label={room.name}
-                    value={`${formatInteger(roomPanels)} placa${roomPanels === 1 ? "" : "s"} de ${room.panelLengthM} m`}
+                    key={item.panelLengthM}
+                    label={`${item.panelLengthM} m`}
+                    value={`${formatInteger(item.purchaseBars)} barras · ${formatDecimal(item.finalPurchasedLengthM)} m`}
                   />
                 ))}
               </Card>
             </div>
 
+            <div className="space-y-1.5">
+              <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Por cômodo
+              </span>
+              <Card size="sm" className="divide-y divide-border py-0">
+                {rooms.map((room) => {
+                  const yieldResult = effectiveYield(room, waste);
+                  if (!yieldResult || yieldResult.viability !== "viable") return null;
+                  return (
+                    <div key={room.id} className="space-y-1 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-foreground">{room.name}</span>
+                        <span className="text-sm font-semibold text-foreground">
+                          {formatInteger(yieldResult.purchaseBars)} barras de {yieldResult.panelLengthM} m
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {DIRECTION_LABEL[yieldResult.direction]} · {formatInteger(yieldResult.strips)} faixas ·{" "}
+                        {formatInteger(yieldResult.physicalBars)} barras físicas
+                        {yieldResult.safetyBars > 0 ? ` + ${formatInteger(yieldResult.safetyBars)} de margem` : ""} ·{" "}
+                        sobra {formatDecimal(yieldResult.geometricWasteLengthM)} m · aproveitamento{" "}
+                        {formatDecimal(yieldResult.physicalUtilization * 100, 1)}%
+                      </p>
+                    </div>
+                  );
+                })}
+              </Card>
+            </div>
+
             <Card size="sm" className="divide-y divide-border py-0">
               <InfoRow label="Área do forro" value={`${formatDecimal(area)} m²`} />
-              <InfoRow label="Perda das placas" value={`${waste}%`} />
-              <InfoRow label="Área com perda" value={`${formatDecimal(areaWithWaste)} m²`} />
+              <InfoRow label="Margem de segurança" value={`${waste}%`} />
+              <InfoRow label="Metros lineares comprados" value={`${formatDecimal(totalFinalPurchasedLengthM)} m`} />
               <InfoRow label="Perímetro" value={`${formatDecimal(perimeter)} m`} />
               <InfoRow label="Rodaforro" value={`${formatDecimal(CEILING_RODAFORRO_LENGTH_M)} m por barra`} />
             </Card>

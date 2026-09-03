@@ -29,7 +29,7 @@ function summaryLines(item: PendingBudgetItem): {
       return {
         icon: PanelTop,
         detail: `Área: ${formatDecimal(item.areaM2)} m²`,
-        lines: [`Quantidade de placas: ${formatInteger(item.panels)}`],
+        lines: [`Quantidade de barras: ${formatInteger(item.totalPurchaseBars)}`],
       };
     case "slab":
       return {

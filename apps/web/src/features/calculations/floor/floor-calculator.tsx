@@ -9,13 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatDecimal, formatInteger, parseDecimalInput } from "@/lib/decimal";
 import { setPendingBudgetItem } from "@/features/budgets/prototype/pending-budget-item";
+import { AreaRoomGroup } from "../shared/area-room-group";
+import { areaRoomAreaM2, totalAreaM2, type AreaRoom } from "../shared/area-room";
 import { DecimalField } from "../shared/decimal-field";
 import { FlowHeader } from "../shared/flow-header";
 import { StepFooter } from "../shared/step-footer";
 
-type FloorStep = "dimensions" | "box" | "waste" | "result";
+type FloorStep = "rooms" | "box" | "waste" | "result";
 
-const STEPS: FloorStep[] = ["dimensions", "box", "waste"];
+const STEPS: FloorStep[] = ["rooms", "box", "waste"];
 
 function positive(value: number | null): value is number {
   return value !== null && value > 0;
@@ -38,19 +40,16 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export function FloorCalculator() {
   const router = useRouter();
-  const [step, setStep] = useState<FloorStep>("dimensions");
-  const [length, setLength] = useState("");
-  const [width, setWidth] = useState("");
+  const [step, setStep] = useState<FloorStep>("rooms");
+  const [rooms, setRooms] = useState<AreaRoom[]>([]);
   const [coverage, setCoverage] = useState("");
   const [waste, setWaste] = useState(10);
   const [addedToBudget, setAddedToBudget] = useState(false);
 
-  const lengthValue = parseDecimalInput(length);
-  const widthValue = parseDecimalInput(width);
   const coverageValue = parseDecimalInput(coverage);
-  const dimensionsValid = positive(lengthValue) && positive(widthValue);
+  const roomsValid = rooms.length > 0;
   const coverageValid = positive(coverageValue);
-  const area = dimensionsValid ? lengthValue * widthValue : 0;
+  const area = roomsValid ? totalAreaM2(rooms) : 0;
   const areaWithWaste = area * (1 + waste / 100);
 
   // Prototype calculation for UI validation only.
@@ -60,7 +59,7 @@ export function FloorCalculator() {
   const stepIndex = STEPS.indexOf(step);
 
   function back() {
-    if (step === "dimensions") {
+    if (step === "rooms") {
       router.push("/calcular");
     } else if (step === "result") {
       setStep("waste");
@@ -70,15 +69,14 @@ export function FloorCalculator() {
   }
 
   function next() {
-    if (step === "dimensions" && dimensionsValid) setStep("box");
+    if (step === "rooms" && roomsValid) setStep("box");
     if (step === "box" && coverageValid) setStep("waste");
     if (step === "waste") setStep("result");
   }
 
   function reset() {
-    setStep("dimensions");
-    setLength("");
-    setWidth("");
+    setStep("rooms");
+    setRooms([]);
     setCoverage("");
     setWaste(10);
     setAddedToBudget(false);
@@ -105,21 +103,17 @@ export function FloorCalculator() {
       />
 
       <div className="pt-2">
-        {step === "dimensions" ? (
+        {step === "rooms" ? (
           <div className="space-y-4">
-            <h2 className="text-xl font-semibold tracking-tight text-foreground">
-              Qual a área do piso?
-            </h2>
-            <DecimalField id="floor-length" label="Comprimento" unit="m" value={length} onChange={setLength} placeholder="0,00" />
-            <ErrorMessage value={length} />
-            <DecimalField id="floor-width" label="Largura" unit="m" value={width} onChange={setWidth} placeholder="0,00" />
-            <ErrorMessage value={width} />
-            {dimensionsValid ? (
-              <div className="flex justify-between rounded-lg bg-muted px-4 py-3 text-sm">
-                <span className="text-muted-foreground">Área</span>
-                <span className="font-semibold">{formatDecimal(area)} m²</span>
-              </div>
-            ) : null}
+            <div className="space-y-1.5">
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                Quais são os ambientes do piso?
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Adicione cada ambiente com suas medidas.
+              </p>
+            </div>
+            <AreaRoomGroup items={rooms} onChange={setRooms} />
           </div>
         ) : null}
 
@@ -178,12 +172,31 @@ export function FloorCalculator() {
               <span className="text-5xl font-semibold tabular-nums">{formatInteger(boxes)}</span>
               <span className="text-sm text-primary-foreground/80">caixas</span>
             </div>
-            <Card size="sm" className="divide-y divide-border py-0">
-              <InfoRow label="Área do piso" value={`${formatDecimal(area)} m²`} />
-              <InfoRow label="Perda considerada" value={`${waste}%`} />
-              <InfoRow label="Área com perda" value={`${formatDecimal(areaWithWaste)} m²`} />
-              <InfoRow label="Cobertura por caixa" value={`${formatDecimal(coverageValue ?? 0)} m²`} />
-            </Card>
+            <div className="space-y-1.5">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Áreas consideradas
+              </h3>
+              <Card size="sm" className="divide-y divide-border py-0">
+                {rooms.map((room) => (
+                  <InfoRow
+                    key={room.id}
+                    label={room.name}
+                    value={`${formatDecimal(areaRoomAreaM2(room))} m²`}
+                  />
+                ))}
+                <InfoRow label="Área total" value={`${formatDecimal(area)} m²`} />
+              </Card>
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Material para a área total
+              </h3>
+              <Card size="sm" className="divide-y divide-border py-0">
+                <InfoRow label="Perda considerada" value={`${waste}%`} />
+                <InfoRow label="Área com perda" value={`${formatDecimal(areaWithWaste)} m²`} />
+                <InfoRow label="Cobertura por caixa" value={`${formatDecimal(coverageValue ?? 0)} m²`} />
+              </Card>
+            </div>
 
             {addedToBudget ? (
               <div className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-4">
@@ -219,10 +232,10 @@ export function FloorCalculator() {
 
       {step !== "result" ? (
         <StepFooter
-          onBack={step === "dimensions" ? undefined : back}
+          onBack={step === "rooms" ? undefined : back}
           onContinue={next}
           continueLabel={step === "waste" ? "Ver resultado" : "Continuar"}
-          continueDisabled={(step === "dimensions" && !dimensionsValid) || (step === "box" && !coverageValid)}
+          continueDisabled={(step === "rooms" && !roomsValid) || (step === "box" && !coverageValid)}
         />
       ) : null}
     </div>
