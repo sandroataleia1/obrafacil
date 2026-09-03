@@ -451,7 +451,7 @@ export function CeilingCalculator() {
 
             <Card size="sm" className="divide-y divide-border py-0">
               <InfoRow label="Área do forro" value={`${formatDecimal(area)} m²`} />
-              <InfoRow label="Margem de segurança" value={`${waste}%`} />
+              <InfoRow label="Perda considerada" value={`${waste}%`} />
               <InfoRow label="Metros lineares comprados" value={`${formatDecimal(totalFinalPurchasedLengthM)} m`} />
               <InfoRow label="Perímetro" value={`${formatDecimal(perimeter)} m`} />
               <InfoRow label="Rodaforro" value={`${formatDecimal(CEILING_RODAFORRO_LENGTH_M)} m por barra`} />

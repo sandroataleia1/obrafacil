@@ -60,7 +60,11 @@ export function calculateMasonry(
   );
 
   // Placeholder ratios only — not the official mortar/cement/lime/sand formulas.
-  const mortarM3 = netAreaM2 * 0.015;
+  // wastePercentage applies to the mortar need itself, before cement/lime/
+  // sand are derived from it — the same loss/reserve percentage the blocks
+  // already receive, applied once, before any commercial rounding.
+  const mortarM3Base = netAreaM2 * 0.015;
+  const mortarM3 = mortarM3Base * (1 + input.wastePercentage / 100);
   const cementBags = Math.ceil(mortarM3 * 7);
   const limeBags = Math.ceil(mortarM3 * 14);
   const sandM3 = Math.round(mortarM3 * 1.15 * 100) / 100;

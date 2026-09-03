@@ -81,7 +81,7 @@ function ceilingItemToStage(item: CeilingPendingBudgetItem): CalculatedBudgetSta
     item.rodaforros * ceilingRodaforroPricePerBar;
 
   const materialName = item.panelsByLength
-    .map((group) => `${group.panelLengthM} m`)
+    .map((group) => `${group.purchaseBars}×${group.panelLengthM} m`)
     .join(" + ");
 
   return {
@@ -113,7 +113,11 @@ function slabItemToStage(item: SlabPendingBudgetItem): CalculatedBudgetStage {
     kind: "calculated",
     name: item.title,
     item: {
-      materialName: `Concreto (${item.slabTypeLabel})`,
+      // materialsCost sums cement/sand/gravel/filling, not just concrete —
+      // the label's first half names that agregated cost scope; the
+      // second half qualifies what the m³ quantity itself measures
+      // (concrete only), so the two never get conflated.
+      materialName: `Materiais para ${item.slabTypeLabel.toLowerCase()} — concreto estimado`,
       quantity: round2(item.concreteVolumeWithWasteM3),
       unit: "m³",
     },
