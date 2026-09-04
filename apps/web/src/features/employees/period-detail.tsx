@@ -8,43 +8,35 @@ import { ChevronRight, Receipt, Users } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { MoneyField } from "@/components/shared/money-field";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
+import { formatCurrency } from "@/lib/currency";
 import { formatDate, todayIso } from "@/lib/date";
 import { getPayableStatus } from "@/features/payables/payable-status";
 import { PayableStatusBadge } from "@/features/payables/components/status-badge";
 import type { Payable } from "@/features/payables/types";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
 import type { Project } from "@/features/projects/types";
+import { AllocationDialog } from "./attendance/allocation-dialog";
 import { AttendanceCalendar } from "./attendance/attendance-calendar";
 import { AttendanceSummaryCard } from "./attendance/attendance-summary-card";
+import { PeriodAdjustmentDialog } from "./attendance/period-adjustment-dialog";
+import { PeriodCloseDialog } from "./attendance/period-close-dialog";
+import { PeriodPayableDialog } from "./attendance/period-payable-dialog";
 import { getEmployee } from "./prototype/employee-store";
 import { calculatePeriodEstimate } from "./prototype/period-calculation";
 import { formatPeriodLabel } from "./prototype/period-label";
 import {
   canClosePeriod,
-  clearAttendanceEntry,
   countPendingFillable,
   fillUnrecordedAsFullDay,
   isLegacyWorkPeriod,
   setAttendanceEntry,
+  clearAttendanceEntry,
   setMultipleAttendanceEntries,
 } from "./prototype/attendance";
-import {
-  allocatePeriodToProject,
-  removePeriodAllocation,
-  summarizeAllocations,
-  updatePeriodAllocation,
-} from "./prototype/period-allocation";
+import { removePeriodAllocation, summarizeAllocations } from "./prototype/period-allocation";
 import { listAllocationsForPeriod } from "./prototype/period-allocation-store";
-import { findPayableForPeriod, generatePayableForPeriod } from "./prototype/period-payable";
+import { findPayableForPeriod } from "./prototype/period-payable";
 import { useWorkPeriod } from "./prototype/use-work-period";
 import { WorkPeriodStatusBadge } from "./components/status-badge";
 import {
@@ -54,8 +46,6 @@ import {
   type AttendanceStatus,
   type EmployeePeriodAllocation,
 } from "./types";
-
-type AdjustmentType = "none" | "discount" | "increase";
 
 function InfoRow({
   label,
@@ -91,25 +81,31 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
 
   const [expectedDaysInput, setExpectedDaysInput] = useState("");
   const [workedDaysInput, setWorkedDaysInput] = useState("");
-  const [adjustmentType, setAdjustmentType] = useState<AdjustmentType>("none");
-  const [adjustmentAmountInput, setAdjustmentAmountInput] = useState("");
-  const [notes, setNotes] = useState("");
   const [daysError, setDaysError] = useState<string | null>(null);
+  const [notes, setNotes] = useState("");
   const [relatedPayable, setRelatedPayable] = useState<Payable | null | undefined>(undefined);
-  const [generatingPayable, setGeneratingPayable] = useState(false);
-  const [payableDueDate, setPayableDueDate] = useState("");
-  const [payableNotes, setPayableNotes] = useState("");
-  const [payableError, setPayableError] = useState<string | null>(null);
   const [allocations, setAllocations] = useState<EmployeePeriodAllocation[] | undefined>(undefined);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [allocationFormOpen, setAllocationFormOpen] = useState(false);
-  const [editingAllocationId, setEditingAllocationId] = useState<string | null>(null);
-  const [allocationProjectId, setAllocationProjectId] = useState("");
-  const [allocationAmountInput, setAllocationAmountInput] = useState("");
-  const [allocationError, setAllocationError] = useState<string | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
-  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+
+  // Dialog/AlertDialog state (Demo-Ready 009B) — one flag/object per
+  // surface, not a mega discriminated union: each carries a different
+  // payload shape (an allocation being edited/deleted, a pending bulk
+  // overwrite list) and grouping them would not simplify anything.
+  const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
+  const [payableDialogOpen, setPayableDialogOpen] = useState(false);
+  const [allocationDialogOpen, setAllocationDialogOpen] = useState(false);
+  const [editingAllocation, setEditingAllocation] = useState<EmployeePeriodAllocation | null>(null);
+  const [deletingAllocation, setDeletingAllocation] = useState<EmployeePeriodAllocation | null>(null);
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [bulkFillConfirmOpen, setBulkFillConfirmOpen] = useState(false);
+  const [reopenConfirmOpen, setReopenConfirmOpen] = useState(false);
+  const [bulkOverwriteConfirm, setBulkOverwriteConfirm] = useState<{
+    dates: string[];
+    status: AttendanceStatus;
+  } | null>(null);
+  const [legacyCloseConfirmOpen, setLegacyCloseConfirmOpen] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -128,27 +124,14 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     if (!workPeriod) return;
     // Seed the form once the period loads from localStorage. Depends on
     // `workPeriod.id` (not the whole object) so a `persist()` call from
-    // this same screen — which updates `workPeriod` but keeps the same
-    // id — never re-fires this and stomps on in-progress local edits
-    // (e.g. selecting "Acréscimo" before typing its amount, which
-    // persists a temporary `manualAdjustment: 0`).
+    // this same screen never re-fires this and stomps on in-progress
+    // local edits.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpectedDaysInput(String(workPeriod.expectedDays ?? 0));
     setWorkedDaysInput(String(workPeriod.workedDays ?? 0));
     setNotes(workPeriod.notes ?? "");
     setSelectMode(false);
     setSelectedDates([]);
-    setCloseConfirmOpen(false);
-    if (workPeriod.manualAdjustment > 0) {
-      setAdjustmentType("increase");
-      setAdjustmentAmountInput(String(workPeriod.manualAdjustment).replace(".", ","));
-    } else if (workPeriod.manualAdjustment < 0) {
-      setAdjustmentType("discount");
-      setAdjustmentAmountInput(String(-workPeriod.manualAdjustment).replace(".", ","));
-    } else {
-      setAdjustmentType("none");
-      setAdjustmentAmountInput("");
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workPeriod?.id]);
 
@@ -210,13 +193,10 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     persist(clearAttendanceEntry(workPeriod, date));
   }
 
-  function handleFillPending() {
-    if (!workPeriod || isClosed) return;
-    const pending = countPendingFillable(workPeriod);
-    if (pending === 0) return;
-    const confirmed = window.confirm(`Marcar ${pending} dia${pending === 1 ? "" : "s"} pendente${pending === 1 ? "" : "s"} como completos?`);
-    if (!confirmed) return;
+  function handleConfirmBulkFill() {
+    if (!workPeriod) return;
     persist(fillUnrecordedAsFullDay(workPeriod));
+    setBulkFillConfirmOpen(false);
   }
 
   function toggleSelectedDate(date: string) {
@@ -225,28 +205,31 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     );
   }
 
-  function handleBulkSetSelected(bulkStatus: AttendanceStatus) {
+  function requestBulkSetSelected(bulkStatus: AttendanceStatus) {
     if (!workPeriod || isClosed || selectedDates.length === 0) return;
-    const alreadyRecorded = selectedDates.filter(
-      (date) => workPeriod.attendanceEntries?.some((entry) => entry.date === date)
+    const alreadyRecorded = selectedDates.filter((date) =>
+      workPeriod.attendanceEntries?.some((entry) => entry.date === date)
     );
     if (alreadyRecorded.length > 0) {
-      const confirmed = window.confirm(
-        `${alreadyRecorded.length} dia${alreadyRecorded.length === 1 ? "" : "s"} selecionado${alreadyRecorded.length === 1 ? "" : "s"} já possui${alreadyRecorded.length === 1 ? "" : "m"} lançamento. Sobrescrever?`
-      );
-      if (!confirmed) return;
+      setBulkOverwriteConfirm({ dates: selectedDates, status: bulkStatus });
+      return;
     }
     persist(setMultipleAttendanceEntries(workPeriod, selectedDates, bulkStatus));
     setSelectedDates([]);
     setSelectMode(false);
   }
 
-  function commitAdjustment(type: AdjustmentType, amountInput: string) {
+  function handleConfirmBulkOverwrite() {
+    if (!workPeriod || !bulkOverwriteConfirm) return;
+    persist(setMultipleAttendanceEntries(workPeriod, bulkOverwriteConfirm.dates, bulkOverwriteConfirm.status));
+    setBulkOverwriteConfirm(null);
+    setSelectedDates([]);
+    setSelectMode(false);
+  }
+
+  function handleSaveAdjustment(value: number) {
     if (!workPeriod) return;
-    const magnitude = parseCurrencyInput(amountInput) ?? 0;
-    const manualAdjustment =
-      type === "discount" ? -Math.abs(magnitude) : type === "increase" ? Math.abs(magnitude) : 0;
-    persist({ ...workPeriod, manualAdjustment });
+    persist({ ...workPeriod, manualAdjustment: value });
   }
 
   function handleNotesChange(raw: string) {
@@ -259,35 +242,20 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     if (!workPeriod) return;
     if (!canClosePeriod(workPeriod).canClose) return;
     persist({ ...workPeriod, closedAt: todayIso() });
-    setCloseConfirmOpen(false);
+    setCloseDialogOpen(false);
   }
 
-  function handleReopen() {
-    // Both checks must wait for a confirmed "nothing pending" result
-    // (not `undefined`/loading) — reopening right after a fast click
-    // must never slip through before the lookups resolve.
+  function handleConfirmLegacyClose() {
+    if (!workPeriod) return;
+    persist({ ...workPeriod, closedAt: todayIso() });
+    setLegacyCloseConfirmOpen(false);
+  }
+
+  function handleConfirmReopen() {
     if (!workPeriod || relatedPayable !== null) return;
     if (allocations === undefined || allocations.length > 0) return;
-    const confirmed = window.confirm("Reabrir este período permitirá editar novamente a frequência.");
-    if (!confirmed) return;
     persist({ ...workPeriod, closedAt: undefined });
-  }
-
-  function handleGeneratePayable() {
-    if (!workPeriod || !employee) return;
-    if (payableDueDate.trim() === "") {
-      setPayableError("Informe o vencimento.");
-      return;
-    }
-    setPayableError(null);
-    const created = generatePayableForPeriod(
-      workPeriod,
-      employee,
-      payableDueDate,
-      payableNotes.trim() || undefined
-    );
-    setRelatedPayable(created);
-    setGeneratingPayable(false);
+    setReopenConfirmOpen(false);
   }
 
   function refreshAllocations() {
@@ -295,72 +263,16 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     setAllocations(listAllocationsForPeriod(workPeriod.id));
   }
 
-  function openCreateAllocation() {
-    setEditingAllocationId(null);
-    setAllocationProjectId("");
-    setAllocationAmountInput("");
-    setAllocationError(null);
-    setAllocationFormOpen(true);
-  }
-
-  function openEditAllocation(allocation: EmployeePeriodAllocation) {
-    setEditingAllocationId(allocation.id);
-    setAllocationProjectId(allocation.projectId);
-    setAllocationAmountInput(String(allocation.amount).replace(".", ","));
-    setAllocationError(null);
-    setAllocationFormOpen(true);
-  }
-
-  function handleCancelAllocationForm() {
-    setAllocationFormOpen(false);
-    setEditingAllocationId(null);
-    setAllocationError(null);
-  }
-
-  function handleSaveAllocation() {
-    if (!workPeriod || !employee) return;
-    const amount = parseCurrencyInput(allocationAmountInput);
-    if (amount === null || amount <= 0) {
-      setAllocationError("Informe um valor maior que zero.");
-      return;
-    }
-
-    if (editingAllocationId) {
-      const existing = allocations?.find((allocation) => allocation.id === editingAllocationId);
-      if (!existing) return;
-      const result = updatePeriodAllocation(existing, workPeriod, employee, amount);
-      if (!result.ok) {
-        setAllocationError(result.error);
-        return;
-      }
-    } else {
-      if (allocationProjectId === "") {
-        setAllocationError("Selecione uma obra.");
-        return;
-      }
-      const result = allocatePeriodToProject(workPeriod, employee, allocationProjectId, amount);
-      if (!result.ok) {
-        setAllocationError(result.error);
-        return;
-      }
-    }
-
-    setAllocationError(null);
-    setAllocationFormOpen(false);
-    setEditingAllocationId(null);
+  function handleConfirmDeleteAllocation() {
+    if (!deletingAllocation) return;
+    removePeriodAllocation(deletingAllocation);
+    setDeletingAllocation(null);
     refreshAllocations();
   }
 
-  function handleDeleteAllocation(allocation: EmployeePeriodAllocation) {
-    const project = projects.find((item) => item.id === allocation.projectId);
-    const confirmed = window.confirm(
-      `Remover a alocação de ${formatCurrency(allocation.amount)} para ${project?.name ?? "esta obra"}? O custo correspondente será removido da obra.`
-    );
-    if (!confirmed) return;
-    removePeriodAllocation(allocation);
-    handleCancelAllocationForm();
-    refreshAllocations();
-  }
+  const deletingAllocationProject = deletingAllocation
+    ? projects.find((item) => item.id === deletingAllocation.projectId)
+    : undefined;
 
   return (
     <div className="space-y-6 pb-6">
@@ -449,7 +361,7 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
                     size="sm"
                     variant="outline"
                     disabled={pendingFillable === 0}
-                    onClick={handleFillPending}
+                    onClick={() => setBulkFillConfirmOpen(true)}
                   >
                     Preencher pendentes como completos
                   </Button>
@@ -471,7 +383,7 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
                           size="sm"
                           variant="outline"
                           disabled={selectedDates.length === 0}
-                          onClick={() => handleBulkSetSelected("full_day")}
+                          onClick={() => requestBulkSetSelected("full_day")}
                         >
                           Marcar completos
                         </Button>
@@ -480,7 +392,7 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
                           size="sm"
                           variant="outline"
                           disabled={selectedDates.length === 0}
-                          onClick={() => handleBulkSetSelected("half_day")}
+                          onClick={() => requestBulkSetSelected("half_day")}
                         >
                           Meio período
                         </Button>
@@ -517,51 +429,13 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
             </>
           )}
 
-          <div className="space-y-1.5">
-            <span className="text-sm font-medium text-foreground">
-              Ajuste manual <span className="text-muted-foreground">(opcional)</span>
-            </span>
-            <div className="grid grid-cols-3 gap-2">
-              {(
-                [
-                  { value: "none", label: "Nenhum" },
-                  { value: "discount", label: "Desconto" },
-                  { value: "increase", label: "Acréscimo" },
-                ] as const
-              ).map((option) => {
-                const selected = adjustmentType === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    aria-pressed={selected}
-                    onClick={() => {
-                      setAdjustmentType(option.value);
-                      commitAdjustment(option.value, adjustmentAmountInput);
-                    }}
-                    className={
-                      selected
-                        ? "rounded-lg border border-primary bg-primary/5 py-2 text-xs font-semibold text-primary"
-                        : "rounded-lg border border-border bg-card py-2 text-xs font-semibold text-foreground hover:border-primary/30"
-                    }
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-            {adjustmentType !== "none" ? (
-              <MoneyField
-                id="adjustment-amount"
-                label="Valor do ajuste"
-                value={adjustmentAmountInput}
-                onChange={(raw) => {
-                  setAdjustmentAmountInput(raw);
-                  commitAdjustment(adjustmentType, raw);
-                }}
-                className="mt-2"
-              />
-            ) : null}
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
+            <p className="text-sm text-muted-foreground">
+              Ajuste manual: <span className="font-medium text-foreground">{formatCurrency(workPeriod.manualAdjustment)}</span>
+            </p>
+            <Button type="button" size="sm" variant="outline" onClick={() => setAdjustmentDialogOpen(true)}>
+              Editar ajuste
+            </Button>
           </div>
 
           <div className="space-y-1.5">
@@ -615,43 +489,6 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
               title="Este período não possui valor a pagar."
               description="Nenhuma conta a pagar será gerada automaticamente."
             />
-          ) : generatingPayable ? (
-            <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-              <div className="space-y-1.5">
-                <label htmlFor="payable-due-date" className="text-sm font-medium text-foreground">
-                  Vencimento
-                </label>
-                <input
-                  id="payable-due-date"
-                  type="date"
-                  value={payableDueDate}
-                  onChange={(event) => setPayableDueDate(event.target.value)}
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="payable-notes" className="text-sm font-medium text-foreground">
-                  Observação <span className="text-muted-foreground">(opcional)</span>
-                </label>
-                <input
-                  id="payable-notes"
-                  type="text"
-                  value={payableNotes}
-                  onChange={(event) => setPayableNotes(event.target.value)}
-                  placeholder="Detalhes adicionais"
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              {payableError ? <p className="text-sm text-destructive">{payableError}</p> : null}
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={() => setGeneratingPayable(false)}>
-                  Cancelar
-                </Button>
-                <Button type="button" onClick={handleGeneratePayable}>
-                  Gerar conta
-                </Button>
-              </div>
-            </div>
           ) : (
             <div className="space-y-3">
               <EmptyState
@@ -660,17 +497,7 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
                 title="Nenhuma conta a pagar gerada"
                 description="Transforme o valor previsto deste período em uma conta a pagar."
               />
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => {
-                  setPayableDueDate("");
-                  setPayableNotes("");
-                  setPayableError(null);
-                  setGeneratingPayable(true);
-                }}
-              >
+              <Button type="button" variant="outline" className="w-full" onClick={() => setPayableDialogOpen(true)}>
                 Gerar conta a pagar
               </Button>
             </div>
@@ -707,7 +534,10 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
                   <button
                     key={allocation.id}
                     type="button"
-                    onClick={() => openEditAllocation(allocation)}
+                    onClick={() => {
+                      setEditingAllocation(allocation);
+                      setAllocationDialogOpen(true);
+                    }}
                     className="flex w-full items-center gap-3 p-3.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -723,74 +553,17 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
             </div>
           ) : null}
 
-          {allocationFormOpen ? (
-            <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium text-foreground">Obra</span>
-                {editingAllocationId ? (
-                  <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
-                    {projects.find((item) => item.id === allocationProjectId)?.name ?? "Obra"}
-                  </div>
-                ) : (
-                  <Select
-                    value={allocationProjectId}
-                    onValueChange={(value) => setAllocationProjectId(value ?? "")}
-                  >
-                    <SelectTrigger className="h-12 w-full px-4 text-base">
-                      <SelectValue placeholder="Selecione uma obra">
-                        {(value: string | null) =>
-                          projects.find((item) => item.id === value)?.name ?? "Selecione uma obra"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projects.map((item) => (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-
-              <MoneyField
-                id="allocation-amount"
-                label="Valor"
-                value={allocationAmountInput}
-                onChange={setAllocationAmountInput}
-              />
-
-              {allocationError ? <p className="text-sm text-destructive">{allocationError}</p> : null}
-
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={handleCancelAllocationForm}>
-                  Cancelar
-                </Button>
-                <Button type="button" onClick={handleSaveAllocation}>
-                  Salvar alocação
-                </Button>
-              </div>
-
-              {editingAllocationId ? (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  className="w-full"
-                  onClick={() => {
-                    const current = allocations?.find((item) => item.id === editingAllocationId);
-                    if (current) handleDeleteAllocation(current);
-                  }}
-                >
-                  Excluir alocação
-                </Button>
-              ) : null}
-            </div>
-          ) : (
-            <Button type="button" variant="outline" className="w-full" onClick={openCreateAllocation}>
-              + Alocar em obra
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={() => {
+              setEditingAllocation(null);
+              setAllocationDialogOpen(true);
+            }}
+          >
+            + Alocar em obra
+          </Button>
         </section>
       ) : null}
 
@@ -843,17 +616,12 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
             ) : null}
           </div>
         ) : (
-          <Button type="button" variant="outline" size="lg" className="w-full" onClick={handleReopen}>
+          <Button type="button" variant="outline" size="lg" className="w-full" onClick={() => setReopenConfirmOpen(true)}>
             Reabrir período
           </Button>
         )
       ) : legacy ? (
-        <Button
-          type="button"
-          size="lg"
-          className="w-full"
-          onClick={() => persist({ ...workPeriod, closedAt: todayIso() })}
-        >
+        <Button type="button" size="lg" className="w-full" onClick={() => setLegacyCloseConfirmOpen(true)}>
           Fechar período
         </Button>
       ) : !closeGate.canClose ? (
@@ -873,51 +641,133 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
             Fechar período
           </Button>
         </div>
-      ) : closeConfirmOpen ? (
-        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-          {isDaily && estimate.attendanceSummary?.workedUnits === 0 ? (
-            <>
-              <p className="text-sm font-medium text-foreground">
-                Este período não possui nenhuma diária registrada.
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Valor previsto: {formatCurrency(estimate.estimatedPay)}.
-              </p>
-            </>
-          ) : isDaily ? (
-            <p className="text-sm text-foreground">
-              Fechar período com {estimate.attendanceSummary?.workedUnits} diária
-              {estimate.attendanceSummary?.workedUnits === 1 ? "" : "s"} equivalente
-              {estimate.attendanceSummary?.workedUnits === 1 ? "" : "s"} e valor previsto de{" "}
-              {formatCurrency(estimate.estimatedPay)}?
-            </p>
-          ) : (
-            <>
-              <p className="text-sm text-foreground">
-                {estimate.attendanceSummary?.fullDays} completos · {estimate.attendanceSummary?.halfDays}{" "}
-                meios · {estimate.attendanceSummary?.absences} faltas
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Valor previsto: {formatCurrency(estimate.estimatedPay)}
-              </p>
-            </>
-          )}
-          <div className="grid grid-cols-2 gap-2">
-            <Button type="button" variant="outline" onClick={() => setCloseConfirmOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="button" onClick={handleConfirmClose}>
-              {isDaily && estimate.attendanceSummary?.workedUnits === 0
-                ? "Fechar mesmo assim"
-                : "Confirmar fechamento"}
-            </Button>
-          </div>
-        </div>
       ) : (
-        <Button type="button" size="lg" className="w-full" onClick={() => setCloseConfirmOpen(true)}>
+        <Button type="button" size="lg" className="w-full" onClick={() => setCloseDialogOpen(true)}>
           Fechar período
         </Button>
       )}
+
+      {/* Attendance-only (V2) dialogs — their triggers only exist in the
+          non-legacy branch above, so gating them here is safe and keeps
+          the legacy close confirmation (below) clearly separate. */}
+      {!legacy ? (
+        <>
+          <PeriodCloseDialog
+            workPeriod={workPeriod}
+            estimate={estimate}
+            open={closeDialogOpen}
+            onOpenChange={setCloseDialogOpen}
+            onConfirm={handleConfirmClose}
+          />
+
+          <ConfirmActionDialog
+            open={bulkFillConfirmOpen}
+            onOpenChange={setBulkFillConfirmOpen}
+            title="Preencher dias pendentes?"
+            description={`Marcar ${pendingFillable} dia${pendingFillable === 1 ? "" : "s"} pendente${pendingFillable === 1 ? "" : "s"} como completos?`}
+            confirmLabel="Preencher"
+            onConfirm={handleConfirmBulkFill}
+          >
+            <p className="text-sm text-muted-foreground">
+              Faltas e meios períodos já registrados serão preservados.
+            </p>
+          </ConfirmActionDialog>
+
+          <ConfirmActionDialog
+            open={bulkOverwriteConfirm !== null}
+            onOpenChange={(open) => {
+              if (!open) setBulkOverwriteConfirm(null);
+            }}
+            title="Sobrescrever lançamentos?"
+            description={
+              bulkOverwriteConfirm
+                ? `${bulkOverwriteConfirm.dates.length} dia${bulkOverwriteConfirm.dates.length === 1 ? "" : "s"} selecionado${bulkOverwriteConfirm.dates.length === 1 ? "" : "s"} já possui${bulkOverwriteConfirm.dates.length === 1 ? "" : "m"} lançamento.`
+                : undefined
+            }
+            confirmLabel="Sobrescrever"
+            destructive
+            onConfirm={handleConfirmBulkOverwrite}
+          />
+        </>
+      ) : (
+        <ConfirmActionDialog
+          open={legacyCloseConfirmOpen}
+          onOpenChange={setLegacyCloseConfirmOpen}
+          title="Fechar período?"
+          description="Após o fechamento, os dados do período ficarão somente para leitura."
+          confirmLabel="Fechar período"
+          onConfirm={handleConfirmLegacyClose}
+        >
+          <div className="space-y-1 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+            <p className="text-foreground">
+              Dias trabalhados: {workPeriod.workedDays ?? 0} · Faltas: {estimate.legacy?.absences ?? 0}
+            </p>
+            <p className="font-medium text-foreground">Valor previsto: {formatCurrency(estimate.estimatedPay)}</p>
+          </div>
+        </ConfirmActionDialog>
+      )}
+
+      {/* Adjustment/Payable/Allocation/Reopen — reachable for legacy periods
+          too (their trigger buttons are not gated by `legacy`), so these
+          stay unconditional. None of them read attendance-specific data. */}
+      <PeriodAdjustmentDialog
+        manualAdjustment={workPeriod.manualAdjustment}
+        open={adjustmentDialogOpen}
+        onOpenChange={setAdjustmentDialogOpen}
+        onSave={handleSaveAdjustment}
+      />
+
+      {employee ? (
+            <PeriodPayableDialog
+              workPeriod={workPeriod}
+              employee={employee}
+              estimatedPay={estimate.estimatedPay}
+              open={payableDialogOpen}
+              onOpenChange={setPayableDialogOpen}
+              onGenerated={(payable) => {
+                setRelatedPayable(payable);
+                setPayableDialogOpen(false);
+              }}
+            />
+          ) : null}
+
+          {employee ? (
+            <AllocationDialog
+              workPeriod={workPeriod}
+              employee={employee}
+              projects={projects}
+              editing={editingAllocation}
+              open={allocationDialogOpen}
+              onOpenChange={setAllocationDialogOpen}
+              onSaved={refreshAllocations}
+              onRequestDelete={setDeletingAllocation}
+            />
+          ) : null}
+
+          <ConfirmActionDialog
+            open={deletingAllocation !== null}
+            onOpenChange={(open) => {
+              if (!open) setDeletingAllocation(null);
+            }}
+            title="Remover alocação?"
+            description={
+              deletingAllocation
+                ? `Remover a alocação de ${formatCurrency(deletingAllocation.amount)} para ${deletingAllocationProject?.name ?? "esta obra"}? O custo correspondente será removido da obra.`
+                : undefined
+            }
+            confirmLabel="Remover"
+            destructive
+            onConfirm={handleConfirmDeleteAllocation}
+          />
+
+          <ConfirmActionDialog
+            open={reopenConfirmOpen}
+            onOpenChange={setReopenConfirmOpen}
+            title="Reabrir período?"
+            description="Você poderá editar novamente a frequência deste período."
+            confirmLabel="Reabrir"
+            onConfirm={handleConfirmReopen}
+          />
     </div>
   );
 }

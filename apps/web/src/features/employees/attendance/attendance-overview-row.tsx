@@ -1,12 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/currency";
+import { CreateWorkPeriodDialog } from "./create-work-period-dialog";
 import { isLegacyWorkPeriod } from "../prototype/attendance";
 import { calculatePeriodEstimate } from "../prototype/period-calculation";
-import { createWorkPeriodForEmployee } from "../prototype/work-period-store";
 import {
   EMPLOYMENT_TYPE_LABEL,
   WORK_PERIOD_STATUS_LABEL,
@@ -50,18 +51,20 @@ interface RowProps {
 }
 
 function CreatePeriodAction({ employee, period, onPeriodCreated }: Omit<RowProps, "workPeriod">) {
+  const [open, setOpen] = useState(false);
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      onClick={() => {
-        createWorkPeriodForEmployee(employee, period);
-        onPeriodCreated();
-      }}
-    >
-      Criar período
-    </Button>
+    <>
+      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Criar período
+      </Button>
+      <CreateWorkPeriodDialog
+        employee={employee}
+        open={open}
+        onOpenChange={setOpen}
+        defaultPeriod={period}
+        onCreated={onPeriodCreated}
+      />
+    </>
   );
 }
 

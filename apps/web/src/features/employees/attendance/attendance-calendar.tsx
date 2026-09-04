@@ -16,12 +16,7 @@ import {
   type DerivedDayStatus,
   type EmployeeWorkPeriod,
 } from "../types";
-
-const ATTENDANCE_ACTIONS: { value: AttendanceStatus; label: string }[] = [
-  { value: "full_day", label: "Completo" },
-  { value: "half_day", label: "Meio" },
-  { value: "absent", label: "Falta" },
-];
+import { AttendanceDayDialog } from "./attendance-day-dialog";
 
 const SHORT_STATUS_LABEL: Record<DerivedDayStatus, string> = {
   full_day: "Compl.",
@@ -46,65 +41,14 @@ function dayLabel(date: string): { day: string; weekday: string } {
 
 interface AttendanceCalendarProps {
   workPeriod: EmployeeWorkPeriod;
-  /** Individual full/half/absent/clear actions are shown for the active day. */
+  /** Whether a day can be opened for editing at all (false for a closed period — fully read-only, no dialog). */
   editable: boolean;
-  /** Multi-select mode (daily bulk action) — tapping a day toggles selection instead of opening the action panel. */
+  /** Multi-select mode (daily bulk action) — tapping a day toggles selection instead of opening the day dialog. This state stays inline (Demo-Ready 009A §11/009B §15) — it never opens a modal itself. */
   selectable?: boolean;
   selectedDates?: string[];
   onToggleSelect?: (date: string) => void;
   onSetStatus?: (date: string, status: AttendanceStatus) => void;
   onClear?: (date: string) => void;
-}
-
-function DayActionPanel({
-  date,
-  status,
-  onSetStatus,
-  onClear,
-}: {
-  date: string;
-  status: DerivedDayStatus;
-  onSetStatus: (date: string, status: AttendanceStatus) => void;
-  onClear: (date: string) => void;
-}) {
-  const { day, weekday } = dayLabel(date);
-  const hasEntry = status !== "unrecorded" && status !== "scheduled_day_off";
-
-  return (
-    <div className="mt-3 space-y-2 rounded-lg border border-border bg-muted/30 p-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-foreground">
-          {weekday}, {day}
-        </p>
-        <span className="text-xs text-muted-foreground">{DERIVED_DAY_STATUS_LABEL[status]}</span>
-      </div>
-      <div className="grid grid-cols-4 gap-1.5">
-        {ATTENDANCE_ACTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            aria-pressed={status === option.value}
-            onClick={() => onSetStatus(date, option.value)}
-            className={
-              status === option.value
-                ? "rounded-lg border border-primary bg-primary/5 py-1.5 text-xs font-semibold text-primary"
-                : "rounded-lg border border-border bg-card py-1.5 text-xs font-semibold text-foreground hover:border-primary/30"
-            }
-          >
-            {option.label}
-          </button>
-        ))}
-        <button
-          type="button"
-          disabled={!hasEntry}
-          onClick={() => onClear(date)}
-          className="rounded-lg border border-border bg-card py-1.5 text-xs font-semibold text-muted-foreground hover:border-primary/30 disabled:opacity-40"
-        >
-          Limpar
-        </button>
-      </div>
-    </div>
-  );
 }
 
 function CalendarCell({
@@ -113,7 +57,6 @@ function CalendarCell({
   interactive,
   selectable,
   selected,
-  active,
   onClick,
 }: {
   date: string;
@@ -121,7 +64,6 @@ function CalendarCell({
   interactive: boolean;
   selectable: boolean;
   selected: boolean;
-  active: boolean;
   onClick: () => void;
 }) {
   const [, , day] = date.split("-");
@@ -141,14 +83,14 @@ function CalendarCell({
     <button
       type="button"
       disabled={!interactive}
-      aria-pressed={selectable ? selected : active}
+      aria-pressed={selectable ? selected : undefined}
       aria-label={label}
       title={label}
       onClick={onClick}
       className={cn(
         "flex aspect-square flex-col items-center justify-center gap-0.5 rounded-lg border text-xs transition-colors",
         STATUS_TONE_CLASS[status],
-        (active || selected) && "ring-2 ring-primary ring-offset-1 ring-offset-background",
+        selected && "ring-2 ring-primary ring-offset-1 ring-offset-background",
         interactive && "cursor-pointer hover:border-primary/40",
         !interactive && "cursor-default"
       )}
@@ -165,21 +107,19 @@ function CalendarCell({
 function DayListRow({
   date,
   status,
-  editable,
+  interactive,
   selectable,
   selected,
   onToggleSelect,
-  onSetStatus,
-  onClear,
+  onClick,
 }: {
   date: string;
   status: DerivedDayStatus;
-  editable: boolean;
+  interactive: boolean;
   selectable: boolean;
   selected: boolean;
   onToggleSelect?: (date: string) => void;
-  onSetStatus: (date: string, status: AttendanceStatus) => void;
-  onClear: (date: string) => void;
+  onClick: () => void;
 }) {
   const { day, weekday } = dayLabel(date);
 
@@ -195,7 +135,6 @@ function DayListRow({
     );
   }
 
-  const hasEntry = status !== "unrecorded";
   const statusClass =
     status === "absent" ? "text-destructive" : status === "unrecorded" ? "text-muted-foreground" : "text-primary";
 
@@ -220,42 +159,18 @@ function DayListRow({
   }
 
   return (
-    <div className="space-y-1.5 py-2.5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-foreground">{day}</span>
-          <span className="text-xs text-muted-foreground">{weekday}</span>
-        </div>
-        <span className={`text-xs font-medium ${statusClass}`}>{DERIVED_DAY_STATUS_LABEL[status]}</span>
+    <button
+      type="button"
+      disabled={!interactive}
+      onClick={onClick}
+      className="flex w-full items-center justify-between py-2.5 text-left disabled:cursor-default"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-foreground">{day}</span>
+        <span className="text-xs text-muted-foreground">{weekday}</span>
       </div>
-      {editable ? (
-        <div className="grid grid-cols-4 gap-1.5">
-          {ATTENDANCE_ACTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              aria-pressed={status === option.value}
-              onClick={() => onSetStatus(date, option.value)}
-              className={
-                status === option.value
-                  ? "rounded-lg border border-primary bg-primary/5 py-1.5 text-xs font-semibold text-primary"
-                  : "rounded-lg border border-border bg-card py-1.5 text-xs font-semibold text-foreground hover:border-primary/30"
-              }
-            >
-              {option.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            disabled={!hasEntry}
-            onClick={() => onClear(date)}
-            className="rounded-lg border border-border bg-card py-1.5 text-xs font-semibold text-muted-foreground hover:border-primary/30 disabled:opacity-40"
-          >
-            Limpar
-          </button>
-        </div>
-      ) : null}
-    </div>
+      <span className={`text-xs font-medium ${statusClass}`}>{DERIVED_DAY_STATUS_LABEL[status]}</span>
+    </button>
   );
 }
 
@@ -269,20 +184,20 @@ export function AttendanceCalendar({
   onClear,
 }: AttendanceCalendarProps) {
   const [activeDate, setActiveDate] = useState<string | null>(null);
+  const [dayDialogOpen, setDayDialogOpen] = useState(false);
   const dates = getPeriodDates(workPeriod.period);
   const leadingBlanks = isoWeekday(dates[0]) - 1;
+  const isDaily = workPeriod.paymentModelSnapshot === "daily";
 
-  function handleCellClick(date: string, status: DerivedDayStatus) {
+  function handleDayClick(date: string, status: DerivedDayStatus) {
     if (status === "scheduled_day_off") return;
     if (selectable) {
       onToggleSelect?.(date);
       return;
     }
-    if (!editable) {
-      setActiveDate((current) => (current === date ? null : date));
-      return;
-    }
-    setActiveDate((current) => (current === date ? null : date));
+    if (!editable) return;
+    setActiveDate(date);
+    setDayDialogOpen(true);
   }
 
   return (
@@ -307,45 +222,46 @@ export function AttendanceCalendar({
                 interactive={(editable || selectable) && status !== "scheduled_day_off"}
                 selectable={selectable}
                 selected={selectedDates.includes(date)}
-                active={activeDate === date}
-                onClick={() => handleCellClick(date, status)}
+                onClick={() => handleDayClick(date, status)}
               />
             );
           })}
         </div>
-
-        {!selectable && activeDate ? (
-          editable ? (
-            <DayActionPanel
-              date={activeDate}
-              status={deriveDayStatus(workPeriod, activeDate)}
-              onSetStatus={(date, status) => onSetStatus?.(date, status)}
-              onClear={(date) => onClear?.(date)}
-            />
-          ) : (
-            <p className="mt-3 text-sm text-muted-foreground">
-              {dayLabel(activeDate).weekday}, {dayLabel(activeDate).day} —{" "}
-              {DERIVED_DAY_STATUS_LABEL[deriveDayStatus(workPeriod, activeDate)]}
-            </p>
-          )
-        ) : null}
       </div>
 
       <div className="divide-y divide-border rounded-xl border border-border bg-card px-4 lg:hidden">
-        {dates.map((date) => (
-          <DayListRow
-            key={date}
-            date={date}
-            status={deriveDayStatus(workPeriod, date)}
-            editable={editable}
-            selectable={selectable}
-            selected={selectedDates.includes(date)}
-            onToggleSelect={onToggleSelect}
-            onSetStatus={(d, status) => onSetStatus?.(d, status)}
-            onClear={(d) => onClear?.(d)}
-          />
-        ))}
+        {dates.map((date) => {
+          const status = deriveDayStatus(workPeriod, date);
+          return (
+            <DayListRow
+              key={date}
+              date={date}
+              status={status}
+              interactive={(editable || selectable) && status !== "scheduled_day_off"}
+              selectable={selectable}
+              selected={selectedDates.includes(date)}
+              onToggleSelect={onToggleSelect}
+              onClick={() => handleDayClick(date, status)}
+            />
+          );
+        })}
       </div>
+
+      <AttendanceDayDialog
+        date={activeDate}
+        status={activeDate ? deriveDayStatus(workPeriod, activeDate) : "unrecorded"}
+        isDaily={isDaily}
+        open={dayDialogOpen}
+        onOpenChange={setDayDialogOpen}
+        onSetStatus={(date, status) => {
+          onSetStatus?.(date, status);
+          setDayDialogOpen(false);
+        }}
+        onClear={(date) => {
+          onClear?.(date);
+          setDayDialogOpen(false);
+        }}
+      />
     </div>
   );
 }

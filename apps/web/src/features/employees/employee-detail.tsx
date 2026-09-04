@@ -9,12 +9,11 @@ import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
-import { todayIso } from "@/lib/date";
 import { formatPhoneInput } from "@/lib/phone";
+import { CreateWorkPeriodDialog } from "./attendance/create-work-period-dialog";
 import { isLegacyWorkPeriod } from "./prototype/attendance";
 import { calculatePeriodEstimate } from "./prototype/period-calculation";
 import { formatPeriodShort } from "./prototype/period-label";
-import { createWorkPeriodForEmployee, findWorkPeriod } from "./prototype/work-period-store";
 import { useEmployee } from "./prototype/use-employee";
 import { useWorkPeriods } from "./prototype/use-work-periods";
 import { EmployeeStatusBadge, WorkPeriodStatusBadge } from "./components/status-badge";
@@ -88,9 +87,7 @@ export function EmployeeDetail({ id }: { id: string }) {
   const router = useRouter();
   const { employee, persist } = useEmployee(id);
   const { workPeriods } = useWorkPeriods(id);
-  const [creatingPeriod, setCreatingPeriod] = useState(false);
-  const [newPeriod, setNewPeriod] = useState(todayIso().slice(0, 7));
-  const [periodError, setPeriodError] = useState<string | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   if (employee === undefined) return null;
 
@@ -102,17 +99,6 @@ export function EmployeeDetail({ id }: { id: string }) {
         description="Ele pode ter sido removido ou o link está incorreto."
       />
     );
-  }
-
-  function handleCreatePeriod() {
-    if (!employee) return;
-    if (findWorkPeriod(employee.id, newPeriod)) {
-      setPeriodError("Já existe um período criado para este mês.");
-      return;
-    }
-    setPeriodError(null);
-    createWorkPeriodForEmployee(employee, newPeriod);
-    router.push(`/equipe/${employee.id}/periodos/${newPeriod}`);
   }
 
   return (
@@ -177,47 +163,18 @@ export function EmployeeDetail({ id }: { id: string }) {
           >
             Controle mensal
           </h2>
-          {!creatingPeriod ? (
-            <Button
-              size="sm"
-              type="button"
-              onClick={() => {
-                setNewPeriod(todayIso().slice(0, 7));
-                setPeriodError(null);
-                setCreatingPeriod(true);
-              }}
-            >
-              <Plus className="size-4" aria-hidden="true" />
-              Novo período
-            </Button>
-          ) : null}
+          <Button size="sm" type="button" onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="size-4" aria-hidden="true" />
+            Novo período
+          </Button>
         </div>
 
-        {creatingPeriod ? (
-          <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-            <div className="space-y-1.5">
-              <label htmlFor="new-period" className="text-sm font-medium text-foreground">
-                Período
-              </label>
-              <input
-                id="new-period"
-                type="month"
-                value={newPeriod}
-                onChange={(event) => setNewPeriod(event.target.value)}
-                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            {periodError ? <p className="text-sm text-destructive">{periodError}</p> : null}
-            <div className="grid grid-cols-2 gap-2">
-              <Button type="button" variant="outline" onClick={() => setCreatingPeriod(false)}>
-                Cancelar
-              </Button>
-              <Button type="button" onClick={handleCreatePeriod}>
-                Criar período
-              </Button>
-            </div>
-          </div>
-        ) : null}
+        <CreateWorkPeriodDialog
+          employee={employee}
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreated={(workPeriod) => router.push(`/equipe/${employee.id}/periodos/${workPeriod.period}`)}
+        />
 
         {workPeriods === undefined ? null : workPeriods.length === 0 ? (
           <EmptyState
