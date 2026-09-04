@@ -1,7 +1,7 @@
 import { formatCurrency } from "@/lib/currency";
 import { isLegacyWorkPeriod } from "../prototype/attendance";
 import type { PeriodEstimate } from "../prototype/period-calculation";
-import type { EmployeeWorkPeriod } from "../types";
+import { getWorkPeriodStatus, type EmployeeWorkPeriod } from "../types";
 
 function InfoRow({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
@@ -36,6 +36,8 @@ export function AttendanceSummaryCard({
   estimate: PeriodEstimate;
 }) {
   const legacy = isLegacyWorkPeriod(workPeriod);
+  const isClosed = getWorkPeriodStatus(workPeriod) === "closed";
+  const valueLabel = isClosed ? "Valor do período" : "Valor estimado a pagar";
 
   return (
     <div className="space-y-1 rounded-xl border border-border bg-card p-4">
@@ -68,17 +70,23 @@ export function AttendanceSummaryCard({
           <InfoRow label="Pendentes" value={String(estimate.attendanceSummary?.unrecordedDays ?? 0)} />
           <div className="mt-1 border-t border-border pt-1">
             <InfoRow label="Salário de referência" value={formatCurrency(estimate.baseAmount)} />
+            <InfoRow
+              label="Desconto por frequência"
+              value={`- ${formatCurrency(estimate.monthlyDiscount?.attendanceDiscount ?? 0)}`}
+            />
           </div>
         </>
       )}
       <InfoRow label="Ajuste manual" value={formatCurrency(workPeriod.manualAdjustment)} />
       <div className="mt-2 border-t border-border pt-2">
-        <InfoRow label="Valor previsto" value={formatCurrency(estimate.estimatedPay)} emphasis />
+        <InfoRow label={valueLabel} value={formatCurrency(estimate.estimatedPay)} emphasis />
       </div>
       <p className="pt-2 text-sm text-muted-foreground">
         {legacy
           ? "Estimativa operacional. Não substitui cálculo de folha de pagamento."
-          : "Faltas e meios períodos não alteram automaticamente o valor previsto. Use o Ajuste manual quando necessário."}
+          : workPeriod.paymentModelSnapshot === "monthly"
+            ? "Faltas e meios períodos já registrados descontam automaticamente o valor previsto. Dias pendentes nunca são descontados. Use o Ajuste manual para qualquer outra correção."
+            : "Faltas e meios períodos não alteram automaticamente o valor previsto. Use o Ajuste manual quando necessário."}
       </p>
     </div>
   );

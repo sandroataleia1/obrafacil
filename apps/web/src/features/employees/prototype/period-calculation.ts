@@ -9,16 +9,23 @@
  * keep producing the same `estimatedPay` forever; this branch is
  * never touched by V2 changes (Demo-Ready 008B, caso K).
  *
- * MONTHLY V2 — product decision (008B): frequência is NOT an
- * automatic payroll engine. `estimatedPay = baseSalarySnapshot +
- * manualAdjustment`, full stop. Faltas/meios períodos are visible in
- * `attendanceSummary` for the operator, but never move this number by
- * themselves — any financial effect of an absence must be an
- * explicit, auditable `manualAdjustment` (008B spec §14/§15).
+ * MONTHLY V2 — product decision (Demo-Ready 009E, superseding the
+ * original 008B "frequência never moves the number" stance):
+ * `estimatedPay = baseSalarySnapshot - attendanceDiscount +
+ * manualAdjustment`, where `attendanceDiscount` is the same
+ * dailyReference-based formula the LEGACY branch already used —
+ * `dailyReference = baseSalarySnapshot / scheduledWorkDays`,
+ * `deductedUnits = absences + halfDays * 0.5`. Only recorded
+ * ABSENT/HALF_DAY entries discount; FULL_DAY, folga prevista and
+ * PENDING (unrecorded) never do — a period reacts to whatever is
+ * already apontado, open or closed, with no second formula at
+ * fechamento. `manualAdjustment` still applies on top, for anything
+ * this formula cannot represent (see `PeriodAdjustmentDialog`).
  *
  * DAILY V2 — `estimatedPay = workedUnits * dailyRateSnapshot +
  * manualAdjustment`, where `workedUnits = fullDays + halfDays * 0.5`.
- * Faltas, folgas and unrecorded days never add units.
+ * Faltas, folgas and unrecorded days never add units. Unchanged by
+ * Demo-Ready 009E.
  */
 
 import { buildPeriodAttendanceSummary, isLegacyWorkPeriod, type PeriodAttendanceSummary } from "./attendance";
@@ -32,6 +39,15 @@ export interface LegacyEstimateDetail {
   absenceDiscount: number;
 }
 
+/** Breakdown of the attendance-based discount for a monthly V2 period (Demo-Ready 009E). */
+export interface MonthlyDiscountDetail {
+  scheduledWorkDays: number;
+  dailyReference: number;
+  /** `absences + halfDays * 0.5` — pending/unrecorded days are never included. */
+  deductedUnits: number;
+  attendanceDiscount: number;
+}
+
 export interface PeriodEstimate {
   paymentModel: PaymentModel | "legacy";
   baseAmount: number;
@@ -41,6 +57,8 @@ export interface PeriodEstimate {
   attendanceSummary: PeriodAttendanceSummary | null;
   /** Present only for legacy periods — preserves the original scalar breakdown for the read-only legacy UI. */
   legacy?: LegacyEstimateDetail;
+  /** Present only for monthly V2 periods — breakdown of the attendance-based discount. */
+  monthlyDiscount?: MonthlyDiscountDetail;
 }
 
 function calculateLegacyEstimate(workPeriod: EmployeeWorkPeriod): PeriodEstimate {
@@ -78,13 +96,24 @@ function calculateLegacyEstimate(workPeriod: EmployeeWorkPeriod): PeriodEstimate
 function calculateMonthlyV2Estimate(workPeriod: EmployeeWorkPeriod): PeriodEstimate {
   const attendanceSummary = buildPeriodAttendanceSummary(workPeriod);
   const baseAmount = workPeriod.baseSalarySnapshot;
-  const estimatedPay = Math.max(baseAmount + workPeriod.manualAdjustment, 0);
+  const { scheduledWorkDays, absences, halfDays } = attendanceSummary;
+
+  // Defensive: a period with zero scheduled work days has no per-day
+  // rate to derive — and, since deriveDayStatus only ever marks a day
+  // ABSENT/HALF_DAY when it's a scheduled work day, absences/halfDays
+  // are always 0 here too, so there is nothing to discount anyway.
+  const dailyReference = scheduledWorkDays > 0 ? baseAmount / scheduledWorkDays : 0;
+  const deductedUnits = absences + halfDays * 0.5;
+  const attendanceDiscount = dailyReference * deductedUnits;
+
+  const estimatedPay = Math.max(baseAmount - attendanceDiscount + workPeriod.manualAdjustment, 0);
   return {
     paymentModel: "monthly",
     baseAmount,
     manualAdjustment: workPeriod.manualAdjustment,
     estimatedPay,
     attendanceSummary,
+    monthlyDiscount: { scheduledWorkDays, dailyReference, deductedUnits, attendanceDiscount },
   };
 }
 
