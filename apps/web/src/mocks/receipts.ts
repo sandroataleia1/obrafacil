@@ -12,10 +12,18 @@ export const receipts: Receipt[] = [
   {
     id: "receipt-parcial-mariana-1",
     receivableId: "receivable-parcial-mariana",
-    amount: 12000,
+    amount: 7000,
     receivedAt: "2026-08-28",
     createdAt: "2026-08-28",
     updatedAt: "2026-08-28",
+  },
+  {
+    id: "receipt-parcial-mariana-2",
+    receivableId: "receivable-parcial-mariana",
+    amount: 5000,
+    receivedAt: "2026-06-15",
+    createdAt: "2026-06-15",
+    updatedAt: "2026-06-15",
   },
   {
     id: "receipt-parcial-vencida-edicula-1",
@@ -40,5 +48,21 @@ export const receipts: Receipt[] = [
     receivedAt: "2026-08-08",
     createdAt: "2026-08-08",
     updatedAt: "2026-08-08",
+  },
+  {
+    id: "receipt-cardoso-1",
+    receivableId: "receivable-vencida-cardoso",
+    amount: 2000,
+    receivedAt: "2026-07-05",
+    createdAt: "2026-07-05",
+    updatedAt: "2026-07-05",
+  },
+  {
+    id: "receipt-cozinha-1",
+    receivableId: "receivable-pendente-cozinha",
+    amount: 2000,
+    receivedAt: "2026-09-02",
+    createdAt: "2026-09-02",
+    updatedAt: "2026-09-02",
   },
 ];

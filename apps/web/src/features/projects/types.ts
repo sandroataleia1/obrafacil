@@ -21,6 +21,10 @@ export interface Project {
   status: ProjectStatus;
   budgetId?: string;
   expectedStartDate?: string;
+  /** Date-only. Optional — no default, no auto-computed schedule. Used
+   * only to derive lateness (see `project-schedule.ts`); not a
+   * cronograma/milestone system. */
+  expectedEndDate?: string;
   createdAt: string;
   updatedAt: string;
 }

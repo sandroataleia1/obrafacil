@@ -47,10 +47,11 @@ export interface ProjectDetailsChanges {
   reference?: string;
   address?: string;
   expectedStartDate?: string;
+  expectedEndDate?: string;
 }
 
 /** Basic metadata only — name/customer/reference/address/expected
- * start date. `id`, `budgetId`, `status`, `createdAt` are always
+ * start/end date. `id`, `budgetId`, `status`, `createdAt` are always
  * carried over from `existing`, never taken from `changes`. */
 export function updateProjectDetails(existing: Project, changes: ProjectDetailsChanges): ProjectResult {
   if (changes.name.trim() === "") {
@@ -85,6 +86,7 @@ export function updateProjectDetails(existing: Project, changes: ProjectDetailsC
     reference: changes.reference?.trim() || undefined,
     address: changes.address?.trim() || undefined,
     expectedStartDate: changes.expectedStartDate || undefined,
+    expectedEndDate: changes.expectedEndDate || undefined,
     updatedAt: todayIso(),
   };
   saveProject(updated);

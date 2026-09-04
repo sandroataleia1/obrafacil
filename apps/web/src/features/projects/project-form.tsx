@@ -49,6 +49,7 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
   const [reference, setReference] = useState("");
   const [address, setAddress] = useState("");
   const [expectedStartDate, setExpectedStartDate] = useState("");
+  const [expectedEndDate, setExpectedEndDate] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,6 +78,7 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
     setReference(existingProject.reference ?? "");
     setAddress(existingProject.address ?? "");
     setExpectedStartDate(existingProject.expectedStartDate ?? "");
+    setExpectedEndDate(existingProject.expectedEndDate ?? "");
   }, [existingProject]);
 
   const fromBudget = Boolean(pendingProject) || (isEditing && Boolean(existingProject?.budgetId));
@@ -92,6 +94,7 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
         reference,
         address,
         expectedStartDate,
+        expectedEndDate,
       });
       if (!result.ok) {
         setError(result.error);
@@ -116,6 +119,7 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
       status: "planning",
       budgetId: pendingProject?.budgetId,
       expectedStartDate: expectedStartDate || undefined,
+      expectedEndDate: expectedEndDate || undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -285,6 +289,19 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
             type="date"
             value={expectedStartDate}
             onChange={(event) => setExpectedStartDate(event.target.value)}
+            className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <label htmlFor="project-end-date" className="text-sm font-medium text-foreground">
+            Data prevista de conclusão <span className="text-muted-foreground">(opcional)</span>
+          </label>
+          <input
+            id="project-end-date"
+            type="date"
+            value={expectedEndDate}
+            onChange={(event) => setExpectedEndDate(event.target.value)}
             className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
           />
         </div>

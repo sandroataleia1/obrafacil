@@ -34,6 +34,8 @@ import {
   calculatePurchaseOrderTotal,
 } from "@/features/purchases/prototype/purchase-totals";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+import { todayIso } from "@/lib/date";
+import { isProjectLate, projectDaysLate } from "./project-schedule";
 import { buildProjectManagementSummary } from "./prototype/project-summary";
 import { PROJECT_STATUS_LABEL, type ProjectStatus } from "./types";
 import { ProjectStatusBadge } from "./components/status-badge";
@@ -156,6 +158,19 @@ export function ProjectDetail({ id }: { id: string }) {
           ) : null}
           {project.address ? (
             <p className="text-sm text-muted-foreground">{project.address}</p>
+          ) : null}
+          {project.expectedEndDate ? (
+            <p
+              className={
+                isProjectLate(project, todayIso())
+                  ? "text-sm font-medium text-destructive"
+                  : "text-sm text-muted-foreground"
+              }
+            >
+              {isProjectLate(project, todayIso())
+                ? `Atrasada ${projectDaysLate(project, todayIso())} dia${projectDaysLate(project, todayIso()) === 1 ? "" : "s"}`
+                : `Conclusão prevista: ${formatDate(project.expectedEndDate)}`}
+            </p>
           ) : null}
         </div>
       </div>
