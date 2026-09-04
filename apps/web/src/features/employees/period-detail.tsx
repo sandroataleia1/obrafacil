@@ -74,10 +74,29 @@ function InfoRow({
   );
 }
 
-export function PeriodDetail({ employeeId, period }: { employeeId: string; period: string }) {
+/**
+ * Where this screen was reached from — purely a navigation concern,
+ * never a data concern. The frequência stays global to
+ * Employee+Period regardless: `context` only changes where "Voltar"
+ * points to (Demo-Ready 009D-C). A discriminated union instead of a
+ * boolean like `isProjectContext` because a "project" context carries
+ * a payload (`projectId`) a boolean can't.
+ */
+export type EmployeePeriodContext = { type: "employee" } | { type: "project"; projectId: string };
+
+export function PeriodDetail({
+  employeeId,
+  period,
+  context = { type: "employee" },
+}: {
+  employeeId: string;
+  period: string;
+  context?: EmployeePeriodContext;
+}) {
   const router = useRouter();
   const { workPeriod, persist } = useWorkPeriod(employeeId, period);
   const employee = getEmployee(employeeId);
+  const backHref = context.type === "project" ? `/obras/${context.projectId}/equipe` : `/equipe/${employeeId}`;
 
   const [expectedDaysInput, setExpectedDaysInput] = useState("");
   const [workedDaysInput, setWorkedDaysInput] = useState("");
@@ -279,7 +298,7 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
       <div className="space-y-1">
         <BackHeader
           title={formatPeriodLabel(period)}
-          onBack={() => router.push(`/equipe/${employeeId}`)}
+          onBack={() => router.push(backHref)}
         />
         <div className="flex flex-wrap items-center gap-2 pl-11">
           <p className="text-sm text-muted-foreground">

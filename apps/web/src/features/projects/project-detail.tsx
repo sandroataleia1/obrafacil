@@ -36,6 +36,7 @@ import {
   type MaterialPlanning,
 } from "@/features/purchases/prototype/purchase-totals";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+import { ProjectTeamSummary } from "@/features/projects/team/project-team-summary";
 import { todayIso } from "@/lib/date";
 import { isProjectLate, projectDaysLate } from "./project-schedule";
 import { buildProjectManagementSummary } from "./prototype/project-summary";
@@ -479,6 +480,16 @@ export function ProjectDetail({ id }: { id: string }) {
           </div>
         </section>
       ) : null}
+
+      <section aria-labelledby="project-team" className="space-y-2.5">
+        <h2
+          id="project-team"
+          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        >
+          Equipe da obra
+        </h2>
+        <ProjectTeamSummary project={project} />
+      </section>
 
       <section aria-labelledby="project-materials" className="space-y-2.5">
         <div className="flex items-center justify-between gap-3">
