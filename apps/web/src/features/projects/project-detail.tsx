@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ChevronLeft, ChevronRight, FileText, Info, Receipt } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, FileText, Info, Receipt } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
+import { cn } from "@/lib/utils";
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
 import { getBudget } from "@/features/budgets/prototype/budget-store";
 import { sumCosts } from "@/features/project-costs/prototype/cost-totals";
@@ -32,6 +33,7 @@ import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purcha
 import {
   calculateMaterialPlanning,
   calculatePurchaseOrderTotal,
+  type MaterialPlanning,
 } from "@/features/purchases/prototype/purchase-totals";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
 import { todayIso } from "@/lib/date";
@@ -72,6 +74,111 @@ function InfoRow({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+function MaterialPlanningRow({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span
+        className={
+          emphasis
+            ? "text-sm font-semibold tabular-nums text-destructive"
+            : "text-sm font-semibold tabular-nums text-foreground"
+        }
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function MaterialSummaryItem({
+  materialName,
+  unitLabel,
+  planning,
+}: {
+  materialName: string;
+  unitLabel: string;
+  planning: MaterialPlanning;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const needsPurchase = Boolean(planning.remainingToBuy && planning.remainingToBuy > 0);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-3 py-2.5 text-left"
+      >
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-foreground">{materialName}</p>
+          <p className="text-xs text-muted-foreground">
+            Disponível {formatQuantity(planning.available)} {unitLabel}
+          </p>
+        </div>
+        {needsPurchase ? (
+          <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
+            Falta comprar
+          </span>
+        ) : null}
+        <ChevronDown
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            expanded && "rotate-180"
+          )}
+          aria-hidden="true"
+        />
+      </button>
+
+      {expanded ? (
+        <div className="space-y-1.5 pb-3">
+          <MaterialPlanningRow
+            label="Necessário"
+            value={`${formatQuantity(planning.required ?? 0)} ${unitLabel}`}
+          />
+          <MaterialPlanningRow
+            label="Comprado"
+            value={`${formatQuantity(planning.purchased)} ${unitLabel}${
+              planning.purchasedExcess && planning.purchasedExcess > 0
+                ? ` (excesso de ${formatQuantity(planning.purchasedExcess)} ${unitLabel})`
+                : ""
+            }`}
+          />
+          <MaterialPlanningRow
+            label="Recebido"
+            value={`${formatQuantity(planning.received)} ${unitLabel}${
+              planning.receivedExcess && planning.receivedExcess > 0
+                ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})`
+                : ""
+            }`}
+          />
+          <MaterialPlanningRow label="Utilizado" value={`${formatQuantity(planning.consumed)} ${unitLabel}`} />
+          <MaterialPlanningRow label="Disponível" value={`${formatQuantity(planning.available)} ${unitLabel}`} />
+          <MaterialPlanningRow
+            label="Falta comprar"
+            value={`${formatQuantity(planning.remainingToBuy ?? 0)} ${unitLabel}`}
+            emphasis={needsPurchase}
+          />
+          <MaterialPlanningRow
+            label="Falta receber"
+            value={`${formatQuantity(planning.remainingToReceive)} ${unitLabel}`}
+            emphasis={planning.remainingToReceive > 0}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -403,71 +510,12 @@ export function ProjectDetail({ id }: { id: string }) {
                 );
                 const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : "";
                 return (
-                  <div key={requirement.id} className="space-y-1 py-2.5">
-                    <p className="text-sm font-medium text-foreground">
-                      {material?.name ?? "Material não encontrado"}
-                    </p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Necessário</span>
-                      <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatQuantity(planning.required ?? 0)} {unitLabel}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Comprado</span>
-                      <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatQuantity(planning.purchased)} {unitLabel}
-                        {planning.purchasedExcess && planning.purchasedExcess > 0
-                          ? ` (excesso de ${formatQuantity(planning.purchasedExcess)} ${unitLabel})`
-                          : ""}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Recebido</span>
-                      <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatQuantity(planning.received)} {unitLabel}
-                        {planning.receivedExcess && planning.receivedExcess > 0
-                          ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})`
-                          : ""}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Utilizado</span>
-                      <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatQuantity(planning.consumed)} {unitLabel}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Disponível</span>
-                      <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatQuantity(planning.available)} {unitLabel}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Falta comprar</span>
-                      <span
-                        className={
-                          planning.remainingToBuy && planning.remainingToBuy > 0
-                            ? "text-sm font-semibold tabular-nums text-destructive"
-                            : "text-sm font-semibold tabular-nums text-foreground"
-                        }
-                      >
-                        {formatQuantity(planning.remainingToBuy ?? 0)} {unitLabel}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Falta receber</span>
-                      <span
-                        className={
-                          planning.remainingToReceive > 0
-                            ? "text-sm font-semibold tabular-nums text-destructive"
-                            : "text-sm font-semibold tabular-nums text-foreground"
-                        }
-                      >
-                        {formatQuantity(planning.remainingToReceive)} {unitLabel}
-                      </span>
-                    </div>
-                  </div>
+                  <MaterialSummaryItem
+                    key={requirement.id}
+                    materialName={material?.name ?? "Material não encontrado"}
+                    unitLabel={unitLabel}
+                    planning={planning}
+                  />
                 );
               })}
             </div>

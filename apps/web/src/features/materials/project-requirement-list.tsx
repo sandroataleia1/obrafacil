@@ -8,6 +8,7 @@ import { ChevronDown, ChevronUp, Package, Pencil, Plus, Trash2 } from "lucide-re
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
 import { useProject } from "@/features/projects/prototype/use-project";
@@ -105,99 +106,128 @@ function MaterialPlanningCard({
   consumptions: MaterialConsumption[];
   onDeleteConsumption: (consumption: MaterialConsumption) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : "";
+  const needsPurchase = Boolean(planning.remainingToBuy && planning.remainingToBuy > 0);
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+    <div className="rounded-xl border border-border bg-card">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-3 p-4 text-left"
+      >
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-foreground">
             {material?.name ?? "Material não encontrado"}
             {material?.status === "inactive" ? (
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">(inativo)</span>
             ) : null}
           </p>
-          <p className="text-xs text-muted-foreground">{unitLabel}</p>
+          <p className="text-xs text-muted-foreground">
+            Disponível {formatQuantity(planning.available)} {unitLabel}
+          </p>
         </div>
-        {requirement ? (
-          <Link
-            href={`/obras/${projectId}/materiais/${requirement.id}/editar`}
-            aria-label="Editar necessidade"
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <Pencil className="size-3.5" aria-hidden="true" />
-          </Link>
+        {needsPurchase ? (
+          <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
+            Falta comprar
+          </span>
         ) : null}
-      </div>
-
-      <div className="mt-3 space-y-1.5">
-        <PlanningRow
-          label="Necessário"
-          value={planning.required === null ? "Não planejado" : `${formatQuantity(planning.required)} ${unitLabel}`}
-        />
-        <PlanningRow
-          label="Comprado"
-          value={`${formatQuantity(planning.purchased)} ${unitLabel}${
-            planning.purchasedExcess && planning.purchasedExcess > 0
-              ? ` (excesso de ${formatQuantity(planning.purchasedExcess)} ${unitLabel})`
-              : ""
-          }`}
-        />
-        <PlanningRow
-          label="Recebido"
-          value={`${formatQuantity(planning.received)} ${unitLabel}${
-            planning.receivedExcess && planning.receivedExcess > 0
-              ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})`
-              : ""
-          }`}
-        />
-        <PlanningRow label="Utilizado" value={`${formatQuantity(planning.consumed)} ${unitLabel}`} />
-        <PlanningRow label="Disponível" value={`${formatQuantity(planning.available)} ${unitLabel}`} />
-        <PlanningRow
-          label="Falta comprar"
-          value={planning.remainingToBuy === null ? "—" : `${formatQuantity(planning.remainingToBuy)} ${unitLabel}`}
-          emphasis={Boolean(planning.remainingToBuy && planning.remainingToBuy > 0)}
-        />
-        <PlanningRow
-          label="Falta receber"
-          value={`${formatQuantity(planning.remainingToReceive)} ${unitLabel}`}
-          emphasis={planning.remainingToReceive > 0}
-        />
-      </div>
-
-      <div className="mt-3 flex items-center gap-2">
-        {planning.available > 0 ? (
-          <Button
-            size="sm"
-            className="flex-1"
-            nativeButton={false}
-            render={<Link href={`/obras/${projectId}/materiais/uso/${materialId}/novo`}>Registrar uso</Link>}
-          />
-        ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={planning.available > 0 ? "" : "flex-1"}
-          onClick={() => setHistoryOpen((open) => !open)}
-        >
-          {historyOpen ? (
-            <ChevronUp className="size-3.5" aria-hidden="true" />
-          ) : (
-            <ChevronDown className="size-3.5" aria-hidden="true" />
+        <ChevronDown
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            expanded && "rotate-180"
           )}
-          Histórico ({consumptions.length})
-        </Button>
-      </div>
+          aria-hidden="true"
+        />
+      </button>
 
-      {historyOpen ? (
-        <div className="mt-2 border-t border-border">
-          <ConsumptionHistory
-            consumptions={consumptions}
-            unitLabel={unitLabel}
-            onDelete={onDeleteConsumption}
-          />
+      {expanded ? (
+        <div className="space-y-3 border-t border-border px-4 pt-3 pb-4">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs text-muted-foreground">{unitLabel}</p>
+            {requirement ? (
+              <Link
+                href={`/obras/${projectId}/materiais/${requirement.id}/editar`}
+                aria-label="Editar necessidade"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <Pencil className="size-3.5" aria-hidden="true" />
+              </Link>
+            ) : null}
+          </div>
+
+          <div className="space-y-1.5">
+            <PlanningRow
+              label="Necessário"
+              value={planning.required === null ? "Não planejado" : `${formatQuantity(planning.required)} ${unitLabel}`}
+            />
+            <PlanningRow
+              label="Comprado"
+              value={`${formatQuantity(planning.purchased)} ${unitLabel}${
+                planning.purchasedExcess && planning.purchasedExcess > 0
+                  ? ` (excesso de ${formatQuantity(planning.purchasedExcess)} ${unitLabel})`
+                  : ""
+              }`}
+            />
+            <PlanningRow
+              label="Recebido"
+              value={`${formatQuantity(planning.received)} ${unitLabel}${
+                planning.receivedExcess && planning.receivedExcess > 0
+                  ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})`
+                  : ""
+              }`}
+            />
+            <PlanningRow label="Utilizado" value={`${formatQuantity(planning.consumed)} ${unitLabel}`} />
+            <PlanningRow label="Disponível" value={`${formatQuantity(planning.available)} ${unitLabel}`} />
+            <PlanningRow
+              label="Falta comprar"
+              value={planning.remainingToBuy === null ? "—" : `${formatQuantity(planning.remainingToBuy)} ${unitLabel}`}
+              emphasis={needsPurchase}
+            />
+            <PlanningRow
+              label="Falta receber"
+              value={`${formatQuantity(planning.remainingToReceive)} ${unitLabel}`}
+              emphasis={planning.remainingToReceive > 0}
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            {planning.available > 0 ? (
+              <Button
+                size="sm"
+                className="flex-1"
+                nativeButton={false}
+                render={<Link href={`/obras/${projectId}/materiais/uso/${materialId}/novo`}>Registrar uso</Link>}
+              />
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={planning.available > 0 ? "" : "flex-1"}
+              onClick={() => setHistoryOpen((open) => !open)}
+            >
+              {historyOpen ? (
+                <ChevronUp className="size-3.5" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="size-3.5" aria-hidden="true" />
+              )}
+              Histórico ({consumptions.length})
+            </Button>
+          </div>
+
+          {historyOpen ? (
+            <div className="border-t border-border">
+              <ConsumptionHistory
+                consumptions={consumptions}
+                unitLabel={unitLabel}
+                onDelete={onDeleteConsumption}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
