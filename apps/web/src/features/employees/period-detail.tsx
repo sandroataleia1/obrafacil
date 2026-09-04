@@ -23,9 +23,20 @@ import { PayableStatusBadge } from "@/features/payables/components/status-badge"
 import type { Payable } from "@/features/payables/types";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
 import type { Project } from "@/features/projects/types";
+import { AttendanceCalendar } from "./attendance/attendance-calendar";
+import { AttendanceSummaryCard } from "./attendance/attendance-summary-card";
 import { getEmployee } from "./prototype/employee-store";
 import { calculatePeriodEstimate } from "./prototype/period-calculation";
 import { formatPeriodLabel } from "./prototype/period-label";
+import {
+  canClosePeriod,
+  clearAttendanceEntry,
+  countPendingFillable,
+  fillUnrecordedAsFullDay,
+  isLegacyWorkPeriod,
+  setAttendanceEntry,
+  setMultipleAttendanceEntries,
+} from "./prototype/attendance";
 import {
   allocatePeriodToProject,
   removePeriodAllocation,
@@ -36,7 +47,13 @@ import { listAllocationsForPeriod } from "./prototype/period-allocation-store";
 import { findPayableForPeriod, generatePayableForPeriod } from "./prototype/period-payable";
 import { useWorkPeriod } from "./prototype/use-work-period";
 import { WorkPeriodStatusBadge } from "./components/status-badge";
-import { getWorkPeriodStatus, type EmployeePeriodAllocation } from "./types";
+import {
+  EMPLOYMENT_TYPE_LABEL,
+  PAYMENT_MODEL_LABEL,
+  getWorkPeriodStatus,
+  type AttendanceStatus,
+  type EmployeePeriodAllocation,
+} from "./types";
 
 type AdjustmentType = "none" | "discount" | "increase";
 
@@ -90,6 +107,9 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
   const [allocationProjectId, setAllocationProjectId] = useState("");
   const [allocationAmountInput, setAllocationAmountInput] = useState("");
   const [allocationError, setAllocationError] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -113,9 +133,12 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     // (e.g. selecting "Acréscimo" before typing its amount, which
     // persists a temporary `manualAdjustment: 0`).
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setExpectedDaysInput(String(workPeriod.expectedDays));
-    setWorkedDaysInput(String(workPeriod.workedDays));
+    setExpectedDaysInput(String(workPeriod.expectedDays ?? 0));
+    setWorkedDaysInput(String(workPeriod.workedDays ?? 0));
     setNotes(workPeriod.notes ?? "");
+    setSelectMode(false);
+    setSelectedDates([]);
+    setCloseConfirmOpen(false);
     if (workPeriod.manualAdjustment > 0) {
       setAdjustmentType("increase");
       setAdjustmentAmountInput(String(workPeriod.manualAdjustment).replace(".", ","));
@@ -143,8 +166,13 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
 
   const status = getWorkPeriodStatus(workPeriod);
   const isClosed = status === "closed";
+  const legacy = isLegacyWorkPeriod(workPeriod);
+  const isDaily = !legacy && workPeriod.paymentModelSnapshot === "daily";
+  const isMonthly = !legacy && workPeriod.paymentModelSnapshot === "monthly";
   const estimate = calculatePeriodEstimate(workPeriod);
+  const closeGate = canClosePeriod(workPeriod);
   const allocationSummary = summarizeAllocations(workPeriod);
+  const pendingFillable = isMonthly ? countPendingFillable(workPeriod) : 0;
 
   function handleExpectedDaysChange(raw: string) {
     setExpectedDaysInput(raw);
@@ -172,6 +200,47 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     persist({ ...workPeriod, workedDays: value });
   }
 
+  function handleSetAttendance(date: string, attendanceStatus: AttendanceStatus) {
+    if (!workPeriod || isClosed) return;
+    persist(setAttendanceEntry(workPeriod, date, attendanceStatus));
+  }
+
+  function handleClearAttendance(date: string) {
+    if (!workPeriod || isClosed) return;
+    persist(clearAttendanceEntry(workPeriod, date));
+  }
+
+  function handleFillPending() {
+    if (!workPeriod || isClosed) return;
+    const pending = countPendingFillable(workPeriod);
+    if (pending === 0) return;
+    const confirmed = window.confirm(`Marcar ${pending} dia${pending === 1 ? "" : "s"} pendente${pending === 1 ? "" : "s"} como completos?`);
+    if (!confirmed) return;
+    persist(fillUnrecordedAsFullDay(workPeriod));
+  }
+
+  function toggleSelectedDate(date: string) {
+    setSelectedDates((current) =>
+      current.includes(date) ? current.filter((item) => item !== date) : [...current, date]
+    );
+  }
+
+  function handleBulkSetSelected(bulkStatus: AttendanceStatus) {
+    if (!workPeriod || isClosed || selectedDates.length === 0) return;
+    const alreadyRecorded = selectedDates.filter(
+      (date) => workPeriod.attendanceEntries?.some((entry) => entry.date === date)
+    );
+    if (alreadyRecorded.length > 0) {
+      const confirmed = window.confirm(
+        `${alreadyRecorded.length} dia${alreadyRecorded.length === 1 ? "" : "s"} selecionado${alreadyRecorded.length === 1 ? "" : "s"} já possui${alreadyRecorded.length === 1 ? "" : "m"} lançamento. Sobrescrever?`
+      );
+      if (!confirmed) return;
+    }
+    persist(setMultipleAttendanceEntries(workPeriod, selectedDates, bulkStatus));
+    setSelectedDates([]);
+    setSelectMode(false);
+  }
+
   function commitAdjustment(type: AdjustmentType, amountInput: string) {
     if (!workPeriod) return;
     const magnitude = parseCurrencyInput(amountInput) ?? 0;
@@ -186,9 +255,11 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     persist({ ...workPeriod, notes: raw.trim() || undefined });
   }
 
-  function handleClose() {
+  function handleConfirmClose() {
     if (!workPeriod) return;
+    if (!canClosePeriod(workPeriod).canClose) return;
     persist({ ...workPeriod, closedAt: todayIso() });
+    setCloseConfirmOpen(false);
   }
 
   function handleReopen() {
@@ -197,6 +268,8 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
     // must never slip through before the lookups resolve.
     if (!workPeriod || relatedPayable !== null) return;
     if (allocations === undefined || allocations.length > 0) return;
+    const confirmed = window.confirm("Reabrir este período permitirá editar novamente a frequência.");
+    if (!confirmed) return;
     persist({ ...workPeriod, closedAt: undefined });
   }
 
@@ -296,59 +369,153 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
           title={formatPeriodLabel(period)}
           onBack={() => router.push(`/equipe/${employeeId}`)}
         />
-        <div className="flex items-center gap-2 pl-11">
+        <div className="flex flex-wrap items-center gap-2 pl-11">
           <p className="text-sm text-muted-foreground">
             {employee ? `${employee.name} · ${employee.role}` : "Funcionário"}
           </p>
+          {!legacy ? (
+            <span className="text-xs text-muted-foreground">
+              {EMPLOYMENT_TYPE_LABEL[workPeriod.employmentTypeSnapshot!]} ·{" "}
+              {PAYMENT_MODEL_LABEL[workPeriod.paymentModelSnapshot!]}
+            </span>
+          ) : null}
           <WorkPeriodStatusBadge status={status} />
         </div>
       </div>
 
       {isClosed ? (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <InfoRow label="Dias previstos" value={String(workPeriod.expectedDays)} />
-          <InfoRow label="Dias trabalhados" value={String(workPeriod.workedDays)} />
-          <InfoRow label="Faltas" value={String(estimate.absences)} />
-          {workPeriod.notes ? <InfoRow label="Observação" value={workPeriod.notes} /> : null}
-        </div>
+        legacy ? (
+          <div className="rounded-xl border border-border bg-card p-4">
+            <InfoRow label="Dias previstos" value={String(workPeriod.expectedDays ?? 0)} />
+            <InfoRow label="Dias trabalhados" value={String(workPeriod.workedDays ?? 0)} />
+            <InfoRow label="Faltas" value={String(estimate.legacy?.absences ?? 0)} />
+            {workPeriod.notes ? <InfoRow label="Observação" value={workPeriod.notes} /> : null}
+          </div>
+        ) : (
+          <AttendanceCalendar workPeriod={workPeriod} editable={false} />
+        )
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label htmlFor="expected-days" className="text-sm font-medium text-foreground">
-                Dias previstos
-              </label>
-              <input
-                id="expected-days"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={expectedDaysInput}
-                onChange={(event) => handleExpectedDaysChange(event.target.value)}
-                className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="worked-days" className="text-sm font-medium text-foreground">
-                Dias trabalhados
-              </label>
-              <input
-                id="worked-days"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={workedDaysInput}
-                onChange={(event) => handleWorkedDaysChange(event.target.value)}
-                className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-              />
-            </div>
-          </div>
+          {legacy ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label htmlFor="expected-days" className="text-sm font-medium text-foreground">
+                    Dias previstos
+                  </label>
+                  <input
+                    id="expected-days"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={expectedDaysInput}
+                    onChange={(event) => handleExpectedDaysChange(event.target.value)}
+                    className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="worked-days" className="text-sm font-medium text-foreground">
+                    Dias trabalhados
+                  </label>
+                  <input
+                    id="worked-days"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={workedDaysInput}
+                    onChange={(event) => handleWorkedDaysChange(event.target.value)}
+                    className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+              </div>
 
-          {daysError ? <p className="text-sm text-destructive">{daysError}</p> : null}
+              {daysError ? <p className="text-sm text-destructive">{daysError}</p> : null}
 
-          <p className="text-sm text-muted-foreground">
-            Faltas: <span className="font-medium text-foreground">{estimate.absences}</span>
-          </p>
+              <p className="text-sm text-muted-foreground">
+                Faltas: <span className="font-medium text-foreground">{estimate.legacy?.absences ?? 0}</span>
+              </p>
+            </>
+          ) : (
+            <>
+              {isMonthly ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
+                  <p className="text-sm text-muted-foreground">
+                    {pendingFillable > 0
+                      ? `${pendingFillable} dia${pendingFillable === 1 ? "" : "s"} pendente${pendingFillable === 1 ? "" : "s"}`
+                      : "Nenhum dia pendente"}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={pendingFillable === 0}
+                    onClick={handleFillPending}
+                  >
+                    Preencher pendentes como completos
+                  </Button>
+                </div>
+              ) : null}
+
+              {isDaily ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card p-3">
+                  <p className="text-sm text-muted-foreground">
+                    {selectMode
+                      ? `${selectedDates.length} dia${selectedDates.length === 1 ? "" : "s"} selecionado${selectedDates.length === 1 ? "" : "s"}`
+                      : "Selecione datas para lançar em lote"}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectMode ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={selectedDates.length === 0}
+                          onClick={() => handleBulkSetSelected("full_day")}
+                        >
+                          Marcar completos
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={selectedDates.length === 0}
+                          onClick={() => handleBulkSetSelected("half_day")}
+                        >
+                          Meio período
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setSelectMode(false);
+                            setSelectedDates([]);
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                      </>
+                    ) : (
+                      <Button type="button" size="sm" variant="outline" onClick={() => setSelectMode(true)}>
+                        Selecionar dias
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              <AttendanceCalendar
+                workPeriod={workPeriod}
+                editable={!selectMode}
+                selectable={selectMode}
+                selectedDates={selectedDates}
+                onToggleSelect={toggleSelectedDate}
+                onSetStatus={handleSetAttendance}
+                onClear={handleClearAttendance}
+              />
+            </>
+          )}
 
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">
@@ -413,23 +580,7 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
         </div>
       )}
 
-      <div className="space-y-1 rounded-xl border border-border bg-card p-4">
-        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Resumo do mês
-        </p>
-        <InfoRow label="Valor-base" value={formatCurrency(workPeriod.baseSalarySnapshot)} />
-        <InfoRow label="Dias previstos" value={String(workPeriod.expectedDays)} />
-        <InfoRow label="Dias trabalhados" value={String(workPeriod.workedDays)} />
-        <InfoRow label="Faltas" value={String(estimate.absences)} />
-        <InfoRow label="Desconto estimado" value={formatCurrency(estimate.absenceDiscount)} />
-        <InfoRow label="Ajuste" value={formatCurrency(workPeriod.manualAdjustment)} />
-        <div className="mt-2 border-t border-border pt-2">
-          <InfoRow label="Valor previsto" value={formatCurrency(estimate.estimatedPay)} emphasis />
-        </div>
-        <p className="pt-2 text-sm text-muted-foreground">
-          Estimativa operacional. Não substitui cálculo de folha de pagamento.
-        </p>
-      </div>
+      <AttendanceSummaryCard workPeriod={workPeriod} estimate={estimate} />
 
       {isClosed ? (
         <section aria-labelledby="period-financeiro" className="space-y-2.5">
@@ -457,6 +608,13 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
               <PayableStatusBadge status={getPayableStatus(relatedPayable)} />
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             </Link>
+          ) : estimate.estimatedPay <= 0 ? (
+            <EmptyState
+              compact
+              icon={Receipt}
+              title="Este período não possui valor a pagar."
+              description="Nenhuma conta a pagar será gerada automaticamente."
+            />
           ) : generatingPayable ? (
             <div className="space-y-3 rounded-xl border border-border bg-card p-4">
               <div className="space-y-1.5">
@@ -689,8 +847,74 @@ export function PeriodDetail({ employeeId, period }: { employeeId: string; perio
             Reabrir período
           </Button>
         )
+      ) : legacy ? (
+        <Button
+          type="button"
+          size="lg"
+          className="w-full"
+          onClick={() => persist({ ...workPeriod, closedAt: todayIso() })}
+        >
+          Fechar período
+        </Button>
+      ) : !closeGate.canClose ? (
+        <div className="space-y-2">
+          <p className="text-sm text-destructive">
+            Existem {closeGate.pendingCount} dia{closeGate.pendingCount === 1 ? "" : "s"} sem apontamento.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={() => document.getElementById("attendance-calendar")?.scrollIntoView({ behavior: "smooth" })}
+          >
+            Resolver pendências
+          </Button>
+          <Button type="button" size="lg" className="w-full" disabled>
+            Fechar período
+          </Button>
+        </div>
+      ) : closeConfirmOpen ? (
+        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+          {isDaily && estimate.attendanceSummary?.workedUnits === 0 ? (
+            <>
+              <p className="text-sm font-medium text-foreground">
+                Este período não possui nenhuma diária registrada.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Valor previsto: {formatCurrency(estimate.estimatedPay)}.
+              </p>
+            </>
+          ) : isDaily ? (
+            <p className="text-sm text-foreground">
+              Fechar período com {estimate.attendanceSummary?.workedUnits} diária
+              {estimate.attendanceSummary?.workedUnits === 1 ? "" : "s"} equivalente
+              {estimate.attendanceSummary?.workedUnits === 1 ? "" : "s"} e valor previsto de{" "}
+              {formatCurrency(estimate.estimatedPay)}?
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-foreground">
+                {estimate.attendanceSummary?.fullDays} completos · {estimate.attendanceSummary?.halfDays}{" "}
+                meios · {estimate.attendanceSummary?.absences} faltas
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Valor previsto: {formatCurrency(estimate.estimatedPay)}
+              </p>
+            </>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" onClick={() => setCloseConfirmOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={handleConfirmClose}>
+              {isDaily && estimate.attendanceSummary?.workedUnits === 0
+                ? "Fechar mesmo assim"
+                : "Confirmar fechamento"}
+            </Button>
+          </div>
+        </div>
       ) : (
-        <Button type="button" size="lg" className="w-full" onClick={handleClose}>
+        <Button type="button" size="lg" className="w-full" onClick={() => setCloseConfirmOpen(true)}>
           Fechar período
         </Button>
       )}

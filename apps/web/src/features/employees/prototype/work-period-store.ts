@@ -8,8 +8,9 @@
  * replace this storage entirely once the real API exists.
  */
 
+import { todayIso } from "@/lib/date";
 import { employeeWorkPeriods as seedWorkPeriods } from "@/mocks/employee-work-periods";
-import type { EmployeeWorkPeriod } from "../types";
+import type { Employee, EmployeeWorkPeriod } from "../types";
 
 const STORAGE_KEY = "obrafacil:employee-work-periods";
 
@@ -71,4 +72,35 @@ export function saveWorkPeriod(workPeriod: EmployeeWorkPeriod): void {
 
 export function createWorkPeriodId(): string {
   return createId();
+}
+
+/**
+ * Single source of truth for assembling a V2 EmployeeWorkPeriod from
+ * an Employee's current snapshot (Demo-Ready 008C §43) — used by both
+ * the individual employee screen and the Frequência overview so a
+ * period is never assembled two different ways. Idempotent: if a
+ * period already exists for this employeeId+period, it is returned
+ * unchanged instead of creating a duplicate (Demo-Ready 008C §44).
+ */
+export function createWorkPeriodForEmployee(employee: Employee, period: string): EmployeeWorkPeriod {
+  const existing = findWorkPeriod(employee.id, period);
+  if (existing) return existing;
+
+  const now = todayIso();
+  const workPeriod: EmployeeWorkPeriod = {
+    id: createWorkPeriodId(),
+    employeeId: employee.id,
+    period,
+    employmentTypeSnapshot: employee.employmentType,
+    paymentModelSnapshot: employee.paymentModel,
+    baseSalarySnapshot: employee.paymentModel === "monthly" ? employee.baseSalary : 0,
+    dailyRateSnapshot: employee.paymentModel === "daily" ? employee.dailyRate : undefined,
+    workDaysSnapshot: employee.paymentModel === "monthly" ? employee.workDays : undefined,
+    attendanceEntries: [],
+    manualAdjustment: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  saveWorkPeriod(workPeriod);
+  return workPeriod;
 }

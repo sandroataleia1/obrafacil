@@ -2,18 +2,25 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Eye, Pencil, Plus, Search, Users } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, Eye, Pencil, Plus, Search, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { cn } from "@/lib/utils";
+import { isLegacyWorkPeriod } from "./prototype/attendance";
 import { calculatePeriodEstimate } from "./prototype/period-calculation";
 import { formatPeriodShort } from "./prototype/period-label";
 import { listWorkPeriodsByEmployee } from "./prototype/work-period-store";
 import { useEmployees } from "./prototype/use-employees";
 import { EmployeeStatusBadge } from "./components/status-badge";
-import { EMPLOYEE_STATUS_LABEL, getWorkPeriodStatus, type Employee, type EmployeeStatus } from "./types";
+import {
+  EMPLOYEE_STATUS_LABEL,
+  EMPLOYMENT_TYPE_LABEL,
+  getWorkPeriodStatus,
+  type Employee,
+  type EmployeeStatus,
+} from "./types";
 
 type EmployeeStatusFilter = "all" | EmployeeStatus;
 
@@ -31,19 +38,43 @@ function normalize(value: string): string {
     .toLowerCase();
 }
 
+function getVinculoSummary(employee: Employee): string {
+  return `${EMPLOYMENT_TYPE_LABEL[employee.employmentType]} · ${
+    employee.paymentModel === "daily" ? `${formatCurrency(employee.dailyRate ?? 0)}/dia` : "Mensal"
+  }`;
+}
+
 function getPeriodSummary(employee: Employee): string {
   const periods = listWorkPeriodsByEmployee(employee.id);
   const latestPeriod = periods[0];
 
-  if (!latestPeriod) return `${formatCurrency(employee.baseSalary)}/mês`;
-
-  if (getWorkPeriodStatus(latestPeriod) === "closed") {
-    return `${formatPeriodShort(latestPeriod.period)} fechado · ${formatCurrency(
-      calculatePeriodEstimate(latestPeriod).estimatedPay
-    )} previsto`;
+  if (!latestPeriod) {
+    return employee.paymentModel === "daily"
+      ? `${formatCurrency(employee.dailyRate ?? 0)}/diária`
+      : `${formatCurrency(employee.baseSalary)}/mês`;
   }
 
-  return `${formatPeriodShort(latestPeriod.period)} · ${latestPeriod.workedDays} de ${latestPeriod.expectedDays} dias`;
+  const estimate = calculatePeriodEstimate(latestPeriod);
+
+  if (getWorkPeriodStatus(latestPeriod) === "closed") {
+    return `${formatPeriodShort(latestPeriod.period)} fechado · ${formatCurrency(estimate.estimatedPay)} previsto`;
+  }
+
+  if (isLegacyWorkPeriod(latestPeriod)) {
+    return `${formatPeriodShort(latestPeriod.period)} · ${latestPeriod.workedDays} de ${latestPeriod.expectedDays} dias`;
+  }
+
+  if (!estimate.attendanceSummary) return formatPeriodShort(latestPeriod.period);
+
+  if (latestPeriod.paymentModelSnapshot === "daily") {
+    return `${formatPeriodShort(latestPeriod.period)} · ${estimate.attendanceSummary.workedUnits} diária${
+      estimate.attendanceSummary.workedUnits === 1 ? "" : "s"
+    }`;
+  }
+
+  return `${formatPeriodShort(latestPeriod.period)} · ${estimate.attendanceSummary.fullDays} completos · ${
+    estimate.attendanceSummary.unrecordedDays
+  } pendentes`;
 }
 
 interface RowActionsProps {
@@ -80,6 +111,7 @@ function EmployeeCard({ employee }: { employee: Employee }) {
           {employee.status === "inactive" ? <EmployeeStatusBadge status="inactive" /> : null}
         </div>
         <p className="text-xs text-muted-foreground">{employee.role}</p>
+        <p className="text-xs text-muted-foreground">{getVinculoSummary(employee)}</p>
         <p className="text-sm text-muted-foreground">{getPeriodSummary(employee)}</p>
       </div>
       <RowActions employee={employee} />
@@ -94,7 +126,9 @@ function EmployeeTableRow({ employee }: { employee: Employee }) {
     <div className={cn("flex items-center px-4 py-3.5", TABLE_ROW_GRID)}>
       <div className="min-w-0 space-y-0.5">
         <p className="truncate text-sm font-medium text-foreground">{employee.name}</p>
-        <p className="truncate text-xs text-muted-foreground">{employee.role}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {employee.role} · {getVinculoSummary(employee)}
+        </p>
       </div>
       <div>
         <EmployeeStatusBadge status={employee.status} />
@@ -222,16 +256,29 @@ export function EmployeeList() {
             Funcionários e controle de dias trabalhados.
           </p>
         </div>
-        <Button
-          size="sm"
-          nativeButton={false}
-          render={
-            <Link href="/equipe/novo">
-              <Plus className="size-4" aria-hidden="true" />
-              Novo
-            </Link>
-          }
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            nativeButton={false}
+            render={
+              <Link href="/equipe/frequencia">
+                <CalendarCheck className="size-4" aria-hidden="true" />
+                Frequência
+              </Link>
+            }
+          />
+          <Button
+            size="sm"
+            nativeButton={false}
+            render={
+              <Link href="/equipe/novo">
+                <Plus className="size-4" aria-hidden="true" />
+                Novo
+              </Link>
+            }
+          />
+        </div>
       </div>
 
       {employees === undefined || employees.length === 0 ? null : (

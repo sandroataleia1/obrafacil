@@ -11,13 +11,20 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { todayIso } from "@/lib/date";
 import { formatPhoneInput } from "@/lib/phone";
+import { isLegacyWorkPeriod } from "./prototype/attendance";
 import { calculatePeriodEstimate } from "./prototype/period-calculation";
 import { formatPeriodShort } from "./prototype/period-label";
-import { createWorkPeriodId, findWorkPeriod, saveWorkPeriod } from "./prototype/work-period-store";
+import { createWorkPeriodForEmployee, findWorkPeriod } from "./prototype/work-period-store";
 import { useEmployee } from "./prototype/use-employee";
 import { useWorkPeriods } from "./prototype/use-work-periods";
 import { EmployeeStatusBadge, WorkPeriodStatusBadge } from "./components/status-badge";
-import { getWorkPeriodStatus, type EmployeeStatus, type EmployeeWorkPeriod } from "./types";
+import {
+  EMPLOYMENT_TYPE_LABEL,
+  PAYMENT_MODEL_LABEL,
+  getWorkPeriodStatus,
+  type EmployeeStatus,
+  type EmployeeWorkPeriod,
+} from "./types";
 
 const STATUS_OPTIONS: EmployeeStatus[] = ["active", "inactive"];
 
@@ -28,6 +35,29 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <span className="text-sm font-medium text-foreground">{value}</span>
     </div>
   );
+}
+
+function periodSubtitle(workPeriod: EmployeeWorkPeriod): string {
+  const estimate = calculatePeriodEstimate(workPeriod);
+
+  if (isLegacyWorkPeriod(workPeriod)) {
+    return `${workPeriod.workedDays} de ${workPeriod.expectedDays} dias · ${estimate.legacy?.absences ?? 0} falta${
+      estimate.legacy?.absences === 1 ? "" : "s"
+    }`;
+  }
+
+  const summary = estimate.attendanceSummary;
+  if (!summary) return "";
+
+  if (workPeriod.paymentModelSnapshot === "daily") {
+    return `${summary.workedUnits} diária${summary.workedUnits === 1 ? "" : "s"} equivalente${
+      summary.workedUnits === 1 ? "" : "s"
+    }`;
+  }
+
+  return `${summary.fullDays} completos · ${summary.halfDays} meios · ${summary.absences} falta${
+    summary.absences === 1 ? "" : "s"
+  } · ${summary.unrecordedDays} pendente${summary.unrecordedDays === 1 ? "" : "s"}`;
 }
 
 function PeriodRow({ workPeriod }: { workPeriod: EmployeeWorkPeriod }) {
@@ -44,10 +74,7 @@ function PeriodRow({ workPeriod }: { workPeriod: EmployeeWorkPeriod }) {
           <p className="text-sm font-medium text-foreground">{formatPeriodShort(workPeriod.period)}</p>
           <WorkPeriodStatusBadge status={status} />
         </div>
-        <p className="text-xs text-muted-foreground">
-          {workPeriod.workedDays} de {workPeriod.expectedDays} dias · {estimate.absences} falta
-          {estimate.absences === 1 ? "" : "s"}
-        </p>
+        <p className="text-xs text-muted-foreground">{periodSubtitle(workPeriod)}</p>
       </div>
       <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">
         {formatCurrency(estimate.estimatedPay)}
@@ -84,20 +111,7 @@ export function EmployeeDetail({ id }: { id: string }) {
       return;
     }
     setPeriodError(null);
-
-    const now = todayIso();
-    saveWorkPeriod({
-      id: createWorkPeriodId(),
-      employeeId: employee.id,
-      period: newPeriod,
-      expectedDays: 22,
-      workedDays: 0,
-      baseSalarySnapshot: employee.baseSalary,
-      manualAdjustment: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-
+    createWorkPeriodForEmployee(employee, newPeriod);
     router.push(`/equipe/${employee.id}/periodos/${newPeriod}`);
   }
 
@@ -115,7 +129,13 @@ export function EmployeeDetail({ id }: { id: string }) {
         {employee.phone ? (
           <InfoRow label="Telefone" value={formatPhoneInput(employee.phone)} />
         ) : null}
-        <InfoRow label="Valor-base mensal" value={formatCurrency(employee.baseSalary)} />
+        <InfoRow label="Vínculo" value={EMPLOYMENT_TYPE_LABEL[employee.employmentType]} />
+        <InfoRow label="Remuneração" value={PAYMENT_MODEL_LABEL[employee.paymentModel]} />
+        {employee.paymentModel === "monthly" ? (
+          <InfoRow label="Salário mensal" value={formatCurrency(employee.baseSalary)} />
+        ) : (
+          <InfoRow label="Valor da diária" value={formatCurrency(employee.dailyRate ?? 0)} />
+        )}
       </div>
 
       <div className="space-y-2">
