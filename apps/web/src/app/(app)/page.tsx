@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   AlertTriangle,
   BrickWall,
@@ -11,7 +12,7 @@ import {
   Wallet,
 } from "lucide-react";
 
-import { ActionCard } from "@/components/shared/action-card";
+import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/currency";
 import { currentUser } from "@/mocks/current-user";
 import { useDashboardSummary } from "@/features/dashboard/prototype/use-dashboard-summary";
@@ -21,6 +22,7 @@ import {
   formatRealizedCostSecondaryText,
 } from "@/features/dashboard/prototype/dashboard-format";
 import { AttentionList } from "@/features/dashboard/components/attention-list";
+import { AttentionSummary } from "@/features/dashboard/components/attention-summary";
 import { CashMovementChart } from "@/features/dashboard/components/cash-movement-chart";
 import { FinancialComparisonChart } from "@/features/dashboard/components/financial-comparison-chart";
 import { KpiCard } from "@/features/dashboard/components/kpi-card";
@@ -37,34 +39,48 @@ function SectionLabel({ children, id }: { children: string; id: string }) {
   );
 }
 
+function HeaderActions() {
+  return (
+    <>
+      {/* Desktop: compact buttons beside the greeting */}
+      <div className="hidden shrink-0 items-center gap-2 lg:flex">
+        <Button size="sm" variant="ghost" nativeButton={false} render={<Link href="/calcular"><Calculator className="size-3.5" aria-hidden="true" />Calcular materiais</Link>} />
+        <Button size="sm" variant="outline" nativeButton={false} render={<Link href="/orcamentos/novo"><FileText className="size-3.5" aria-hidden="true" />Novo orçamento</Link>} />
+        <Button size="sm" nativeButton={false} render={<Link href="/obras/nova"><Plus className="size-3.5" aria-hidden="true" />Nova obra</Link>} />
+      </div>
+
+      {/* Mobile/tablet: compact, two rows, no big banner */}
+      <div className="grid grid-cols-2 gap-2 lg:hidden">
+        <Button size="sm" nativeButton={false} className="w-full" render={<Link href="/obras/nova"><Plus className="size-3.5" aria-hidden="true" />Nova obra</Link>} />
+        <Button size="sm" variant="outline" className="w-full" nativeButton={false} render={<Link href="/orcamentos/novo"><FileText className="size-3.5" aria-hidden="true" />Novo orçamento</Link>} />
+        <Button size="sm" variant="ghost" className="col-span-2 w-full" nativeButton={false} render={<Link href="/calcular"><Calculator className="size-3.5" aria-hidden="true" />Calcular materiais</Link>} />
+      </div>
+    </>
+  );
+}
+
 export default function HomePage() {
   const summary = useDashboardSummary();
 
   if (summary === undefined) return null;
 
-  const isCompletelyEmpty =
-    summary.projectsInProgress === 0 &&
-    summary.budgetedInProjects === 0 &&
-    summary.totalRealizedCost === 0 &&
-    summary.overduePayablesTotal === 0 &&
-    summary.projectsLate === 0 &&
-    summary.pendingApprovalBudgetsCount === 0 &&
-    summary.attentionItems.length === 0;
-
   return (
-    <div className="space-y-10">
-      <div className="space-y-1.5">
-        <h1 className="text-[1.75rem] font-semibold tracking-tight text-foreground sm:text-3xl">
-          Olá, {currentUser.firstName}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          O que você deseja fazer?
-        </p>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-[1.75rem] font-semibold tracking-tight text-foreground sm:text-3xl">
+            Olá, {currentUser.firstName}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Acompanhe a situação das suas obras e finanças.
+          </p>
+        </div>
+        <HeaderActions />
       </div>
 
       <section aria-labelledby="metricas-executivas" className="space-y-2.5">
         <SectionLabel id="metricas-executivas">Métricas</SectionLabel>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
           <KpiCard
             icon={BrickWall}
             label="Obras em andamento"
@@ -79,7 +95,7 @@ export default function HomePage() {
           />
           <KpiCard
             icon={FileText}
-            label="Aguardando aprovação"
+            label="Orçamentos aguardando aprovação"
             value={String(summary.pendingApprovalBudgetsCount)}
             secondaryText={formatPendingApprovalSecondaryText(summary.pendingApprovalBudgetsAmount)}
           />
@@ -107,66 +123,41 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section aria-labelledby="atencao-agora" className="space-y-2.5">
+        <SectionLabel id="atencao-agora">Atenção agora</SectionLabel>
+        <AttentionSummary
+          projectsLate={summary.projectsLate}
+          maxProjectDaysLate={summary.maxProjectDaysLate}
+          overduePayablesCount={summary.overduePayablesCount}
+          overduePayablesTotal={summary.overduePayablesTotal}
+          pendingApprovalBudgetsCount={summary.pendingApprovalBudgetsCount}
+          pendingApprovalBudgetsAmount={summary.pendingApprovalBudgetsAmount}
+          overdueReceivablesCount={summary.overdueReceivablesCount}
+          overdueReceivablesTotal={summary.overdueReceivablesTotal}
+        />
+        <AttentionList items={summary.attentionItems} />
+      </section>
+
       <section aria-labelledby="desempenho-financeiro" className="space-y-2.5">
         <SectionLabel id="desempenho-financeiro">Desempenho financeiro</SectionLabel>
-        <div className="flex flex-col gap-6 lg:grid lg:grid-cols-2">
-          <div className="order-2 space-y-1.5 lg:order-1">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Desempenho financeiro por obra</h3>
-              <p className="text-xs text-muted-foreground">Orçado, realizado e comprometido</p>
-            </div>
+        <div className="flex flex-col gap-4 lg:grid lg:grid-cols-5">
+          <div className="order-2 lg:order-1 lg:col-span-3">
             <FinancialComparisonChart data={summary.financialComparison} />
           </div>
-          <div className="order-1 space-y-1.5 lg:order-2">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Movimentação financeira</h3>
-              <p className="text-xs text-muted-foreground">Recebido × pago nos últimos 6 meses</p>
-            </div>
-            <CashMovementChart data={summary.monthlyCashMovement} />
+          <div className="order-1 lg:order-2 lg:col-span-2">
+            <CashMovementChart
+              data={summary.monthlyCashMovement}
+              receivedTotal={summary.receivedLast6Months}
+              paidTotal={summary.paidLast6Months}
+            />
           </div>
         </div>
       </section>
 
-      <div className="space-y-10 lg:grid lg:grid-cols-3 lg:items-start lg:gap-8 lg:space-y-0">
-        <div className="space-y-10 lg:col-span-2">
-          <section aria-labelledby="saude-obras" className="space-y-2.5">
-            <SectionLabel id="saude-obras">Saúde das obras</SectionLabel>
-            <ProjectHealthList highlights={summary.projectHealthHighlights} />
-          </section>
-
-          <section aria-labelledby="precisa-atencao" className="space-y-2.5 lg:hidden">
-            <SectionLabel id="precisa-atencao">Precisa de atenção</SectionLabel>
-            <AttentionList items={summary.attentionItems} />
-          </section>
-
-          <div>
-            <ActionCard
-              href="/calcular"
-              variant="primary"
-              icon={Calculator}
-              title="Calcular materiais"
-              description="Calcule parede, piso, concreto, pintura e muito mais em poucos toques."
-              cta="Calcular agora"
-            />
-
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <ActionCard href="/orcamentos/novo" icon={Plus} title="Novo orçamento" />
-              {isCompletelyEmpty ? (
-                <ActionCard href="/obras/nova" icon={BrickWall} title="Nova obra" />
-              ) : (
-                <ActionCard href="/obras" icon={BrickWall} title="Minhas obras" />
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="hidden space-y-8 lg:block">
-          <section aria-labelledby="precisa-atencao-desktop" className="space-y-2.5">
-            <SectionLabel id="precisa-atencao-desktop">Precisa de atenção</SectionLabel>
-            <AttentionList items={summary.attentionItems} />
-          </section>
-        </div>
-      </div>
+      <section aria-labelledby="saude-obras" className="space-y-2.5">
+        <SectionLabel id="saude-obras">Saúde das obras</SectionLabel>
+        <ProjectHealthList highlights={summary.projectHealthHighlights} />
+      </section>
     </div>
   );
 }

@@ -3,15 +3,21 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { TooltipContentProps } from "recharts";
 
+import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
+import { formatCompactCurrency } from "@/features/dashboard/prototype/dashboard-format";
 import { BarChart3 } from "lucide-react";
 import type { FinancialComparisonEntry } from "@/features/dashboard/prototype/dashboard-charts";
 
+// Orçado stays a neutral light gray (reference/limit); Realizado uses
+// the product's primary blue (the number that matters most day to
+// day); Comprometido is a clearly darker, distinct tone — three
+// near-identical grays were hard to tell apart at a glance.
 const SERIES = [
   { key: "referenceAmount", label: "Orçado", color: "var(--color-chart-1)" },
-  { key: "realizedCost", label: "Realizado", color: "var(--color-chart-2)" },
-  { key: "committedCost", label: "Comprometido", color: "var(--color-chart-3)" },
+  { key: "realizedCost", label: "Realizado", color: "var(--color-primary)" },
+  { key: "committedCost", label: "Comprometido", color: "var(--color-chart-4)" },
 ] as const;
 
 function ChartLegend() {
@@ -49,47 +55,47 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps) {
 }
 
 /** Height grows with the number of obras so names/bars never get
- * cramped — never a fixed height regardless of dataset size. */
+ * cramped — never a fixed height regardless of dataset size. Title
+ * and card chrome live here (not in page.tsx) so every chart card
+ * follows the same visual system as the KPI cards. */
 export function FinancialComparisonChart({ data }: { data: FinancialComparisonEntry[] }) {
-  if (data.length === 0) {
-    return (
-      <EmptyState
-        icon={BarChart3}
-        title="Nenhuma obra com orçamento disponível para comparar."
-        compact
-      />
-    );
-  }
-
-  const height = Math.max(160, data.length * 76);
-
   return (
-    <div>
-      <div style={{ width: "100%", height }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart
-            data={data}
-            layout="vertical"
-            margin={{ top: 4, right: 16, bottom: 4, left: 4 }}
-            accessibilityLayer
-          >
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
-            <XAxis type="number" tickFormatter={(value) => formatCurrency(value)} tick={{ fontSize: 11 }} />
-            <YAxis
-              type="category"
-              dataKey="projectName"
-              width={110}
-              tick={{ fontSize: 12 }}
-              interval={0}
-            />
-            <Tooltip content={(props) => <ChartTooltip {...props} />} cursor={{ fill: "var(--color-muted)" }} />
-            {SERIES.map((series) => (
-              <Bar key={series.key} dataKey={series.key} name={series.label} fill={series.color} radius={3} />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+    <Card size="sm" className="gap-3 p-4">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">Desempenho financeiro por obra</h3>
+        <p className="text-xs text-muted-foreground">Orçado, realizado e comprometido</p>
       </div>
-      <ChartLegend />
-    </div>
+      {data.length === 0 ? (
+        <EmptyState icon={BarChart3} title="Nenhuma obra com orçamento disponível para comparar." compact />
+      ) : (
+        <>
+          <div style={{ width: "100%", height: Math.max(160, data.length * 76) }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={data}
+                layout="vertical"
+                margin={{ top: 4, right: 16, bottom: 4, left: 4 }}
+                accessibilityLayer
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
+                <XAxis type="number" tickFormatter={formatCompactCurrency} tick={{ fontSize: 11 }} />
+                <YAxis
+                  type="category"
+                  dataKey="projectName"
+                  width={110}
+                  tick={{ fontSize: 12 }}
+                  interval={0}
+                />
+                <Tooltip content={(props) => <ChartTooltip {...props} />} cursor={{ fill: "var(--color-muted)" }} />
+                {SERIES.map((series) => (
+                  <Bar key={series.key} dataKey={series.key} name={series.label} fill={series.color} radius={3} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <ChartLegend />
+        </>
+      )}
+    </Card>
   );
 }

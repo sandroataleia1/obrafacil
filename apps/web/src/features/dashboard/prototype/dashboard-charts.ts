@@ -42,6 +42,22 @@ export function monthLabelFromKey(monthKey: string): string {
   return `${MONTH_LABELS[month - 1]}/${year.slice(2)}`;
 }
 
+export interface MonthlyCashMovementTotals {
+  receivedLast6Months: number;
+  paidLast6Months: number;
+}
+
+/** Plain Σ over the already-built 6-bucket dataset — not a new
+ * financial concept, just a total of what the chart already shows. */
+export function summarizeMonthlyCashMovement(
+  monthly: MonthlyCashMovementEntry[]
+): MonthlyCashMovementTotals {
+  return {
+    receivedLast6Months: monthly.reduce((sum, bucket) => sum + bucket.received, 0),
+    paidLast6Months: monthly.reduce((sum, bucket) => sum + bucket.paid, 0),
+  };
+}
+
 export interface ProjectSummaryEntry {
   project: Project;
   summary: ProjectManagementSummary;

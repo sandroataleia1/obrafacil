@@ -2,15 +2,20 @@ import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
-import { formatCurrency } from "@/lib/currency";
 import { BrickWall } from "lucide-react";
 import { PROJECT_STATUS_LABEL } from "@/features/projects/types";
 import type { ProjectHealthEntry, ProjectHealthHighlights } from "@/features/dashboard/prototype/dashboard-charts";
-import { buildHealthBadges, formatScheduleStatusText } from "@/features/dashboard/prototype/dashboard-format";
+import {
+  buildFinancialSummaryLines,
+  buildHealthBadges,
+  buildScheduleStatusLines,
+} from "@/features/dashboard/prototype/dashboard-format";
 
 function HealthBadges({ entry }: { entry: ProjectHealthEntry }) {
   const badges = buildHealthBadges(entry.healthFlags);
-  if (badges.length === 0) return null;
+  if (badges.length === 0) {
+    return <span className="text-xs text-muted-foreground">No prazo</span>;
+  }
   return (
     <div className="flex flex-wrap gap-1">
       {badges.map((badge) => (
@@ -25,11 +30,26 @@ function HealthBadges({ entry }: { entry: ProjectHealthEntry }) {
   );
 }
 
-function BudgetUsageText({ entry }: { entry: ProjectHealthEntry }) {
-  if (entry.referenceAmount === null || entry.budgetUsage === null) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  return <span>{formatCurrency(entry.committedCost)} ({Math.round(entry.budgetUsage * 100)}%)</span>;
+function ScheduleLines({ entry }: { entry: ProjectHealthEntry }) {
+  const lines = buildScheduleStatusLines(entry);
+  return (
+    <div>
+      <p className={entry.isLate ? "text-sm font-medium text-destructive" : "text-sm text-foreground"}>
+        {lines.primary}
+      </p>
+      {lines.secondary ? <p className="text-xs text-muted-foreground">{lines.secondary}</p> : null}
+    </div>
+  );
+}
+
+function FinancialLines({ entry }: { entry: ProjectHealthEntry }) {
+  const lines = buildFinancialSummaryLines(entry);
+  return (
+    <div>
+      <p className="text-sm text-foreground">{lines.primary}</p>
+      {lines.secondary ? <p className="text-xs text-muted-foreground">{lines.secondary}</p> : null}
+    </div>
+  );
 }
 
 function HealthRowMobile({ entry }: { entry: ProjectHealthEntry }) {
@@ -38,22 +58,13 @@ function HealthRowMobile({ entry }: { entry: ProjectHealthEntry }) {
       href={`/obras/${entry.projectId}`}
       className="block space-y-2 p-3.5 transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">{entry.projectName}</p>
-          <p className="text-xs text-muted-foreground">
-            {PROJECT_STATUS_LABEL[entry.status]} · {formatScheduleStatusText(entry)}
-          </p>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span>Orçado: {entry.referenceAmount !== null ? formatCurrency(entry.referenceAmount) : "—"}</span>
-        <span>Realizado: {formatCurrency(entry.realizedCost)}</span>
-        <span>
-          Comprometimento do orçamento: <BudgetUsageText entry={entry} />
-        </span>
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-foreground">{entry.projectName}</p>
+        <p className="text-xs text-muted-foreground">{PROJECT_STATUS_LABEL[entry.status]}</p>
       </div>
       <HealthBadges entry={entry} />
+      <FinancialLines entry={entry} />
+      <ScheduleLines entry={entry} />
     </Link>
   );
 }
@@ -61,23 +72,21 @@ function HealthRowMobile({ entry }: { entry: ProjectHealthEntry }) {
 function HealthRowDesktop({ entry }: { entry: ProjectHealthEntry }) {
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/40">
-      <td className="py-2.5 pr-3">
+      <td className="py-2.5 pr-4 align-top">
         <Link href={`/obras/${entry.projectId}`} className="font-medium text-foreground hover:underline">
           {entry.projectName}
         </Link>
-        <div className="mt-0.5">
-          <HealthBadges entry={entry} />
-        </div>
+        <p className="text-xs text-muted-foreground">{PROJECT_STATUS_LABEL[entry.status]}</p>
       </td>
-      <td className="py-2.5 pr-3 text-muted-foreground">{PROJECT_STATUS_LABEL[entry.status]}</td>
-      <td className="py-2.5 pr-3 text-right tabular-nums">
-        {entry.referenceAmount !== null ? formatCurrency(entry.referenceAmount) : "—"}
+      <td className="py-2.5 pr-4 align-top">
+        <HealthBadges entry={entry} />
       </td>
-      <td className="py-2.5 pr-3 text-right tabular-nums">{formatCurrency(entry.realizedCost)}</td>
-      <td className="py-2.5 pr-3 text-right tabular-nums">
-        <BudgetUsageText entry={entry} />
+      <td className="py-2.5 pr-4 align-top">
+        <FinancialLines entry={entry} />
       </td>
-      <td className="py-2.5 text-right text-muted-foreground">{formatScheduleStatusText(entry)}</td>
+      <td className="py-2.5 align-top">
+        <ScheduleLines entry={entry} />
+      </td>
     </tr>
   );
 }
@@ -104,17 +113,15 @@ export function ProjectHealthList({ highlights }: { highlights: ProjectHealthHig
         ))}
       </Card>
 
-      {/* Desktop: compact table */}
+      {/* Desktop: full-width, grouped columns (Obra / Situação / Financeiro / Prazo) */}
       <Card size="sm" className="hidden overflow-x-auto p-4 lg:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
-              <th className="pb-2 pr-3 font-medium">Obra</th>
-              <th className="pb-2 pr-3 font-medium">Status</th>
-              <th className="pb-2 pr-3 text-right font-medium">Orçado</th>
-              <th className="pb-2 pr-3 text-right font-medium">Realizado</th>
-              <th className="pb-2 pr-3 text-right font-medium">Comprometimento</th>
-              <th className="pb-2 text-right font-medium">Prazo</th>
+              <th className="pb-2 pr-4 font-medium">Obra</th>
+              <th className="pb-2 pr-4 font-medium">Situação</th>
+              <th className="pb-2 pr-4 font-medium">Financeiro</th>
+              <th className="pb-2 font-medium">Prazo</th>
             </tr>
           </thead>
           <tbody>

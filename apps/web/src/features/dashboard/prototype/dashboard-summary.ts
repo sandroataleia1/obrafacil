@@ -30,6 +30,7 @@ import {
   buildProjectHealth,
   buildProjectHealthHighlights,
   lastNMonthKeys,
+  summarizeMonthlyCashMovement,
   type FinancialComparisonEntry,
   type MonthlyCashMovementEntry,
   type ProjectHealthEntry,
@@ -77,6 +78,13 @@ export interface DashboardSummary {
    * (general/administrative expenses) — never combined with
    * Receivables. */
   overduePayablesTotal: number;
+  overduePayablesCount: number;
+
+  /** Same semantics as the `receivable-overdue` attentionItems —
+   * outstandingAmount via `calculateReceivableFinancials`, never raw
+   * `Receivable.amount`. Never combined with Payables. */
+  overdueReceivablesTotal: number;
+  overdueReceivablesCount: number;
 
   /** count(isProjectLate) — in_progress/paused only, see
    * `project-schedule.ts`. */
@@ -98,6 +106,9 @@ export interface DashboardSummary {
 
   financialComparison: FinancialComparisonEntry[];
   monthlyCashMovement: MonthlyCashMovementEntry[];
+  /** Plain Σ of `monthlyCashMovement` — see `summarizeMonthlyCashMovement`. */
+  receivedLast6Months: number;
+  paidLast6Months: number;
   projectHealth: ProjectHealthEntry[];
   /** `projectHealth`, sorted/capped for display (see
    * `buildProjectHealthHighlights`) — a presentation selector, not a
@@ -227,10 +238,12 @@ export function buildDashboardSummary({
   }
 
   let overduePayablesTotal = 0;
+  let overduePayablesCount = 0;
   for (const payable of payables) {
     const status = getPayableStatus(payable);
     if (status === "overdue") {
       overduePayablesTotal += payable.amount;
+      overduePayablesCount += 1;
       attentionItems.push({
         id: `payable:${payable.id}`,
         type: "payable-overdue",
@@ -260,12 +273,16 @@ export function buildDashboardSummary({
     receiptsByReceivable.set(receipt.receivableId, list);
   }
 
+  let overdueReceivablesTotal = 0;
+  let overdueReceivablesCount = 0;
   for (const receivable of receivables) {
     const financials = calculateReceivableFinancials(
       receivable,
       receiptsByReceivable.get(receivable.id) ?? []
     );
     if (financials.displayStatus === "overdue") {
+      overdueReceivablesTotal += financials.outstandingAmount;
+      overdueReceivablesCount += 1;
       attentionItems.push({
         id: `receivable:${receivable.id}`,
         type: "receivable-overdue",
@@ -329,12 +346,18 @@ export function buildDashboardSummary({
       : null;
 
   const projectHealth = buildProjectHealth(projectEntries, today);
+  const monthlyCashMovement = buildMonthlyCashMovement(payables, receipts, today);
+  const { receivedLast6Months, paidLast6Months } = summarizeMonthlyCashMovement(monthlyCashMovement);
 
   return {
     projectsInProgress,
     budgetedInProjects,
     totalRealizedCost,
     overduePayablesTotal,
+    overduePayablesCount,
+
+    overdueReceivablesTotal,
+    overdueReceivablesCount,
 
     projectsLate,
     maxProjectDaysLate,
@@ -347,7 +370,9 @@ export function buildDashboardSummary({
     realizedCostMonthVariationPercent,
 
     financialComparison: buildFinancialComparison(projectEntries),
-    monthlyCashMovement: buildMonthlyCashMovement(payables, receipts, today),
+    monthlyCashMovement,
+    receivedLast6Months,
+    paidLast6Months,
     projectHealth,
     projectHealthHighlights: buildProjectHealthHighlights(projectHealth),
 
