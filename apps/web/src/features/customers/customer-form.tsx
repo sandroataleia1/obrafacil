@@ -10,8 +10,19 @@ import { Users } from "lucide-react";
 import { formatPhoneInput, digitsOnly } from "@/lib/phone";
 import { createCustomer, saveCustomer } from "./prototype/customer-store";
 import { useCustomer } from "./prototype/use-customer";
+import type { Customer } from "./types";
 
-export function CustomerForm({ customerId }: { customerId?: string }) {
+export function CustomerForm({
+  customerId,
+  onSuccess,
+  onCancel,
+}: {
+  customerId?: string;
+  /** When provided (quick-create in a Dialog/Sheet), called with the saved Customer instead of navigating. */
+  onSuccess?: (customer: Customer) => void;
+  /** When provided, renders a Cancelar action next to the submit button and hides the page-only BackHeader. */
+  onCancel?: () => void;
+}) {
   const isEditing = Boolean(customerId);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -52,14 +63,19 @@ export function CustomerForm({ customerId }: { customerId?: string }) {
     if (!canSubmit) return;
 
     if (isEditing && customer) {
-      saveCustomer({
+      const updated = {
         ...customer,
         name: name.trim(),
         phone: digitsOnly(phone),
         email: email.trim() || undefined,
         document: document.trim() || undefined,
         updatedAt: new Date().toISOString().slice(0, 10),
-      });
+      };
+      saveCustomer(updated);
+      if (onSuccess) {
+        onSuccess(updated);
+        return;
+      }
       router.push(`/clientes/${customer.id}`);
       return;
     }
@@ -71,6 +87,11 @@ export function CustomerForm({ customerId }: { customerId?: string }) {
       document: document.trim() || undefined,
     });
 
+    if (onSuccess) {
+      onSuccess(created);
+      return;
+    }
+
     if (returnTo) {
       router.push(`${returnTo}?customerId=${created.id}`);
     } else {
@@ -80,19 +101,21 @@ export function CustomerForm({ customerId }: { customerId?: string }) {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-1">
-        <BackHeader
-          title={isEditing ? "Editar cliente" : "Novo cliente"}
-          onBack={() =>
-            router.push(isEditing && customerId ? `/clientes/${customerId}` : "/clientes")
-          }
-        />
-        {isEditing ? null : (
-          <p className="pl-11 text-sm text-muted-foreground">
-            Informe o essencial para começar.
-          </p>
-        )}
-      </div>
+      {onCancel ? null : (
+        <div className="space-y-1">
+          <BackHeader
+            title={isEditing ? "Editar cliente" : "Novo cliente"}
+            onBack={() =>
+              router.push(isEditing && customerId ? `/clientes/${customerId}` : "/clientes")
+            }
+          />
+          {isEditing ? null : (
+            <p className="pl-11 text-sm text-muted-foreground">
+              Informe o essencial para começar.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="space-y-1.5">
@@ -153,15 +176,26 @@ export function CustomerForm({ customerId }: { customerId?: string }) {
         </div>
       </div>
 
-      <Button
-        type="button"
-        size="lg"
-        onClick={handleSubmit}
-        disabled={!canSubmit}
-        className="w-full"
-      >
-        {isEditing ? "Salvar alterações" : "Criar cliente"}
-      </Button>
+      {onCancel ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="button" onClick={handleSubmit} disabled={!canSubmit}>
+            {isEditing ? "Salvar alterações" : "Salvar cliente"}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          size="lg"
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className="w-full"
+        >
+          {isEditing ? "Salvar alterações" : "Criar cliente"}
+        </Button>
+      )}
     </div>
   );
 }

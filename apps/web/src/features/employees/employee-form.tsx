@@ -15,6 +15,7 @@ import { useEmployee } from "./prototype/use-employee";
 import {
   EMPLOYMENT_TYPE_LABEL,
   PAYMENT_MODEL_LABEL,
+  type Employee,
   type EmploymentType,
   type PaymentModel,
 } from "./types";
@@ -23,7 +24,17 @@ const EMPLOYMENT_TYPE_OPTIONS: EmploymentType[] = ["employee", "contractor"];
 const PAYMENT_MODEL_OPTIONS: PaymentModel[] = ["monthly", "daily"];
 const DEFAULT_WORK_DAYS = [1, 2, 3, 4, 5];
 
-export function EmployeeForm({ employeeId }: { employeeId?: string }) {
+export function EmployeeForm({
+  employeeId,
+  onSuccess,
+  onCancel,
+}: {
+  employeeId?: string;
+  /** When provided (quick-create in a Dialog/Sheet), called with the saved Employee instead of navigating. */
+  onSuccess?: (employee: Employee) => void;
+  /** When provided, renders a Cancelar action next to the submit button and hides the page-only BackHeader. */
+  onCancel?: () => void;
+}) {
   const router = useRouter();
   const { employee: existingEmployee } = useEmployee(employeeId ?? "");
   const isEditing = Boolean(employeeId);
@@ -102,7 +113,7 @@ export function EmployeeForm({ employeeId }: { employeeId?: string }) {
 
     const now = todayIso();
     const id = existingEmployee?.id ?? createEmployeeId();
-    saveEmployee({
+    const employee: Employee = {
       id,
       name: name.trim(),
       role: role.trim(),
@@ -115,8 +126,13 @@ export function EmployeeForm({ employeeId }: { employeeId?: string }) {
       status: existingEmployee?.status ?? "active",
       createdAt: existingEmployee?.createdAt ?? now,
       updatedAt: now,
-    });
+    };
+    saveEmployee(employee);
 
+    if (onSuccess) {
+      onSuccess(employee);
+      return;
+    }
     router.push(`/equipe/${id}`);
   }
 
@@ -135,14 +151,16 @@ export function EmployeeForm({ employeeId }: { employeeId?: string }) {
 
   return (
     <div className="space-y-6 pb-6">
-      <div className="space-y-1">
-        <BackHeader
-          title={isEditing ? "Editar funcionário" : "Novo funcionário"}
-          onBack={() =>
-            router.push(existingEmployee ? `/equipe/${existingEmployee.id}` : "/equipe")
-          }
-        />
-      </div>
+      {onCancel ? null : (
+        <div className="space-y-1">
+          <BackHeader
+            title={isEditing ? "Editar funcionário" : "Novo funcionário"}
+            onBack={() =>
+              router.push(existingEmployee ? `/equipe/${existingEmployee.id}` : "/equipe")
+            }
+          />
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="space-y-1.5">
@@ -280,9 +298,20 @@ export function EmployeeForm({ employeeId }: { employeeId?: string }) {
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
 
-      <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
-        {isEditing ? "Salvar alterações" : "Adicionar funcionário"}
-      </Button>
+      {onCancel ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="button" onClick={handleSubmit}>
+            {isEditing ? "Salvar alterações" : "Salvar colaborador"}
+          </Button>
+        </div>
+      ) : (
+        <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
+          {isEditing ? "Salvar alterações" : "Adicionar funcionário"}
+        </Button>
+      )}
     </div>
   );
 }

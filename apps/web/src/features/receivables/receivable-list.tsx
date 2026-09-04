@@ -16,6 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -266,17 +267,18 @@ export function ReceivableList() {
   const projects = listAllProjects();
   const customers = listAllCustomers();
   const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
+  const [deletingReceivable, setDeletingReceivable] = useState<Receivable | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  function handleDelete(receivable: Receivable) {
-    const confirmed = window.confirm(
-      `Remover a conta "${receivable.description}"? Esta ação não pode ser desfeita.`
-    );
-    if (!confirmed) return;
-    const result = removeReceivable(receivable);
+  function handleConfirmDelete() {
+    if (!deletingReceivable) return;
+    const result = removeReceivable(deletingReceivable);
     if (!result.ok) {
-      window.alert(result.error);
+      setDeleteError(result.error);
       return;
     }
+    setDeleteError(null);
+    setDeletingReceivable(null);
     refresh();
   }
 
@@ -434,7 +436,7 @@ export function ReceivableList() {
                     ? projects.find((item) => item.id === receivable.projectId)?.name
                     : undefined
                 }
-                onDelete={handleDelete}
+                onDelete={setDeletingReceivable}
               />
             ))}
             <Pagination page={mobilePage} totalPages={mobileTotalPages} onChange={setMobilePage} />
@@ -444,7 +446,7 @@ export function ReceivableList() {
               receivables={desktopReceivables}
               customers={customers}
               projects={projects}
-              onDelete={handleDelete}
+              onDelete={setDeletingReceivable}
             />
             <Pagination page={desktopPage} totalPages={desktopTotalPages} onChange={setDesktopPage} />
           </div>
@@ -459,6 +461,27 @@ export function ReceivableList() {
           render={<Link href={newHref}>Criar primeira conta</Link>}
         />
       ) : null}
+
+      <ConfirmActionDialog
+        open={deletingReceivable !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletingReceivable(null);
+            setDeleteError(null);
+          }
+        }}
+        title="Excluir conta?"
+        description={
+          deletingReceivable
+            ? `Remover a conta "${deletingReceivable.description}"? Esta ação não pode ser desfeita.`
+            : undefined
+        }
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      >
+        {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+      </ConfirmActionDialog>
     </div>
   );
 }

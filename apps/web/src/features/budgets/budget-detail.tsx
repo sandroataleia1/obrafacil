@@ -7,6 +7,8 @@ import { ChevronLeft, Copy, FileText, Plus, Send, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
+import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
 import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { parseDecimalInput } from "@/lib/decimal";
@@ -20,7 +22,7 @@ import { StatusBadge } from "./components/status-badge";
 import { removeBudget, submitBudgetForApproval, updateBudgetComposition } from "./prototype/budget";
 import { calculateBudgetTotals, isCalculatedStage, isManualStage } from "./prototype/budget-totals";
 import { useBudget } from "./prototype/use-budget";
-import type { BudgetStage } from "./types";
+import { BUDGET_STATUS_LABEL, type BudgetStage } from "./types";
 
 const EDITABLE_STATUSES = new Set(["draft", "pending_approval"]);
 
@@ -58,6 +60,8 @@ export function BudgetDetail({ id }: { id: string }) {
   const [discountInput, setDiscountInput] = useState("");
   const [addingStage, setAddingStage] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (budget) {
@@ -81,13 +85,14 @@ export function BudgetDetail({ id }: { id: string }) {
     refresh();
   }
 
-  function handleSubmitForApproval() {
+  function handleConfirmSubmitForApproval() {
     if (!budget) return;
     const result = submitBudgetForApproval(budget);
     if (!result.ok) {
       window.alert(result.error);
       return;
     }
+    setSubmitConfirmOpen(false);
     refresh();
   }
 
@@ -107,12 +112,8 @@ export function BudgetDetail({ id }: { id: string }) {
     }
   }
 
-  function handleDelete() {
+  function handleConfirmDelete() {
     if (!budget) return;
-    const confirmed = window.confirm(
-      `Excluir o orçamento "${budget.name}"? Esta ação não pode ser desfeita.`
-    );
-    if (!confirmed) return;
     const result = removeBudget(budget);
     if (!result.ok) {
       window.alert(result.error);
@@ -218,18 +219,7 @@ export function BudgetDetail({ id }: { id: string }) {
           ) : null
         )}
 
-        {!isComposable ? null : addingStage ? (
-          <ManualStageForm
-            onSave={(newStage) => {
-              updateStages([
-                ...budget.stages,
-                { id: `stage-${Date.now()}`, kind: "manual", ...newStage },
-              ]);
-              setAddingStage(false);
-            }}
-            onCancel={() => setAddingStage(false)}
-          />
-        ) : (
+        {!isComposable ? null : (
           <button
             type="button"
             onClick={() => setAddingStage(true)}
@@ -240,6 +230,19 @@ export function BudgetDetail({ id }: { id: string }) {
           </button>
         )}
       </div>
+
+      <ResponsiveDialog open={addingStage} onOpenChange={setAddingStage} title="Adicionar etapa" size="sm">
+        <ManualStageForm
+          onSave={(newStage) => {
+            updateStages([
+              ...budget.stages,
+              { id: `stage-${Date.now()}`, kind: "manual", ...newStage },
+            ]);
+            setAddingStage(false);
+          }}
+          onCancel={() => setAddingStage(false)}
+        />
+      </ResponsiveDialog>
 
       <div className="space-y-4 rounded-xl border border-border bg-card p-4">
         <InfoRow label="Custo de materiais" value={formatCurrency(totals.materialsCost)} />
@@ -294,7 +297,7 @@ export function BudgetDetail({ id }: { id: string }) {
       <div className="space-y-2">
         {budget.status === "draft" ? (
           <>
-            <Button type="button" size="lg" className="w-full" onClick={handleSubmitForApproval}>
+            <Button type="button" size="lg" className="w-full" onClick={() => setSubmitConfirmOpen(true)}>
               <Send className="size-4" aria-hidden="true" />
               Disponibilizar para aprovação
             </Button>
@@ -356,11 +359,37 @@ export function BudgetDetail({ id }: { id: string }) {
       ) : null}
 
       {EDITABLE_STATUSES.has(budget.status) ? (
-        <Button type="button" variant="destructive" className="w-full" onClick={handleDelete}>
+        <Button type="button" variant="destructive" className="w-full" onClick={() => setDeleteConfirmOpen(true)}>
           <Trash2 className="size-4" aria-hidden="true" />
           Excluir
         </Button>
       ) : null}
+
+      <ConfirmActionDialog
+        open={submitConfirmOpen}
+        onOpenChange={setSubmitConfirmOpen}
+        title="Disponibilizar para aprovação?"
+        confirmLabel="Disponibilizar"
+        onConfirm={handleConfirmSubmitForApproval}
+      >
+        <div className="space-y-1 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+          <p className="text-foreground">Cliente: {budget.customerName}</p>
+          <p className="text-foreground">Valor total: {formatCurrency(totals.total)}</p>
+          <p className="text-muted-foreground">
+            {BUDGET_STATUS_LABEL[budget.status]} → {BUDGET_STATUS_LABEL.pending_approval}
+          </p>
+        </div>
+      </ConfirmActionDialog>
+
+      <ConfirmActionDialog
+        open={deleteConfirmOpen}
+        onOpenChange={setDeleteConfirmOpen}
+        title="Excluir orçamento?"
+        description={`Excluir o orçamento "${budget.name}"? Esta ação não pode ser desfeita.`}
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
 }

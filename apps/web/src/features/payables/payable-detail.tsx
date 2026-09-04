@@ -8,16 +8,18 @@ import { Receipt } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
-import { formatDate, todayIso } from "@/lib/date";
+import { formatDate } from "@/lib/date";
 import { getProject } from "@/features/projects/prototype/project-store";
 import { getEmployee } from "@/features/employees/prototype/employee-store";
 import { getWorkPeriod } from "@/features/employees/prototype/work-period-store";
 import { formatPeriodShort } from "@/features/employees/prototype/period-label";
 import { getPurchaseOrder } from "@/features/purchases/prototype/purchase-order-store";
 import { PROJECT_COST_CATEGORY_LABEL } from "@/features/project-costs/types";
+import { MarkAsPaidDialog } from "./mark-as-paid-dialog";
 import { removePayable } from "./prototype/payable";
-import { markPayableAsPaid, undoPayablePayment } from "./prototype/payable-payment";
+import { undoPayablePayment } from "./prototype/payable-payment";
 import { usePayable } from "./prototype/use-payable";
 import { describeDueDate, getPayableStatus } from "./payable-status";
 import { PayableStatusBadge } from "./components/status-badge";
@@ -34,8 +36,10 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 export function PayableDetail({ id }: { id: string }) {
   const router = useRouter();
   const { payable, refresh } = usePayable(id);
-  const [confirmingPayment, setConfirmingPayment] = useState(false);
-  const [paymentDate, setPaymentDate] = useState(todayIso());
+  const [payingOpen, setPayingOpen] = useState(false);
+  const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   if (payable === undefined) return null;
 
@@ -62,32 +66,18 @@ export function PayableDetail({ id }: { id: string }) {
       ? getPurchaseOrder(payable.originId)
       : null;
 
-  function handleConfirmPayment() {
+  function handleConfirmUndoPayment() {
     if (!payable) return;
-    markPayableAsPaid(payable.id, paymentDate);
-    setConfirmingPayment(false);
-    refresh();
-  }
-
-  function handleUndoPayment() {
-    if (!payable) return;
-    const confirmed = window.confirm(
-      "Desfazer o pagamento desta conta? Se ela gerou um custo na obra, esse custo será removido."
-    );
-    if (!confirmed) return;
     undoPayablePayment(payable.id);
+    setUndoConfirmOpen(false);
     refresh();
   }
 
-  function handleDelete() {
+  function handleConfirmDelete() {
     if (!payable) return;
-    const confirmed = window.confirm(
-      `Remover a conta "${payable.description}"? Esta ação não pode ser desfeita.`
-    );
-    if (!confirmed) return;
     const result = removePayable(payable);
     if (!result.ok) {
-      window.alert(result.error);
+      setDeleteError(result.error);
       return;
     }
     router.push("/financeiro/contas-a-pagar");
@@ -172,48 +162,15 @@ export function PayableDetail({ id }: { id: string }) {
               </Link>
             </div>
           ) : null}
-          <Button type="button" variant="outline" size="lg" className="w-full" onClick={handleUndoPayment}>
+          <Button type="button" variant="outline" size="lg" className="w-full" onClick={() => setUndoConfirmOpen(true)}>
             Desfazer pagamento
           </Button>
         </div>
       ) : (
         <div className="space-y-3">
-          {confirmingPayment ? (
-            <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-              <div className="space-y-1.5">
-                <label htmlFor="payment-date" className="text-sm font-medium text-foreground">
-                  Data do pagamento
-                </label>
-                <input
-                  id="payment-date"
-                  type="date"
-                  value={paymentDate}
-                  onChange={(event) => setPaymentDate(event.target.value)}
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={() => setConfirmingPayment(false)}>
-                  Cancelar
-                </Button>
-                <Button type="button" onClick={handleConfirmPayment}>
-                  Confirmar pagamento
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <Button
-              type="button"
-              size="lg"
-              className="w-full"
-              onClick={() => {
-                setPaymentDate(todayIso());
-                setConfirmingPayment(true);
-              }}
-            >
-              Marcar como paga
-            </Button>
-          )}
+          <Button type="button" size="lg" className="w-full" onClick={() => setPayingOpen(true)}>
+            Marcar como paga
+          </Button>
 
           <div className="grid grid-cols-2 gap-2">
             <Button
@@ -222,12 +179,39 @@ export function PayableDetail({ id }: { id: string }) {
               nativeButton={false}
               render={<Link href={`/financeiro/contas-a-pagar/${payable.id}/editar`}>Editar</Link>}
             />
-            <Button type="button" variant="destructive" onClick={handleDelete}>
+            <Button type="button" variant="destructive" onClick={() => setDeleteConfirmOpen(true)}>
               Excluir
             </Button>
           </div>
         </div>
       )}
+
+      <MarkAsPaidDialog payable={payable} open={payingOpen} onOpenChange={setPayingOpen} onConfirmed={refresh} />
+
+      <ConfirmActionDialog
+        open={undoConfirmOpen}
+        onOpenChange={setUndoConfirmOpen}
+        title="Desfazer pagamento?"
+        description="Se ela gerou um custo na obra, esse custo será removido."
+        confirmLabel="Desfazer pagamento"
+        destructive
+        onConfirm={handleConfirmUndoPayment}
+      />
+
+      <ConfirmActionDialog
+        open={deleteConfirmOpen}
+        onOpenChange={(open) => {
+          setDeleteConfirmOpen(open);
+          if (!open) setDeleteError(null);
+        }}
+        title="Excluir conta?"
+        description={`Remover a conta "${payable.description}"? Esta ação não pode ser desfeita.`}
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      >
+        {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+      </ConfirmActionDialog>
     </div>
   );
 }

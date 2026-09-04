@@ -8,14 +8,14 @@ import { Receipt as ReceiptIcon, Trash2 } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { MoneyField } from "@/components/shared/money-field";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
-import { formatDate, todayIso } from "@/lib/date";
-import { parseCurrencyInput } from "@/lib/currency";
+import { formatDate } from "@/lib/date";
 import { getProject } from "@/features/projects/prototype/project-store";
 import { getCustomer } from "@/features/customers/prototype/customer-store";
+import { RegisterReceiptDialog } from "./register-receipt-dialog";
 import { calculateReceivableFinancials, describeDueDate } from "./receivable-status";
-import { registerReceipt, removeReceipt, removeReceivable } from "./prototype/receivable";
+import { removeReceipt, removeReceivable } from "./prototype/receivable";
 import { useReceivable } from "./prototype/use-receivable";
 import { ReceivableStatusBadge } from "./components/status-badge";
 
@@ -31,11 +31,9 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 export function ReceivableDetail({ id }: { id: string }) {
   const router = useRouter();
   const { receivable, receipts, refresh } = useReceivable(id);
-  const [registering, setRegistering] = useState(false);
-  const [amountInput, setAmountInput] = useState("");
-  const [receivedAt, setReceivedAt] = useState(todayIso());
-  const [notes, setNotes] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [registeringOpen, setRegisteringOpen] = useState(false);
+  const [deletingReceiptId, setDeletingReceiptId] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   if (receivable === undefined) return null;
@@ -58,43 +56,15 @@ export function ReceivableDetail({ id }: { id: string }) {
   );
   const dueHint = displayStatus !== "received" ? describeDueDate(receivable.dueDate) : null;
 
-  function openRegisterForm() {
-    setAmountInput(String(outstandingAmount).replace(".", ","));
-    setReceivedAt(todayIso());
-    setNotes("");
-    setError(null);
-    setRegistering(true);
-  }
-
-  function handleRegisterReceipt() {
-    if (!receivable) return;
-    const amount = parseCurrencyInput(amountInput);
-    if (amount === null || amount <= 0) {
-      setError("Informe um valor maior que zero.");
-      return;
-    }
-    const result = registerReceipt(receivable, amount, receivedAt, notes);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setRegistering(false);
+  function handleConfirmDeleteReceipt() {
+    if (!deletingReceiptId) return;
+    removeReceipt(deletingReceiptId);
+    setDeletingReceiptId(null);
     refresh();
   }
 
-  function handleDeleteReceipt(receiptId: string) {
-    const confirmed = window.confirm("Excluir este recebimento? Esta ação não pode ser desfeita.");
-    if (!confirmed) return;
-    removeReceipt(receiptId);
-    refresh();
-  }
-
-  function handleDelete() {
+  function handleConfirmDelete() {
     if (!receivable) return;
-    const confirmed = window.confirm(
-      `Remover a conta "${receivable.description}"? Esta ação não pode ser desfeita.`
-    );
-    if (!confirmed) return;
     const result = removeReceivable(receivable);
     if (!result.ok) {
       setDeleteError(result.error);
@@ -183,7 +153,7 @@ export function ReceivableDetail({ id }: { id: string }) {
                   <button
                     type="button"
                     aria-label="Excluir recebimento"
-                    onClick={() => handleDeleteReceipt(receipt.id)}
+                    onClick={() => setDeletingReceiptId(receipt.id)}
                     className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Trash2 className="size-4" aria-hidden="true" />
@@ -196,55 +166,9 @@ export function ReceivableDetail({ id }: { id: string }) {
       </section>
 
       {outstandingAmount > 0 ? (
-        <div className="space-y-3">
-          {registering ? (
-            <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-              <MoneyField
-                id="receipt-amount"
-                label="Valor recebido"
-                value={amountInput}
-                onChange={setAmountInput}
-              />
-              <div className="space-y-1.5">
-                <label htmlFor="receipt-date" className="text-sm font-medium text-foreground">
-                  Data do recebimento
-                </label>
-                <input
-                  id="receipt-date"
-                  type="date"
-                  value={receivedAt}
-                  onChange={(event) => setReceivedAt(event.target.value)}
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="receipt-notes" className="text-sm font-medium text-foreground">
-                  Observação <span className="text-muted-foreground">(opcional)</span>
-                </label>
-                <input
-                  id="receipt-notes"
-                  type="text"
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={() => setRegistering(false)}>
-                  Cancelar
-                </Button>
-                <Button type="button" onClick={handleRegisterReceipt}>
-                  Confirmar
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <Button type="button" size="lg" className="w-full" onClick={openRegisterForm}>
-              Registrar recebimento
-            </Button>
-          )}
-        </div>
+        <Button type="button" size="lg" className="w-full" onClick={() => setRegisteringOpen(true)}>
+          Registrar recebimento
+        </Button>
       ) : null}
 
       <div className="space-y-2">
@@ -255,12 +179,48 @@ export function ReceivableDetail({ id }: { id: string }) {
             nativeButton={false}
             render={<Link href={`/financeiro/contas-a-receber/${receivable.id}/editar`}>Editar</Link>}
           />
-          <Button type="button" variant="destructive" onClick={handleDelete}>
+          <Button type="button" variant="destructive" onClick={() => setDeleteConfirmOpen(true)}>
             Excluir
           </Button>
         </div>
         {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
       </div>
+
+      <RegisterReceiptDialog
+        receivable={receivable}
+        outstandingAmount={outstandingAmount}
+        receivedAmount={receivedAmount}
+        open={registeringOpen}
+        onOpenChange={setRegisteringOpen}
+        onRegistered={refresh}
+      />
+
+      <ConfirmActionDialog
+        open={deletingReceiptId !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingReceiptId(null);
+        }}
+        title="Excluir recebimento?"
+        description="Este registro de recebimento será removido — a conta em si não é excluída."
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDeleteReceipt}
+      />
+
+      <ConfirmActionDialog
+        open={deleteConfirmOpen}
+        onOpenChange={(open) => {
+          setDeleteConfirmOpen(open);
+          if (!open) setDeleteError(null);
+        }}
+        title="Excluir conta?"
+        description={`Remover a conta "${receivable.description}"? Esta ação não pode ser desfeita.`}
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      >
+        {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+      </ConfirmActionDialog>
     </div>
   );
 }

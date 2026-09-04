@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, Eye, Package, Pencil, Plus, Search, Trash2 }
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn } from "@/lib/utils";
+import { CreateMaterialDialog } from "./create-material-dialog";
 import { formatMaterialUnit } from "./material-unit";
 import { removeMaterial } from "./prototype/material";
 import { useMaterials } from "./prototype/use-materials";
@@ -176,6 +177,7 @@ export function MaterialList() {
   const [statusFilter, setStatusFilter] = useState<MaterialStatusFilter>("all");
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
+  const [createOpen, setCreateOpen] = useState(false);
 
   function handleDelete(material: Material) {
     const confirmed = window.confirm(
@@ -227,16 +229,10 @@ export function MaterialList() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Materiais</h1>
           <p className="text-sm text-muted-foreground">Catálogo de materiais usado nas obras.</p>
         </div>
-        <Button
-          size="sm"
-          nativeButton={false}
-          render={
-            <Link href="/materiais/novo">
-              <Plus className="size-4" aria-hidden="true" />
-              Novo
-            </Link>
-          }
-        />
+        <Button size="sm" type="button" onClick={() => setCreateOpen(true)}>
+          <Plus className="size-4" aria-hidden="true" />
+          Novo
+        </Button>
       </div>
 
       {materials === undefined || materials.length === 0 ? null : (
@@ -304,13 +300,12 @@ export function MaterialList() {
       )}
 
       {materials !== undefined && materials.length === 0 ? (
-        <Button
-          size="lg"
-          className="w-full"
-          nativeButton={false}
-          render={<Link href="/materiais/novo">Cadastrar primeiro material</Link>}
-        />
+        <Button size="lg" className="w-full" type="button" onClick={() => setCreateOpen(true)}>
+          Cadastrar primeiro material
+        </Button>
       ) : null}
+
+      <CreateMaterialDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={refresh} />
     </div>
   );
 }

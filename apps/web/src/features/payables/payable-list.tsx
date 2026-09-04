@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, Eye, Pencil, Plus, Receipt, Search, Trash2 }
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -258,17 +259,18 @@ export function PayableList() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get("projectId");
   const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
+  const [deletingPayable, setDeletingPayable] = useState<Payable | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  function handleDelete(payable: Payable) {
-    const confirmed = window.confirm(
-      `Remover a conta "${payable.description}"? Esta ação não pode ser desfeita.`
-    );
-    if (!confirmed) return;
-    const result = removePayable(payable);
+  function handleConfirmDelete() {
+    if (!deletingPayable) return;
+    const result = removePayable(deletingPayable);
     if (!result.ok) {
-      window.alert(result.error);
+      setDeleteError(result.error);
       return;
     }
+    setDeleteError(null);
+    setDeletingPayable(null);
     refresh();
   }
 
@@ -426,13 +428,13 @@ export function PayableList() {
                 projectName={
                   payable.projectId ? projects.find((project) => project.id === payable.projectId)?.name : undefined
                 }
-                onDelete={handleDelete}
+                onDelete={setDeletingPayable}
               />
             ))}
             <Pagination page={mobilePage} totalPages={mobileTotalPages} onChange={setMobilePage} />
           </div>
           <div className="hidden space-y-3 lg:block">
-            <PayableTable payables={desktopPayables} projects={projects} onDelete={handleDelete} />
+            <PayableTable payables={desktopPayables} projects={projects} onDelete={setDeletingPayable} />
             <Pagination page={desktopPage} totalPages={desktopTotalPages} onChange={setDesktopPage} />
           </div>
         </>
@@ -446,6 +448,27 @@ export function PayableList() {
           render={<Link href="/financeiro/contas-a-pagar/nova">Criar primeira conta</Link>}
         />
       ) : null}
+
+      <ConfirmActionDialog
+        open={deletingPayable !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletingPayable(null);
+            setDeleteError(null);
+          }
+        }}
+        title="Excluir conta?"
+        description={
+          deletingPayable
+            ? `Remover a conta "${deletingPayable.description}"? Esta ação não pode ser desfeita.`
+            : undefined
+        }
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      >
+        {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+      </ConfirmActionDialog>
     </div>
   );
 }

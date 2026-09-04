@@ -9,8 +9,19 @@ import { formatPhoneInput } from "@/lib/phone";
 import { todayIso } from "@/lib/date";
 import { createSupplierId, saveSupplier } from "./prototype/supplier-store";
 import { useSupplier } from "./prototype/use-supplier";
+import type { Supplier } from "./types";
 
-export function SupplierForm({ supplierId }: { supplierId?: string }) {
+export function SupplierForm({
+  supplierId,
+  onSuccess,
+  onCancel,
+}: {
+  supplierId?: string;
+  /** When provided (quick-create in a Dialog/Sheet), called with the saved Supplier instead of navigating. */
+  onSuccess?: (supplier: Supplier) => void;
+  /** When provided, renders a Cancelar action next to the submit button and hides the page-only BackHeader. */
+  onCancel?: () => void;
+}) {
   const router = useRouter();
   const { supplier: existingSupplier } = useSupplier(supplierId ?? "");
   const isEditing = Boolean(supplierId);
@@ -62,6 +73,10 @@ export function SupplierForm({ supplierId }: { supplierId?: string }) {
     };
     saveSupplier(supplier);
 
+    if (onSuccess) {
+      onSuccess(supplier);
+      return;
+    }
     router.push(`/fornecedores/${supplier.id}`);
   }
 
@@ -80,16 +95,18 @@ export function SupplierForm({ supplierId }: { supplierId?: string }) {
 
   return (
     <div className="space-y-6 pb-6">
-      <div className="space-y-1">
-        <BackHeader
-          title={isEditing ? "Editar fornecedor" : "Novo fornecedor"}
-          onBack={() =>
-            router.push(
-              existingSupplier ? `/fornecedores/${existingSupplier.id}` : "/fornecedores"
-            )
-          }
-        />
-      </div>
+      {onCancel ? null : (
+        <div className="space-y-1">
+          <BackHeader
+            title={isEditing ? "Editar fornecedor" : "Novo fornecedor"}
+            onBack={() =>
+              router.push(
+                existingSupplier ? `/fornecedores/${existingSupplier.id}` : "/fornecedores"
+              )
+            }
+          />
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="space-y-1.5">
@@ -194,9 +211,20 @@ export function SupplierForm({ supplierId }: { supplierId?: string }) {
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
 
-      <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
-        {isEditing ? "Salvar alterações" : "Cadastrar fornecedor"}
-      </Button>
+      {onCancel ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="button" onClick={handleSubmit}>
+            {isEditing ? "Salvar alterações" : "Salvar fornecedor"}
+          </Button>
+        </div>
+      ) : (
+        <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
+          {isEditing ? "Salvar alterações" : "Cadastrar fornecedor"}
+        </Button>
+      )}
     </div>
   );
 }

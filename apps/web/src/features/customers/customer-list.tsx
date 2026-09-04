@@ -16,10 +16,12 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatPhoneInput } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
+import { CreateCustomerDialog } from "./create-customer-dialog";
 import { listAllCustomers, removeCustomer } from "./prototype/customer-store";
 import type { Customer } from "./types";
 
@@ -194,6 +196,9 @@ export function CustomerList() {
   const [search, setSearch] = useState("");
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     // localStorage read after mount: server/hydration both render `null`
@@ -202,17 +207,20 @@ export function CustomerList() {
     setCustomers(listAllCustomers());
   }, []);
 
-  function handleDelete(customer: Customer) {
-    const confirmed = window.confirm(
-      `Excluir o cliente "${customer.name}"? Esta ação não pode ser desfeita.`
-    );
-    if (!confirmed) return;
-    const result = removeCustomer(customer);
+  function refresh() {
+    setCustomers(listAllCustomers());
+  }
+
+  function handleConfirmDelete() {
+    if (!deletingCustomer) return;
+    const result = removeCustomer(deletingCustomer);
     if (!result.ok) {
-      window.alert(result.error);
+      setDeleteError(result.error);
       return;
     }
-    setCustomers(listAllCustomers());
+    setDeleteError(null);
+    setDeletingCustomer(null);
+    refresh();
   }
 
   const normalizedSearch = normalize(search.trim());
@@ -248,16 +256,10 @@ export function CustomerList() {
             Pessoas e empresas para quem você trabalha.
           </p>
         </div>
-        <Button
-          size="sm"
-          nativeButton={false}
-          render={
-            <Link href="/clientes/novo">
-              <Plus className="size-4" aria-hidden="true" />
-              Novo
-            </Link>
-          }
-        />
+        <Button size="sm" type="button" onClick={() => setCreateOpen(true)}>
+          <Plus className="size-4" aria-hidden="true" />
+          Novo
+        </Button>
       </div>
 
       {customers === null || customers.length === 0 ? null : (
@@ -293,16 +295,39 @@ export function CustomerList() {
         <>
           <div className="space-y-3 lg:hidden">
             {mobileCustomers.map((customer) => (
-              <CustomerCard key={customer.id} customer={customer} onDelete={handleDelete} />
+              <CustomerCard key={customer.id} customer={customer} onDelete={setDeletingCustomer} />
             ))}
             <Pagination page={mobilePage} totalPages={mobileTotalPages} onChange={setMobilePage} />
           </div>
           <div className="hidden space-y-3 lg:block">
-            <CustomerTable customers={desktopCustomers} onDelete={handleDelete} />
+            <CustomerTable customers={desktopCustomers} onDelete={setDeletingCustomer} />
             <Pagination page={desktopPage} totalPages={desktopTotalPages} onChange={setDesktopPage} />
           </div>
         </>
       )}
+
+      <CreateCustomerDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={refresh} />
+
+      <ConfirmActionDialog
+        open={deletingCustomer !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletingCustomer(null);
+            setDeleteError(null);
+          }
+        }}
+        title="Excluir cliente?"
+        description={
+          deletingCustomer
+            ? `Excluir o cliente "${deletingCustomer.name}"? Esta ação não pode ser desfeita.`
+            : undefined
+        }
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      >
+        {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+      </ConfirmActionDialog>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { cn } from "@/lib/utils";
+import { CreateEmployeeDialog } from "./attendance/create-employee-dialog";
 import { isLegacyWorkPeriod } from "./prototype/attendance";
 import { calculatePeriodEstimate } from "./prototype/period-calculation";
 import { formatPeriodShort } from "./prototype/period-label";
@@ -210,9 +211,10 @@ function Pagination({
 }
 
 export function EmployeeList() {
-  const { employees } = useEmployees();
+  const { employees, refresh } = useEmployees();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<EmployeeStatusFilter>("all");
+  const [createOpen, setCreateOpen] = useState(false);
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
 
@@ -268,16 +270,10 @@ export function EmployeeList() {
               </Link>
             }
           />
-          <Button
-            size="sm"
-            nativeButton={false}
-            render={
-              <Link href="/equipe/novo">
-                <Plus className="size-4" aria-hidden="true" />
-                Novo
-              </Link>
-            }
-          />
+          <Button size="sm" type="button" onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" aria-hidden="true" />
+            Novo
+          </Button>
         </div>
       </div>
 
@@ -349,10 +345,14 @@ export function EmployeeList() {
         <Button
           size="lg"
           className="w-full"
-          nativeButton={false}
-          render={<Link href="/equipe/novo">Adicionar primeiro funcionário</Link>}
-        />
+          type="button"
+          onClick={() => setCreateOpen(true)}
+        >
+          Adicionar primeiro funcionário
+        </Button>
       ) : null}
+
+      <CreateEmployeeDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={refresh} />
     </div>
   );
 }

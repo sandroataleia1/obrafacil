@@ -16,14 +16,29 @@ import { todayIso } from "@/lib/date";
 import { materialHasDependencies, updateMaterial } from "./prototype/material";
 import { createMaterialId, saveMaterial } from "./prototype/material-store";
 import { useMaterial } from "./prototype/use-material";
-import { MATERIAL_UNIT_CODE_LABEL, MATERIAL_UNIT_CODES, type MaterialUnitCode } from "./types";
+import {
+  MATERIAL_UNIT_CODE_LABEL,
+  MATERIAL_UNIT_CODES,
+  type Material,
+  type MaterialUnitCode,
+} from "./types";
 
 const UNIT_OPTION_LABEL: Record<MaterialUnitCode, string> = {
   ...MATERIAL_UNIT_CODE_LABEL,
   other: "Outro",
 };
 
-export function MaterialForm({ materialId }: { materialId?: string }) {
+export function MaterialForm({
+  materialId,
+  onSuccess,
+  onCancel,
+}: {
+  materialId?: string;
+  /** When provided (quick-create in a Dialog/Sheet), called with the saved Material instead of navigating. */
+  onSuccess?: (material: Material) => void;
+  /** When provided, renders a Cancelar action next to the submit button and hides the page-only BackHeader. */
+  onCancel?: () => void;
+}) {
   const router = useRouter();
   const { material: existingMaterial } = useMaterial(materialId ?? "");
   const isEditing = Boolean(materialId);
@@ -74,22 +89,30 @@ export function MaterialForm({ materialId }: { materialId?: string }) {
         return;
       }
       setError(null);
+      if (onSuccess) {
+        onSuccess(result.material);
+        return;
+      }
       router.push(`/materiais/${result.material.id}`);
       return;
     }
 
     setError(null);
     const now = todayIso();
-    const material = {
+    const material: Material = {
       id: createMaterialId(),
       name: name.trim(),
       defaultUnit,
       notes: notes.trim() || undefined,
-      status: "active" as const,
+      status: "active",
       createdAt: now,
       updatedAt: now,
     };
     saveMaterial(material);
+    if (onSuccess) {
+      onSuccess(material);
+      return;
+    }
     router.push(`/materiais/${material.id}`);
   }
 
@@ -108,14 +131,16 @@ export function MaterialForm({ materialId }: { materialId?: string }) {
 
   return (
     <div className="space-y-6 pb-6">
-      <div className="space-y-1">
-        <BackHeader
-          title={isEditing ? "Editar material" : "Novo material"}
-          onBack={() =>
-            router.push(existingMaterial ? `/materiais/${existingMaterial.id}` : "/materiais")
-          }
-        />
-      </div>
+      {onCancel ? null : (
+        <div className="space-y-1">
+          <BackHeader
+            title={isEditing ? "Editar material" : "Novo material"}
+            onBack={() =>
+              router.push(existingMaterial ? `/materiais/${existingMaterial.id}` : "/materiais")
+            }
+          />
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="space-y-1.5">
@@ -198,9 +223,20 @@ export function MaterialForm({ materialId }: { materialId?: string }) {
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
 
-      <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
-        {isEditing ? "Salvar alterações" : "Cadastrar material"}
-      </Button>
+      {onCancel ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="button" onClick={handleSubmit}>
+            {isEditing ? "Salvar alterações" : "Salvar material"}
+          </Button>
+        </div>
+      ) : (
+        <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
+          {isEditing ? "Salvar alterações" : "Cadastrar material"}
+        </Button>
+      )}
     </div>
   );
 }

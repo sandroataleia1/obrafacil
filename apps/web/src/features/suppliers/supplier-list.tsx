@@ -6,8 +6,10 @@ import { ChevronLeft, ChevronRight, Eye, Pencil, Plus, Search, Trash2, Truck } f
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatPhoneInput } from "@/lib/phone";
 import { cn } from "@/lib/utils";
+import { CreateSupplierDialog } from "./create-supplier-dialog";
 import { removeSupplier } from "./prototype/supplier-store";
 import { useSuppliers } from "./prototype/use-suppliers";
 import { SupplierStatusBadge } from "./components/status-badge";
@@ -188,17 +190,19 @@ export function SupplierList() {
   const [statusFilter, setStatusFilter] = useState<SupplierStatusFilter>("all");
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deletingSupplier, setDeletingSupplier] = useState<Supplier | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  function handleDelete(supplier: Supplier) {
-    const confirmed = window.confirm(
-      `Excluir o fornecedor "${supplier.name}"? Esta ação não pode ser desfeita.`
-    );
-    if (!confirmed) return;
-    const result = removeSupplier(supplier);
+  function handleConfirmDelete() {
+    if (!deletingSupplier) return;
+    const result = removeSupplier(deletingSupplier);
     if (!result.ok) {
-      window.alert(result.error);
+      setDeleteError(result.error);
       return;
     }
+    setDeleteError(null);
+    setDeletingSupplier(null);
     refresh();
   }
 
@@ -239,16 +243,10 @@ export function SupplierList() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Fornecedores</h1>
           <p className="text-sm text-muted-foreground">Quem fornece materiais e serviços.</p>
         </div>
-        <Button
-          size="sm"
-          nativeButton={false}
-          render={
-            <Link href="/fornecedores/novo">
-              <Plus className="size-4" aria-hidden="true" />
-              Novo
-            </Link>
-          }
-        />
+        <Button size="sm" type="button" onClick={() => setCreateOpen(true)}>
+          <Plus className="size-4" aria-hidden="true" />
+          Novo
+        </Button>
       </div>
 
       {suppliers === undefined || suppliers.length === 0 ? null : (
@@ -304,25 +302,45 @@ export function SupplierList() {
         <>
           <div className="space-y-3 lg:hidden">
             {mobileSuppliers.map((supplier) => (
-              <SupplierCard key={supplier.id} supplier={supplier} onDelete={handleDelete} />
+              <SupplierCard key={supplier.id} supplier={supplier} onDelete={setDeletingSupplier} />
             ))}
             <Pagination page={mobilePage} totalPages={mobileTotalPages} onChange={setMobilePage} />
           </div>
           <div className="hidden space-y-3 lg:block">
-            <SupplierTable suppliers={desktopSuppliers} onDelete={handleDelete} />
+            <SupplierTable suppliers={desktopSuppliers} onDelete={setDeletingSupplier} />
             <Pagination page={desktopPage} totalPages={desktopTotalPages} onChange={setDesktopPage} />
           </div>
         </>
       )}
 
       {suppliers !== undefined && suppliers.length === 0 ? (
-        <Button
-          size="lg"
-          className="w-full"
-          nativeButton={false}
-          render={<Link href="/fornecedores/novo">Cadastrar primeiro fornecedor</Link>}
-        />
+        <Button size="lg" className="w-full" type="button" onClick={() => setCreateOpen(true)}>
+          Cadastrar primeiro fornecedor
+        </Button>
       ) : null}
+
+      <CreateSupplierDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={refresh} />
+
+      <ConfirmActionDialog
+        open={deletingSupplier !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletingSupplier(null);
+            setDeleteError(null);
+          }
+        }}
+        title="Excluir fornecedor?"
+        description={
+          deletingSupplier
+            ? `Excluir o fornecedor "${deletingSupplier.name}"? Esta ação não pode ser desfeita.`
+            : undefined
+        }
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      >
+        {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+      </ConfirmActionDialog>
     </div>
   );
 }
