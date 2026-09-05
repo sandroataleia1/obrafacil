@@ -20,7 +20,7 @@ export interface NavItem {
 }
 
 export const MOBILE_NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Início", icon: House },
+  { href: "/", label: "Dashboard", icon: House },
   { href: "/calcular", label: "Calcular", icon: Calculator },
   { href: "/orcamentos", label: "Orçamentos", icon: FileText },
   { href: "/mais", label: "Mais", icon: Menu },
@@ -28,7 +28,7 @@ export const MOBILE_NAV_ITEMS: NavItem[] = [
 
 // Visible on the sidebar at every size it renders (md+, tablet and up).
 export const DESKTOP_NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Início", icon: House },
+  { href: "/", label: "Dashboard", icon: House },
   { href: "/calcular", label: "Calcular", icon: Calculator },
   { href: "/orcamentos", label: "Orçamentos", icon: FileText },
   { href: "/obras", label: "Obras", icon: BrickWall },

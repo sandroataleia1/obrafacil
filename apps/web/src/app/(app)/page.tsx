@@ -1,32 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import {
-  AlertTriangle,
-  BrickWall,
-  Calculator,
-  CalendarClock,
-  FileText,
-  Plus,
-  TrendingUp,
-  Wallet,
-} from "lucide-react";
+import { Calculator, CalendarClock, FileText, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { formatCurrency } from "@/lib/currency";
 import { currentUser } from "@/mocks/current-user";
 import { useDashboardSummary } from "@/features/dashboard/prototype/use-dashboard-summary";
 import {
   formatMaxDaysLateText,
   formatPendingApprovalSecondaryText,
-  formatRealizedCostSecondaryText,
 } from "@/features/dashboard/prototype/dashboard-format";
 import { AttentionList } from "@/features/dashboard/components/attention-list";
-import { AttentionSummary } from "@/features/dashboard/components/attention-summary";
 import { CashMovementChart } from "@/features/dashboard/components/cash-movement-chart";
-import { FinancialComparisonChart } from "@/features/dashboard/components/financial-comparison-chart";
+import { ExecutivePanel } from "@/features/dashboard/components/executive-panel";
 import { KpiCard } from "@/features/dashboard/components/kpi-card";
-import { ProjectHealthList } from "@/features/dashboard/components/project-health-list";
 
 function SectionLabel({ children, id }: { children: string; id: string }) {
   return (
@@ -78,14 +65,11 @@ export default function HomePage() {
         <HeaderActions />
       </div>
 
+      <ExecutivePanel />
+
       <section aria-labelledby="metricas-executivas" className="space-y-2.5">
         <SectionLabel id="metricas-executivas">Métricas</SectionLabel>
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
-          <KpiCard
-            icon={BrickWall}
-            label="Obras em andamento"
-            value={String(summary.projectsInProgress)}
-          />
+        <div className="grid grid-cols-2 gap-2.5">
           <KpiCard
             icon={CalendarClock}
             label="Obras atrasadas"
@@ -99,64 +83,23 @@ export default function HomePage() {
             value={String(summary.pendingApprovalBudgetsCount)}
             secondaryText={formatPendingApprovalSecondaryText(summary.pendingApprovalBudgetsAmount)}
           />
-          <KpiCard
-            icon={Wallet}
-            label="Orçado em obras"
-            value={formatCurrency(summary.budgetedInProjects)}
-          />
-          <KpiCard
-            icon={TrendingUp}
-            label="Custo realizado"
-            value={formatCurrency(summary.totalRealizedCost)}
-            secondaryText={formatRealizedCostSecondaryText(
-              summary.currentMonthRealizedCost,
-              summary.previousMonthRealizedCost,
-              summary.realizedCostMonthVariationPercent
-            )}
-          />
-          <KpiCard
-            icon={AlertTriangle}
-            label="A pagar vencido"
-            value={formatCurrency(summary.overduePayablesTotal)}
-            tone={summary.overduePayablesTotal > 0 ? "critical" : "neutral"}
-          />
         </div>
       </section>
 
       <section aria-labelledby="atencao-agora" className="space-y-2.5">
         <SectionLabel id="atencao-agora">Atenção agora</SectionLabel>
-        <AttentionSummary
-          projectsLate={summary.projectsLate}
-          maxProjectDaysLate={summary.maxProjectDaysLate}
-          overduePayablesCount={summary.overduePayablesCount}
-          overduePayablesTotal={summary.overduePayablesTotal}
-          pendingApprovalBudgetsCount={summary.pendingApprovalBudgetsCount}
-          pendingApprovalBudgetsAmount={summary.pendingApprovalBudgetsAmount}
-          overdueReceivablesCount={summary.overdueReceivablesCount}
-          overdueReceivablesTotal={summary.overdueReceivablesTotal}
-        />
         <AttentionList items={summary.attentionItems} />
       </section>
 
-      <section aria-labelledby="desempenho-financeiro" className="space-y-2.5">
-        <SectionLabel id="desempenho-financeiro">Desempenho financeiro</SectionLabel>
-        <div className="flex flex-col gap-4 lg:grid lg:grid-cols-5">
-          <div className="order-2 lg:order-1 lg:col-span-3">
-            <FinancialComparisonChart data={summary.financialComparison} />
-          </div>
-          <div className="order-1 lg:order-2 lg:col-span-2">
-            <CashMovementChart
-              data={summary.monthlyCashMovement}
-              receivedTotal={summary.receivedLast6Months}
-              paidTotal={summary.paidLast6Months}
-            />
-          </div>
+      <section aria-labelledby="movimentacao-financeira" className="space-y-2.5">
+        <SectionLabel id="movimentacao-financeira">Movimentação financeira</SectionLabel>
+        <div className="mx-auto w-full lg:max-w-2xl">
+          <CashMovementChart
+            data={summary.monthlyCashMovement}
+            receivedTotal={summary.receivedLast6Months}
+            paidTotal={summary.paidLast6Months}
+          />
         </div>
-      </section>
-
-      <section aria-labelledby="saude-obras" className="space-y-2.5">
-        <SectionLabel id="saude-obras">Saúde das obras</SectionLabel>
-        <ProjectHealthList highlights={summary.projectHealthHighlights} />
       </section>
     </div>
   );
