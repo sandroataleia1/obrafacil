@@ -5,6 +5,7 @@ import { Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
+import { BrandLogo } from "./brand-logo";
 import {
   DESKTOP_NAV_EXTRA_ITEMS,
   DESKTOP_NAV_FINANCE_ITEMS,
@@ -35,15 +36,15 @@ function NavLink({
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative flex items-center gap-3 rounded-lg py-2 pr-3 pl-4 text-sm font-medium transition-colors",
+        "relative flex items-center gap-3 rounded-lg py-2 pr-3 pl-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
         active
-          ? "bg-primary/8 text-primary"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
       )}
     >
       {active ? (
         <span
-          className="absolute top-1/2 left-0 h-4 w-1 -translate-y-1/2 rounded-full bg-primary"
+          className="absolute top-1/2 left-0 h-4 w-1 -translate-y-1/2 rounded-full bg-sidebar-accent-foreground"
           aria-hidden="true"
         />
       ) : null}
@@ -60,7 +61,7 @@ function NavGroup({ title, items, pathname }: { title?: string; items: NavItem[]
   return (
     <ul className="hidden flex-col gap-1 lg:flex">
       {title ? (
-        <li className="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <li className="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-sidebar-foreground/90 uppercase">
           {title}
         </li>
       ) : null}
@@ -82,12 +83,9 @@ export function DesktopSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-border bg-sidebar px-3 py-5 md:flex">
+    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-3 py-5 md:flex">
       <div className="px-2 pb-1">
-        <span className="text-lg font-semibold tracking-tight">
-          <span className="text-foreground">Obra</span>
-          <span className="text-primary">Fácil</span>
-        </span>
+        <BrandLogo className="text-sidebar-foreground" />
       </div>
 
       <nav
@@ -110,7 +108,7 @@ export function DesktopSidebar() {
         <NavGroup title="Gestão" items={DESKTOP_NAV_EXTRA_ITEMS} pathname={pathname} />
         <NavGroup title="Financeiro" items={DESKTOP_NAV_FINANCE_ITEMS} pathname={pathname} />
 
-        <ul className="mt-auto flex flex-col gap-1 border-t border-border pt-3 lg:hidden">
+        <ul className="mt-auto flex flex-col gap-1 border-t border-sidebar-border pt-3 lg:hidden">
           <li>
             <NavLink
               href={MAIS_ITEM.href}

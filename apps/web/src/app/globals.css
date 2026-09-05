@@ -73,14 +73,20 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.75rem;
-  --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.19 0.02 255);
-  --sidebar-primary: oklch(0.445 0.095 252);
-  --sidebar-primary-foreground: oklch(0.98 0.004 255);
-  --sidebar-accent: oklch(0.935 0.016 252);
-  --sidebar-accent-foreground: oklch(0.34 0.07 252);
-  --sidebar-border: oklch(0.9 0.008 255);
-  --sidebar-ring: oklch(0.445 0.095 252 / 45%);
+  /* Sidebar now uses the theme's own primary blue as its surface
+     (Pilot-Ready: sidebar azul do tema) — reusing `--primary` instead
+     of a new literal so the sidebar always tracks the app's one true
+     blue. Foreground/accent/border/ring are redefined for contrast
+     against that blue surface, never against the light page
+     background they were tuned for before. */
+  --sidebar: var(--primary);
+  --sidebar-foreground: var(--primary-foreground);
+  --sidebar-primary: var(--primary-foreground);
+  --sidebar-primary-foreground: var(--primary);
+  --sidebar-accent: oklch(1 0 0 / 14%);
+  --sidebar-accent-foreground: var(--primary-foreground);
+  --sidebar-border: oklch(1 0 0 / 14%);
+  --sidebar-ring: oklch(1 0 0 / 55%);
 }
 
 .dark {
