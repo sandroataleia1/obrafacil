@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Menu } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
+import { LogoutButton } from "@/features/auth/logout-button";
 import { BrandLogo } from "./brand-logo";
 import {
   DESKTOP_NAV_EXTRA_ITEMS,
@@ -119,6 +120,13 @@ export function DesktopSidebar() {
           </li>
         </ul>
       </nav>
+
+      <div className="mt-3 border-t border-sidebar-border pt-3">
+        <LogoutButton className="flex w-full items-center gap-3 rounded-lg py-2 pr-3 pl-4 text-sm font-medium text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring">
+          <LogOut className="size-4 shrink-0" aria-hidden="true" />
+          Sair
+        </LogoutButton>
+      </div>
     </aside>
   );
 }

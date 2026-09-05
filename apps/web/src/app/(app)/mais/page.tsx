@@ -4,11 +4,14 @@ import {
   ChevronRight,
   ClipboardList,
   HardHat,
+  LogOut,
   Package,
   Receipt,
   Truck,
   Users,
 } from "lucide-react";
+
+import { LogoutButton } from "@/features/auth/logout-button";
 
 const GESTAO_LINKS = [
   { href: "/obras", label: "Obras", icon: BrickWall },
@@ -65,6 +68,18 @@ export default function MaisPage() {
 
       <LinkSection id="mais-gestao" title="Gestão" items={GESTAO_LINKS} />
       <LinkSection id="mais-financeiro" title="Financeiro" items={FINANCEIRO_LINKS} />
+
+      <section aria-labelledby="mais-conta" className="space-y-2.5">
+        <h2 id="mais-conta" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          Conta
+        </h2>
+        <div className="divide-y divide-border rounded-xl border border-border bg-card">
+          <LogoutButton className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-muted/50">
+            <LogOut className="size-4.5 text-muted-foreground" aria-hidden="true" />
+            <span className="flex-1 text-sm font-medium text-foreground">Sair</span>
+          </LogoutButton>
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,16 +1,36 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { usePathname } from "next/navigation";
+import { useEffect, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
+import { useDemoAuthSession } from "@/features/auth/use-demo-auth";
 import { DesktopSidebar } from "./desktop-sidebar";
 import { isFocusedFlowRoute } from "./focused-flow";
 import { MobileBottomNav } from "./mobile-bottom-nav";
 
+/**
+ * Central guard for every route under the `(app)` group (Pilot-Ready
+ * "Login de Demonstração" §8) — no per-page guard duplicated anywhere.
+ * `/login` lives outside this route group entirely, so it is never
+ * subject to this check. `session === undefined` (not yet read from
+ * localStorage) and `session === null` (redirecting) both render
+ * nothing, so an unauthenticated visitor never sees a flash of
+ * protected content before the redirect fires.
+ */
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { session } = useDemoAuthSession();
   const focused = isFocusedFlowRoute(pathname);
+
+  useEffect(() => {
+    if (session === null) {
+      router.replace("/login");
+    }
+  }, [session, router]);
+
+  if (session === undefined || session === null) return null;
 
   return (
     <div className="flex min-h-dvh">
