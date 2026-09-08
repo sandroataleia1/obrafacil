@@ -14,6 +14,8 @@ import { AttentionList } from "@/features/dashboard/components/attention-list";
 import { CashMovementChart } from "@/features/dashboard/components/cash-movement-chart";
 import { ExecutivePanel } from "@/features/dashboard/components/executive-panel";
 import { KpiCard } from "@/features/dashboard/components/kpi-card";
+import { SupplySummary } from "@/features/dashboard/components/supply-summary";
+import { useDashboardSupplySummary } from "@/features/stock/prototype/use-dashboard-supply-summary";
 
 function SectionLabel({ children, id }: { children: string; id: string }) {
   return (
@@ -48,8 +50,9 @@ function HeaderActions() {
 
 export default function HomePage() {
   const summary = useDashboardSummary();
+  const supplySummary = useDashboardSupplySummary();
 
-  if (summary === undefined) return null;
+  if (summary === undefined || supplySummary === undefined) return null;
 
   return (
     <div className="space-y-6">
@@ -84,6 +87,14 @@ export default function HomePage() {
             secondaryText={formatPendingApprovalSecondaryText(summary.pendingApprovalBudgetsAmount)}
           />
         </div>
+      </section>
+
+      <section aria-labelledby="suprimentos" className="space-y-2.5">
+        <SectionLabel id="suprimentos">Suprimentos</SectionLabel>
+        <SupplySummary
+          missingToPurchaseCount={supplySummary.missingToPurchaseCount}
+          pendingReceiptCount={supplySummary.pendingReceiptCount}
+        />
       </section>
 
       <section aria-labelledby="atencao-agora" className="space-y-2.5">
