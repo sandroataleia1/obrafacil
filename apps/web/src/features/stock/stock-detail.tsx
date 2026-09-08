@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { Boxes } from "lucide-react";
 
@@ -13,8 +13,8 @@ import { getMaterial } from "@/features/materials/prototype/material-store";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { getProject } from "@/features/projects/prototype/project-store";
 import { getGoodsReceipt } from "@/features/purchases/prototype/goods-receipt-store";
-import { AdjustStockDialog } from "./adjust-stock-dialog";
 import { useStockDetail } from "./prototype/use-stock-detail";
+import { getProjectMaterialSupplyMetrics } from "./prototype/supply-metrics";
 import { STOCK_MOVEMENT_SOURCE_LABEL, type StockMovement } from "./types";
 import { StockMovementTypeBadge } from "./components/movement-type-badge";
 
@@ -71,8 +71,7 @@ function MovementRow({ movement, unitLabel }: { movement: StockMovement; unitLab
 }
 
 export function StockDetail({ projectId, materialId }: { projectId: string; materialId: string }) {
-  const { movements, totals, refresh } = useStockDetail(projectId, materialId);
-  const [adjustOpen, setAdjustOpen] = useState(false);
+  const { movements, totals } = useStockDetail(projectId, materialId);
 
   const project = getProject(projectId);
   const material = getMaterial(materialId);
@@ -92,6 +91,8 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
 
   const unitLabel = formatMaterialUnit(material.defaultUnit);
   const subtitle = project.name;
+  const supply = getProjectMaterialSupplyMetrics(projectId, materialId);
+  const withUnit = (value: number) => `${formatQuantity(value)} ${unitLabel}`;
 
   return (
     <div className="w-full max-w-3xl space-y-6">
@@ -139,6 +140,55 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
         </div>
       </div>
 
+      <section aria-labelledby="stock-supply-coverage" className="space-y-2.5">
+        <h2
+          id="stock-supply-coverage"
+          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        >
+          Cobertura da necessidade
+        </h2>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="grid grid-cols-2 gap-4">
+            <InfoField
+              label="Necessário"
+              value={supply.required === null ? "Não definido" : withUnit(supply.required)}
+            />
+            <InfoField label="Comprado" value={withUnit(supply.purchased)} />
+            <InfoField label="Recebido" value={withUnit(supply.received)} />
+            <InfoField
+              label="A receber"
+              value={
+                <span className={supply.pendingReceipt > 0 ? "text-amber-700 dark:text-amber-400" : undefined}>
+                  {withUnit(supply.pendingReceipt)}
+                </span>
+              }
+            />
+            <InfoField label="Consumido" value={withUnit(supply.consumed)} />
+            <InfoField label="Estoque atual" value={withUnit(supply.stock)} />
+          </div>
+          <div className="mt-2 border-t border-border pt-2">
+            <InfoField
+              label="Falta comprar"
+              value={
+                supply.missingToPurchase === null ? (
+                  "—"
+                ) : (
+                  <span
+                    className={
+                      supply.missingToPurchase > 0
+                        ? "text-base font-semibold text-destructive"
+                        : "text-base font-semibold text-foreground"
+                    }
+                  >
+                    {withUnit(supply.missingToPurchase)}
+                  </span>
+                )
+              }
+            />
+          </div>
+        </div>
+      </section>
+
       <section aria-labelledby="stock-movements" className="space-y-2.5">
         <h2
           id="stock-movements"
@@ -157,16 +207,16 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
         )}
       </section>
 
-      <Button type="button" variant="outline" size="lg" className="w-full" onClick={() => setAdjustOpen(true)}>
-        Ajustar estoque
-      </Button>
-
-      <AdjustStockDialog
-        projectId={projectId}
-        materialId={materialId}
-        open={adjustOpen}
-        onOpenChange={setAdjustOpen}
-        onAdjusted={refresh}
+      <Button
+        variant="outline"
+        size="lg"
+        className="w-full"
+        nativeButton={false}
+        render={
+          <Link href={`/estoque/ajustar?projectId=${projectId}&materialId=${materialId}`}>
+            Ajustar estoque
+          </Link>
+        }
       />
     </div>
   );

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
+import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
-import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
 import { todayIso } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
@@ -25,54 +26,70 @@ const TYPE_OPTIONS: { value: StockAdjustmentType; label: string }[] = [
 ];
 
 /**
- * "Ajustar estoque" — a small contextual Dialog (Pilot-Ready "Estoque
- * Básico por Obra" §18), not a second "dar baixa" flow: this only
- * covers the one genuinely new case (correction/initial count/quebra)
- * that no existing entity already represents. Always writes through
- * `createStockAdjustment`, the same guarded path used everywhere else.
+ * "Ajustar estoque" — dedicated page (Pilot-Ready "Ajustar Estoque —
+ * Página Dedicada"), replacing `AdjustStockDialog` (removed — this is
+ * its only surface now). Same domain path as before: always writes
+ * through `createStockAdjustment`, the same guarded function used
+ * everywhere else — no logic duplicated, only the chrome changed from
+ * Dialog/Sheet to a normal routed page.
  *
- * Reused from two contexts (Estoque 1A §11), never duplicated into two
- * forms: called from the detail page with `projectId`/`materialId`
- * fixed (both fields hidden — the context is already unambiguous),
- * and from the listing page with neither prop (Obra + Material selects
- * appear, letting a user register an opening balance for a pair that
- * has no GoodsReceipt/Consumption/StockAdjustment yet).
+ * Context arrives via query params, exactly like `ReceivableForm`'s
+ * `?projectId=` convention (`receivable-form.tsx`):
+ * - `projectId` + `materialId` both present (opened from the detail
+ *   page of a specific Obra+Material) → both fixed/contextualized, not
+ *   editable — mirrors the Dialog's old `projectId`/`materialId` fixed
+ *   props exactly.
+ * - only `projectId` present (opened from the listing while a specific
+ *   Obra filter was active) → Obra pre-selected but still editable,
+ *   Material starts unselected — mirrors the Dialog's old
+ *   `initialProjectId` prefill.
+ * - neither present (listing with "Todas as obras") → both start
+ *   unselected. Never silently defaults to the first Obra/Material in
+ *   the list — an arbitrary guess here would risk an adjustment
+ *   registered against the wrong Obra.
+ * An invalid id in the URL (a stale link, a typo) is treated exactly
+ * like "not provided" — `getProject`/`getMaterial` returning `null`
+ * falls through to the normal unselected-field state instead of
+ * crashing the page.
  */
-export function AdjustStockDialog({
-  projectId: fixedProjectId,
-  materialId: fixedMaterialId,
-  open,
-  onOpenChange,
-  onAdjusted,
-}: {
-  projectId?: string;
-  materialId?: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onAdjusted: () => void;
-}) {
+export function AdjustStockForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const rawProjectId = searchParams.get("projectId");
+  const rawMaterialId = searchParams.get("materialId");
+  // An invalid/stale id in the URL is treated exactly like "not
+  // provided" — falls through to the normal unselected-field state.
+  const validProjectId = rawProjectId && getProject(rawProjectId) ? rawProjectId : null;
+  const fixedMaterialId =
+    validProjectId && rawMaterialId && getMaterial(rawMaterialId) ? rawMaterialId : null;
+  // Only a full projectId+materialId pair (opened from a specific
+  // detail page) locks the Obra field too — a lone projectId (opened
+  // from the listing with an Obra filter active) is a prefill only.
+  const fixedProjectId = fixedMaterialId ? validProjectId : null;
+  const initialProjectId = validProjectId;
+
   const projects = listAllProjects();
   const materials = listMaterials();
 
-  const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [selectedMaterialId, setSelectedMaterialId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId ?? "");
+  const [selectedMaterialId, setSelectedMaterialId] = useState(fixedMaterialId ?? "");
   const [type, setType] = useState<StockAdjustmentType>("ADJUSTMENT_IN");
   const [quantityInput, setQuantityInput] = useState("");
   const [occurredAt, setOccurredAt] = useState(todayIso());
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Query params only ever change via a fresh navigation to this page
+  // (never edited in place), so re-seeding on mount is sufficient —
+  // no dependency-driven reset effect needed like the Dialog had for
+  // repeated open/close cycles.
   useEffect(() => {
-    if (!open) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelectedProjectId("");
-    setSelectedMaterialId("");
-    setType("ADJUSTMENT_IN");
-    setQuantityInput("");
-    setOccurredAt(todayIso());
-    setReason("");
-    setError(null);
-  }, [open]);
+    setSelectedProjectId(initialProjectId ?? "");
+    setSelectedMaterialId(fixedMaterialId ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const effectiveProjectId = fixedProjectId ?? selectedProjectId;
   const effectiveMaterialId = fixedMaterialId ?? selectedMaterialId;
@@ -81,6 +98,21 @@ export function AdjustStockDialog({
   const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : null;
   const currentBalance =
     project && material ? getStockBalance(effectiveProjectId, effectiveMaterialId) : null;
+
+  function destination(): string {
+    // Came from a specific detail page -> return to that same detail.
+    // Otherwise (from the listing, with or without an Obra filter) ->
+    // back to the listing. Matches how the Dialog used to close back
+    // into whichever screen opened it.
+    if (fixedProjectId && fixedMaterialId) {
+      return `/estoque/${fixedProjectId}/${fixedMaterialId}`;
+    }
+    return "/estoque";
+  }
+
+  function handleCancel() {
+    router.push(destination());
+  }
 
   function handleConfirm() {
     if (!effectiveProjectId || !effectiveMaterialId) {
@@ -105,30 +137,26 @@ export function AdjustStockDialog({
       setError(result.error);
       return;
     }
-    onOpenChange(false);
-    onAdjusted();
+    router.push(destination());
   }
 
   return (
-    <ResponsiveDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Ajustar estoque"
-      description={material?.name}
-      size="sm"
-      footer={
-        <>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
-          </Button>
-          <Button type="button" onClick={handleConfirm}>
-            Confirmar
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        {fixedProjectId ? null : (
+    <div className="w-full max-w-3xl space-y-6 pb-6">
+      <BackLink
+        title="Ajustar estoque"
+        description="Registre uma correção de entrada ou saída do estoque."
+        href={destination()}
+      />
+
+      <div className="space-y-4">
+        {fixedProjectId ? (
+          <div className="space-y-1.5">
+            <span className="text-sm font-medium text-foreground">Obra</span>
+            <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
+              {project?.name ?? "—"}
+            </div>
+          </div>
+        ) : (
           <div className="space-y-1.5">
             <label htmlFor="stock-adjustment-project" className="text-sm font-medium text-foreground">
               Obra
@@ -149,7 +177,14 @@ export function AdjustStockDialog({
           </div>
         )}
 
-        {fixedMaterialId ? null : (
+        {fixedMaterialId ? (
+          <div className="space-y-1.5">
+            <span className="text-sm font-medium text-foreground">Material</span>
+            <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
+              {material?.name ?? "—"}
+            </div>
+          </div>
+        ) : (
           <div className="space-y-1.5">
             <label htmlFor="stock-adjustment-material" className="text-sm font-medium text-foreground">
               Material
@@ -171,9 +206,10 @@ export function AdjustStockDialog({
         )}
 
         {material && currentBalance !== null ? (
-          <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-            <p className="font-medium text-foreground">
-              Saldo atual: {formatQuantity(currentBalance)} {unitLabel}
+          <div className="rounded-lg border border-border bg-muted/30 px-3.5 py-2.5">
+            <p className="text-xs font-medium text-muted-foreground">Saldo atual</p>
+            <p className="text-base font-semibold tabular-nums text-foreground">
+              {formatQuantity(currentBalance)} {unitLabel}
             </p>
           </div>
         ) : null}
@@ -249,6 +285,15 @@ export function AdjustStockDialog({
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
-    </ResponsiveDialog>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Button type="button" variant="outline" onClick={handleCancel}>
+          Cancelar
+        </Button>
+        <Button type="button" onClick={handleConfirm}>
+          Confirmar
+        </Button>
+      </div>
+    </div>
   );
 }
