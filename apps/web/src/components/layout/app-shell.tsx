@@ -8,6 +8,7 @@ import { useDemoAuthSession } from "@/features/auth/use-demo-auth";
 import { DesktopSidebar } from "./desktop-sidebar";
 import { isFocusedFlowRoute } from "./focused-flow";
 import { MobileBottomNav } from "./mobile-bottom-nav";
+import { Topbar } from "./topbar";
 
 /**
  * Central guard for every route under the `(app)` group (Pilot-Ready
@@ -37,6 +38,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <DesktopSidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <Topbar user={session.user} />
+
         <main
           className={cn(
             "flex-1 md:pb-0",
@@ -45,7 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               : "pb-[calc(5rem+env(safe-area-inset-bottom))]"
           )}
         >
-          <div className="mx-auto w-full max-w-xl px-4 py-6 sm:max-w-2xl sm:px-6 md:max-w-2xl md:px-10 md:py-12 lg:max-w-none lg:px-12 xl:px-16">
+          <div className="mx-auto w-full max-w-xl px-4 pt-4 pb-6 sm:max-w-2xl sm:px-6 sm:pt-5 md:max-w-2xl md:px-10 md:pt-6 md:pb-12 lg:max-w-none lg:px-12 xl:px-16">
             {children}
           </div>
         </main>

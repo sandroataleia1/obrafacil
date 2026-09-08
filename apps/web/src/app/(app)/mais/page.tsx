@@ -1,30 +1,16 @@
 import Link from "next/link";
-import {
-  BrickWall,
-  ChevronRight,
-  ClipboardList,
-  HardHat,
-  LogOut,
-  Package,
-  Receipt,
-  Truck,
-  Users,
-} from "lucide-react";
+import { BrickWall, ChevronRight, Users } from "lucide-react";
 
-import { LogoutButton } from "@/features/auth/logout-button";
+import { DESKTOP_NAV_EXTRA_ITEMS, DESKTOP_NAV_FINANCE_ITEMS, type NavItem } from "@/components/layout/nav-items";
 
-const GESTAO_LINKS = [
+// "Obras" and "Clientes" already sit in the sidebar's always-visible
+// top group (`DESKTOP_NAV_ITEMS`), not `DESKTOP_NAV_EXTRA_ITEMS` — kept
+// here explicitly so `/mais` still surfaces every section for a phone
+// that never sees the sidebar at all.
+const GESTAO_LINKS: NavItem[] = [
   { href: "/obras", label: "Obras", icon: BrickWall },
   { href: "/clientes", label: "Clientes", icon: Users },
-  { href: "/equipe", label: "Equipe", icon: HardHat },
-  { href: "/fornecedores", label: "Fornecedores", icon: Truck },
-  { href: "/materiais", label: "Materiais", icon: Package },
-  { href: "/compras", label: "Compras", icon: ClipboardList },
-];
-
-const FINANCEIRO_LINKS = [
-  { href: "/financeiro/contas-a-pagar", label: "Contas a pagar", icon: Receipt },
-  { href: "/financeiro/contas-a-receber", label: "Contas a receber", icon: Receipt },
+  ...DESKTOP_NAV_EXTRA_ITEMS,
 ];
 
 function LinkSection({
@@ -34,7 +20,7 @@ function LinkSection({
 }: {
   id: string;
   title: string;
-  items: { href: string; label: string; icon: typeof BrickWall }[];
+  items: NavItem[];
 }) {
   return (
     <section aria-labelledby={id} className="space-y-2.5">
@@ -67,19 +53,7 @@ export default function MaisPage() {
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">Mais</h1>
 
       <LinkSection id="mais-gestao" title="Gestão" items={GESTAO_LINKS} />
-      <LinkSection id="mais-financeiro" title="Financeiro" items={FINANCEIRO_LINKS} />
-
-      <section aria-labelledby="mais-conta" className="space-y-2.5">
-        <h2 id="mais-conta" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Conta
-        </h2>
-        <div className="divide-y divide-border rounded-xl border border-border bg-card">
-          <LogoutButton className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-muted/50">
-            <LogOut className="size-4.5 text-muted-foreground" aria-hidden="true" />
-            <span className="flex-1 text-sm font-medium text-foreground">Sair</span>
-          </LogoutButton>
-        </div>
-      </section>
+      <LinkSection id="mais-financeiro" title="Financeiro" items={DESKTOP_NAV_FINANCE_ITEMS} />
     </div>
   );
 }
