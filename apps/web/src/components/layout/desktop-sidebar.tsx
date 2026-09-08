@@ -10,6 +10,7 @@ import {
   DESKTOP_NAV_EXTRA_ITEMS,
   DESKTOP_NAV_FINANCE_ITEMS,
   DESKTOP_NAV_ITEMS,
+  DESKTOP_NAV_SYSTEM_ITEMS,
   type NavItem,
 } from "./nav-items";
 
@@ -119,6 +120,7 @@ export function DesktopSidebar() {
 
         <NavGroup title="Gestão" items={DESKTOP_NAV_EXTRA_ITEMS} pathname={pathname} />
         <NavGroup title="Financeiro" items={DESKTOP_NAV_FINANCE_ITEMS} pathname={pathname} />
+        <NavGroup title="Sistema" items={DESKTOP_NAV_SYSTEM_ITEMS} pathname={pathname} />
 
         <ul className="mt-auto flex flex-col gap-1 border-t border-sidebar-border pt-3 lg:hidden">
           <li>

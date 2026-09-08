@@ -4,6 +4,7 @@ import {
   BrickWall,
   Calculator,
   ClipboardList,
+  DatabaseBackup,
   FileText,
   HardHat,
   House,
@@ -53,4 +54,10 @@ export const DESKTOP_NAV_FINANCE_ITEMS: NavItem[] = [
   { href: "/financeiro/contas-a-pagar", label: "Contas a pagar", icon: Receipt },
   { href: "/financeiro/contas-a-receber", label: "Contas a receber", icon: Receipt },
   { href: "/notas-fiscais", label: "Notas Fiscais", icon: ScrollText, comingSoon: true },
+];
+
+// Utility/system-level destinations — not a business module, so it gets
+// its own quiet group instead of crowding "Gestão" or "Financeiro".
+export const DESKTOP_NAV_SYSTEM_ITEMS: NavItem[] = [
+  { href: "/dados-e-backup", label: "Dados e backup", icon: DatabaseBackup },
 ];

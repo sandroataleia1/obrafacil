@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { BrickWall, ChevronRight, Users } from "lucide-react";
 
-import { DESKTOP_NAV_EXTRA_ITEMS, DESKTOP_NAV_FINANCE_ITEMS, type NavItem } from "@/components/layout/nav-items";
+import {
+  DESKTOP_NAV_EXTRA_ITEMS,
+  DESKTOP_NAV_FINANCE_ITEMS,
+  DESKTOP_NAV_SYSTEM_ITEMS,
+  type NavItem,
+} from "@/components/layout/nav-items";
 
 // "Obras" and "Clientes" already sit in the sidebar's always-visible
 // top group (`DESKTOP_NAV_ITEMS`), not `DESKTOP_NAV_EXTRA_ITEMS` — kept
@@ -59,6 +64,7 @@ export default function MaisPage() {
 
       <LinkSection id="mais-gestao" title="Gestão" items={GESTAO_LINKS} />
       <LinkSection id="mais-financeiro" title="Financeiro" items={DESKTOP_NAV_FINANCE_ITEMS} />
+      <LinkSection id="mais-sistema" title="Sistema" items={DESKTOP_NAV_SYSTEM_ITEMS} />
     </div>
   );
 }
