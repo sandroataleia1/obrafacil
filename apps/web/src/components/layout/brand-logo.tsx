@@ -23,26 +23,37 @@ import { cn } from "@/lib/utils";
  * background the caller places them on, so the brand never reads as
  * partially disabled.
  */
+/**
+ * The icon alone, extracted so it can be reused outside the wordmark
+ * lockup — e.g. as the animated symbol in `BrandLoader`. Same SVG as
+ * before, not a redraw: `BrandLogo` below renders this exact element.
+ */
+export function BrandMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={cn("size-6 shrink-0", className)} fill="none" aria-hidden="true">
+      <path
+        d="M3 9V3h6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M21 15v6h-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function BrandLogo({ className }: { className?: string }) {
   return (
     <span className={cn("inline-flex items-center gap-2.5", className)}>
-      <svg viewBox="0 0 24 24" className="size-6 shrink-0" fill="none" aria-hidden="true">
-        <path
-          d="M3 9V3h6"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M21 15v6h-6"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" />
-      </svg>
+      <BrandMark />
       <span className="text-lg leading-none tracking-tight">
         <span className="font-bold">Obra</span>
         <span className="font-medium">Fácil</span>

@@ -7,7 +7,8 @@ import { Eye, EyeOff } from "lucide-react";
 import { BrickWall, ClipboardList, HardHat, Receipt } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { BrandLogo } from "@/components/layout/brand-logo";
+import { BrandLogo, BrandMark } from "@/components/layout/brand-logo";
+import { ensureMinimumVisualDuration, MIN_LOGIN_LOADING_MS } from "@/lib/min-duration";
 import { authenticateDemoUser } from "./demo-auth";
 import { useDemoAuthSession } from "./use-demo-auth";
 
@@ -87,13 +88,16 @@ export function LoginForm() {
     }
   }, [session, router]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isSubmitting) return;
     setIsSubmitting(true);
     setError(null);
 
+    const startedAt = performance.now();
     const result = authenticateDemoUser(email, password);
+    await ensureMinimumVisualDuration(startedAt, MIN_LOGIN_LOADING_MS);
+
     if (!result.ok) {
       setError(result.error);
       setIsSubmitting(false);
@@ -170,7 +174,14 @@ export function LoginForm() {
             ) : null}
 
             <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? "Entrando..." : "Entrar"}
+              {isSubmitting ? (
+                <span className="inline-flex items-center gap-2">
+                  <BrandMark className="size-4 motion-safe:animate-pulse" />
+                  Entrando...
+                </span>
+              ) : (
+                "Entrar"
+              )}
             </Button>
           </form>
         </div>
