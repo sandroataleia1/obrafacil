@@ -42,6 +42,41 @@
  * already happened and stays true regardless of the order's later
  * commercial status (same reasoning as `calculateMaterialPlanning` in
  * `features/purchases/prototype/purchase-totals.ts`).
+ *
+ * --- StockAdjustment joins the same ledger (Estoque 1A) ---
+ *
+ * `features/stock` adds one new physical fact this module didn't know
+ * about: a manual `StockAdjustment` (initial count, breakage,
+ * correction). Once that entity exists, "is there enough of this
+ * Material available" can no longer be answered from GoodsReceipt/
+ * Consumption alone — an `ADJUSTMENT_OUT` can make physically-received
+ * stock unavailable, and an `ADJUSTMENT_IN` can make stock available
+ * that never went through a GoodsReceipt at all (e.g. an opening
+ * balance). `listLedgerEventsForProjectMaterial` is the one place that
+ * merges all four event kinds into a single signed timeline; every
+ * write-time guard in this codebase that needs to know "would this
+ * leave the balance negative at any point in time" — this module's own
+ * `registerMaterialConsumption`, `features/purchases/prototype/
+ * goods-receipt.ts#removeGoodsReceipt`, and `features/stock/prototype/
+ * stock.ts#createStockAdjustment` — calls this same function (or the
+ * lower-level `listAdjustmentIn/OutEventsForProjectMaterial` pair when
+ * it needs to exclude one specific source, mirroring how
+ * `removeGoodsReceipt` already excludes its own ReceivedEvents) rather
+ * than each re-deriving its own notion of "available". This keeps a
+ * single ledger instead of the two independent formulas that existed
+ * before this correction (`calculateAvailableQuantity`'s received-minus-
+ * consumed vs. `features/stock/prototype/stock.ts`'s separate entradas+
+ * ajustes-saídas math).
+ *
+ * Import direction note: this file (features/materials) now imports
+ * `stock-adjustment-store.ts` (features/stock) — a leaf persistence
+ * module with no domain logic and no imports back into `materials` or
+ * `purchases` — so this stays a one-directional dependency, not a
+ * cycle. `features/stock/prototype/stock.ts` continues to import this
+ * file the other way (for the received/consumed primitives), which is
+ * fine: `stock.ts` and `stock-adjustment-store.ts` are both leaves
+ * relative to each other (neither imports the other), so there is no
+ * cycle anywhere in this graph.
  */
 
 import { getProject } from "@/features/projects/prototype/project-store";
@@ -49,6 +84,7 @@ import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purc
 import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
 import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
 import { listGoodsReceiptsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-store";
+import { listStockAdjustmentsByProjectAndMaterial } from "@/features/stock/prototype/stock-adjustment-store";
 import { todayIso } from "@/lib/date";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
 import { getMaterial } from "./material-store";
@@ -130,14 +166,90 @@ export function listConsumedEventsForProjectMaterial(
   }));
 }
 
+/** One manual stock-adjustment event, tagged with the StockAdjustment
+ * it came from (symmetric with ReceivedEvent/ConsumedEvent). */
+export interface AdjustmentEvent {
+  stockAdjustmentId: string;
+  date: string;
+  units: number;
+}
+
+/** Every `ADJUSTMENT_IN` StockAdjustment for this Material at this
+ * Project. */
+export function listAdjustmentInEventsForProjectMaterial(
+  projectId: string,
+  materialId: string
+): AdjustmentEvent[] {
+  return listStockAdjustmentsByProjectAndMaterial(projectId, materialId)
+    .filter((adjustment) => adjustment.type === "ADJUSTMENT_IN")
+    .map((adjustment) => ({
+      stockAdjustmentId: adjustment.id,
+      date: adjustment.occurredAt,
+      units: toQuantityUnits(adjustment.quantity),
+    }));
+}
+
+/** Every `ADJUSTMENT_OUT` StockAdjustment for this Material at this
+ * Project. */
+export function listAdjustmentOutEventsForProjectMaterial(
+  projectId: string,
+  materialId: string
+): AdjustmentEvent[] {
+  return listStockAdjustmentsByProjectAndMaterial(projectId, materialId)
+    .filter((adjustment) => adjustment.type === "ADJUSTMENT_OUT")
+    .map((adjustment) => ({
+      stockAdjustmentId: adjustment.id,
+      date: adjustment.occurredAt,
+      units: toQuantityUnits(adjustment.quantity),
+    }));
+}
+
+/**
+ * The single ledger: every signed event (positive = increases balance,
+ * negative = decreases it) across all four sources — GoodsReceipt,
+ * MaterialConsumption, ADJUSTMENT_IN, ADJUSTMENT_OUT — for one Project
+ * + Material. Every write-time availability guard in this codebase
+ * builds its candidate timeline from this function (or from the
+ * lower-level per-source lists above when it needs to exclude one
+ * specific event, e.g. `removeGoodsReceipt` simulating its own
+ * removal) — see this module's doc comment ("StockAdjustment joins the
+ * same ledger").
+ */
+export function listLedgerEventsForProjectMaterial(
+  projectId: string,
+  materialId: string
+): { date: string; units: number }[] {
+  return [
+    ...listReceivedEventsForProjectMaterial(projectId, materialId).map((event) => ({
+      date: event.date,
+      units: event.units,
+    })),
+    ...listConsumedEventsForProjectMaterial(projectId, materialId).map((event) => ({
+      date: event.date,
+      units: -event.units,
+    })),
+    ...listAdjustmentInEventsForProjectMaterial(projectId, materialId).map((event) => ({
+      date: event.date,
+      units: event.units,
+    })),
+    ...listAdjustmentOutEventsForProjectMaterial(projectId, materialId).map((event) => ({
+      date: event.date,
+      units: -event.units,
+    })),
+  ];
+}
+
 /**
  * The single source of truth for chronological validity: given a set
- * of signed, dated events (positive = received, negative = consumed)
- * for one Project + Material, true iff the running balance never goes
- * negative on any date. Events are aggregated *by day* first — there
- * is no time-of-day in this system, so a receipt and a consumption
- * dated the same day are summed together before the cumulative check,
- * meaning a same-day arrival can supply a same-day use.
+ * of signed, dated events (positive = increases balance, negative =
+ * decreases it) for one Project + Material, true iff the running
+ * balance never goes negative on any date. Events are aggregated *by
+ * day* first — there is no time-of-day in this system, so events dated
+ * the same day are summed together before the cumulative check,
+ * meaning a same-day arrival (GoodsReceipt or ADJUSTMENT_IN) can
+ * supply a same-day use (Consumption or ADJUSTMENT_OUT). This same-day
+ * aggregation rule predates StockAdjustment and is unchanged by it —
+ * it now simply also applies to adjustment events.
  */
 export function isTimelineValid(events: { date: string; units: number }[]): boolean {
   const unitsByDate = new Map<string, number>();
@@ -169,18 +281,21 @@ export function calculateTotalConsumedUnits(projectId: string, materialId: strin
 }
 
 /**
- * Current (not date-scoped) available balance. With both invariants
- * enforced at write time, `receivedUnits >= consumedUnits` should
- * always hold — the `Math.max(..., 0)` below is kept only as a display
+ * Current (not date-scoped) available balance — the ledger total
+ * (GoodsReceipt + ADJUSTMENT_IN - Consumption - ADJUSTMENT_OUT). With
+ * every invariant enforced at write time this should never go
+ * negative — the `Math.max(..., 0)` below is kept only as a display
  * floor against pre-existing/out-of-band data (e.g. a browser that
  * still has localStorage written before this guard existed), never as
  * a substitute for validating the invariant itself. No write path in
  * this module relies on this clamp to stay correct.
  */
 export function calculateAvailableQuantity(projectId: string, materialId: string): number {
-  const receivedUnits = calculateTotalReceivedUnits(projectId, materialId);
-  const consumedUnits = calculateTotalConsumedUnits(projectId, materialId);
-  return Math.max(receivedUnits - consumedUnits, 0) / 1000;
+  const totalUnits = listLedgerEventsForProjectMaterial(projectId, materialId).reduce(
+    (sum, event) => sum + event.units,
+    0
+  );
+  return Math.max(totalUnits, 0) / 1000;
 }
 
 export interface MaterialConsumptionInput {
@@ -209,29 +324,25 @@ export function registerMaterialConsumption(input: MaterialConsumptionInput): Ma
     return { ok: false, error: "Informe uma quantidade maior que zero." };
   }
 
-  const receivedEvents = listReceivedEventsForProjectMaterial(input.projectId, input.materialId);
-  if (receivedEvents.length === 0) {
+  const ledgerEvents = listLedgerEventsForProjectMaterial(input.projectId, input.materialId);
+  if (ledgerEvents.length === 0) {
     return {
       ok: false,
-      error: "Não há material recebido disponível para uso nesta obra.",
+      error: "Não há material disponível para uso nesta obra.",
     };
   }
 
-  const consumedEvents = listConsumedEventsForProjectMaterial(input.projectId, input.materialId);
   const quantityUnits = toQuantityUnits(input.quantity);
 
-  // Simulate the full timeline *with* this candidate consumption added —
-  // not just "today's" total balance. A quantity that fits the current
-  // grand total can still be invalid if it's dated earlier than a
-  // delivery it would implicitly rely on (see module doc comment).
-  // ConsumedEvent.units is a positive magnitude (see its doc comment) —
-  // negate it here to turn it into a signed ledger entry for
-  // `isTimelineValid`.
-  const candidateEvents = [
-    ...receivedEvents,
-    ...consumedEvents.map((event) => ({ date: event.date, units: -event.units })),
-    { date: input.consumedAt, units: -quantityUnits },
-  ];
+  // Simulate the full ledger timeline *with* this candidate consumption
+  // added — not just "today's" total balance. A quantity that fits the
+  // current grand total can still be invalid if it's dated earlier than
+  // a delivery/adjustment it would implicitly rely on (see module doc
+  // comment). `listLedgerEventsForProjectMaterial` already includes
+  // GoodsReceipt, prior Consumption, and every StockAdjustment (Estoque
+  // 1A) — this module no longer looks at received/consumed in
+  // isolation.
+  const candidateEvents = [...ledgerEvents, { date: input.consumedAt, units: -quantityUnits }];
   if (!isTimelineValid(candidateEvents)) {
     return {
       ok: false,

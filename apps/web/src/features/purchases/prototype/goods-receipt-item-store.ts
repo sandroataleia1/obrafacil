@@ -48,7 +48,7 @@ function writeDeleted(ids: Set<string>): void {
   window.localStorage.setItem(DELETED_KEY, JSON.stringify(Array.from(ids)));
 }
 
-function listAllGoodsReceiptItems(): GoodsReceiptItem[] {
+export function listAllGoodsReceiptItems(): GoodsReceiptItem[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, GoodsReceiptItem>();

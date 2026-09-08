@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Boxes,
   BrickWall,
   Calculator,
   ClipboardList,
@@ -42,6 +43,7 @@ export const DESKTOP_NAV_EXTRA_ITEMS: NavItem[] = [
   { href: "/fornecedores", label: "Fornecedores", icon: Truck },
   { href: "/materiais", label: "Materiais", icon: Package },
   { href: "/compras", label: "Compras", icon: ClipboardList },
+  { href: "/estoque", label: "Estoque", icon: Boxes },
 ];
 
 export const DESKTOP_NAV_FINANCE_ITEMS: NavItem[] = [

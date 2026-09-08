@@ -24,6 +24,8 @@ import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { getMaterial } from "@/features/materials/prototype/material-store";
 import {
   isTimelineValid,
+  listAdjustmentInEventsForProjectMaterial,
+  listAdjustmentOutEventsForProjectMaterial,
   listConsumedEventsForProjectMaterial,
   listReceivedEventsForProjectMaterial,
 } from "@/features/materials/prototype/material-consumption";
@@ -164,11 +166,22 @@ export function removeGoodsReceipt(goodsReceipt: GoodsReceipt): DomainResult {
       materialId
     ).filter((event) => event.goodsReceiptId !== goodsReceipt.id);
     const consumedEvents = listConsumedEventsForProjectMaterial(purchaseOrder.projectId, materialId);
+    const adjustmentInEvents = listAdjustmentInEventsForProjectMaterial(purchaseOrder.projectId, materialId);
+    const adjustmentOutEvents = listAdjustmentOutEventsForProjectMaterial(purchaseOrder.projectId, materialId);
 
-    // ConsumedEvent.units is a positive magnitude — negate it into a
-    // signed ledger entry before validating (see material-consumption.ts).
-    const signedConsumedEvents = consumedEvents.map((event) => ({ date: event.date, units: -event.units }));
-    if (!isTimelineValid([...receivedEvents, ...signedConsumedEvents])) {
+    // Every event carries a positive magnitude — negate the "outflow"
+    // ones into signed ledger entries before validating, same convention
+    // as `listLedgerEventsForProjectMaterial` (see material-consumption.ts).
+    // StockAdjustment (Estoque 1A) must be included here too: an
+    // ADJUSTMENT_OUT dated after this receipt can depend on it exactly
+    // like a Consumption would.
+    const signedEvents = [
+      ...receivedEvents,
+      ...consumedEvents.map((event) => ({ date: event.date, units: -event.units })),
+      ...adjustmentInEvents.map((event) => ({ date: event.date, units: event.units })),
+      ...adjustmentOutEvents.map((event) => ({ date: event.date, units: -event.units })),
+    ];
+    if (!isTimelineValid(signedEvents)) {
       const material = getMaterial(materialId);
       return {
         ok: false,
