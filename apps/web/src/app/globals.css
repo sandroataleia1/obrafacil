@@ -134,3 +134,37 @@
     @apply font-sans;
   }
 }
+
+/*
+ * Scoped to the desktop sidebar's scrollable nav only (`.sidebar-scroll`
+ * in `desktop-sidebar.tsx`) — never the app's default scrollbar. Colors
+ * are derived from the sidebar's own tokens via `color-mix()`, not
+ * hardcoded, so a future sidebar theme change carries through here too.
+ */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--sidebar-foreground) 30%, transparent) transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--sidebar-foreground) 30%, transparent);
+  border-radius: 999px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--sidebar-foreground) 48%, transparent);
+}
+
+.sidebar-scroll::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+  width: 0;
+}

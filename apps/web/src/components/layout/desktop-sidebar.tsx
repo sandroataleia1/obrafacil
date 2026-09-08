@@ -90,7 +90,7 @@ export function DesktopSidebar() {
 
       <nav
         aria-label="Navegação principal"
-        className="mt-6 flex flex-1 flex-col overflow-y-auto"
+        className="sidebar-scroll mt-6 flex flex-1 flex-col overflow-y-auto pr-1"
       >
         <ul className="flex flex-col gap-1">
           {DESKTOP_NAV_ITEMS.map((item) => (
