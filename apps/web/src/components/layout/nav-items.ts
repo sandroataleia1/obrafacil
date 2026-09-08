@@ -10,6 +10,7 @@ import {
   Menu,
   Package,
   Receipt,
+  ScrollText,
   Truck,
   Users,
 } from "lucide-react";
@@ -18,6 +19,8 @@ export interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** Real navigation, real page — just not a functional module yet. Renders an "Em breve" badge wherever this item appears. */
+  comingSoon?: boolean;
 }
 
 export const MOBILE_NAV_ITEMS: NavItem[] = [
@@ -49,4 +52,5 @@ export const DESKTOP_NAV_EXTRA_ITEMS: NavItem[] = [
 export const DESKTOP_NAV_FINANCE_ITEMS: NavItem[] = [
   { href: "/financeiro/contas-a-pagar", label: "Contas a pagar", icon: Receipt },
   { href: "/financeiro/contas-a-receber", label: "Contas a receber", icon: Receipt },
+  { href: "/notas-fiscais", label: "Notas Fiscais", icon: ScrollText, comingSoon: true },
 ];

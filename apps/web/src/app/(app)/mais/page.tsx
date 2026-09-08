@@ -39,6 +39,11 @@ function LinkSection({
           >
             <item.icon className="size-4.5 text-muted-foreground" aria-hidden="true" />
             <span className="flex-1 text-sm font-medium text-foreground">{item.label}</span>
+            {item.comingSoon ? (
+              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                Em breve
+              </span>
+            ) : null}
             <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
           </Link>
         ))}

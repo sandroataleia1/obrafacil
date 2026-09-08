@@ -20,16 +20,26 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+function ComingSoonBadge() {
+  return (
+    <span className="ml-auto shrink-0 rounded-full bg-sidebar-accent/70 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-sidebar-foreground/70 uppercase">
+      Em breve
+    </span>
+  );
+}
+
 function NavLink({
   href,
   label,
   icon: Icon,
   active,
+  comingSoon,
 }: {
   href: string;
   label: string;
   icon: NavItem["icon"];
   active: boolean;
+  comingSoon?: boolean;
 }) {
   return (
     <Link
@@ -53,6 +63,7 @@ function NavLink({
         aria-hidden="true"
       />
       {label}
+      {comingSoon ? <ComingSoonBadge /> : null}
     </Link>
   );
 }
@@ -72,6 +83,7 @@ function NavGroup({ title, items, pathname }: { title?: string; items: NavItem[]
             label={item.label}
             icon={item.icon}
             active={isActive(pathname, item.href)}
+            comingSoon={item.comingSoon}
           />
         </li>
       ))}
