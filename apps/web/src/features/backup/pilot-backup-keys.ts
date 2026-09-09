@@ -35,6 +35,7 @@ export type PilotBackupValueShape = "object" | "array";
 export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValueShape>> = {
   // Obras
   "obrafacil:projects": "object",
+  "obrafacil:projects:deleted": "array",
   "obrafacil:project-team-assignments": "object",
 
   // Clientes

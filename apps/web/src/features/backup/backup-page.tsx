@@ -184,7 +184,8 @@ export function BackupPage() {
         <CardHeader>
           <CardTitle>Zerar dados de teste</CardTitle>
           <CardDescription>
-            Apaga obras, orçamentos, cálculos, compras, estoque e clientes deste navegador.
+            Apaga obras, orçamentos, cálculos, compras, estoque e clientes — incluindo os
+            exemplos que já vêm no aplicativo.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -222,7 +223,7 @@ export function BackupPage() {
           if (!open && !resetting) setResetConfirmOpen(false);
         }}
         title="Zerar dados de teste?"
-        description="Obras, orçamentos, cálculos, compras, estoque e clientes deste navegador serão apagados. Um backup de segurança será baixado automaticamente antes."
+        description="Obras, orçamentos, cálculos, compras, estoque e clientes serão apagados, incluindo os exemplos do aplicativo — as telas ficarão vazias. Um backup de segurança será baixado automaticamente antes e pode ser usado para restaurar tudo."
         confirmLabel={resetting ? "Zerando..." : "Zerar dados"}
         cancelLabel="Cancelar"
         destructive
