@@ -14,6 +14,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Prepends Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful
+        // to the "api" group, so requests from a recognized SANCTUM_STATEFUL_DOMAINS
+        // origin get session/cookie/CSRF handling instead of (or in addition to)
+        // token auth. This is what makes Sanctum SPA (cookie-based) auth work for
+        // routes/api.php without a separate "web" middleware group.
+        $middleware->statefulApi();
+
         $middleware->alias([
             'resolve-current-company' => ResolveCurrentCompany::class,
         ]);
