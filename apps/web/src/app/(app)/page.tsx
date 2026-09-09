@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Calculator, CalendarClock, FileText, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { currentUser } from "@/mocks/current-user";
+import { pilotUser } from "@/lib/pilot-config";
 import { useDashboardSummary } from "@/features/dashboard/prototype/use-dashboard-summary";
 import {
   formatMaxDaysLateText,
@@ -59,7 +59,7 @@ export default function HomePage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-1">
           <h1 className="text-[1.75rem] font-semibold tracking-tight text-foreground sm:text-3xl">
-            Olá, {currentUser.firstName}
+            Olá, {pilotUser.firstName}
           </h1>
           <p className="text-sm text-muted-foreground">
             Acompanhe a situação das suas obras e finanças.

@@ -28,6 +28,12 @@ services:
       dockerfile: ../../infrastructure/docker/web/Dockerfile.prod
       args:
         NEXT_PUBLIC_BUILD_SHA: ${NEXT_PUBLIC_BUILD_SHA:-}
+        NEXT_PUBLIC_DEMO_DATA_ENABLED: ${NEXT_PUBLIC_DEMO_DATA_ENABLED:-}
+        NEXT_PUBLIC_PILOT_RESET_ENABLED: ${NEXT_PUBLIC_PILOT_RESET_ENABLED:-}
+        NEXT_PUBLIC_COMPANY_NAME: ${NEXT_PUBLIC_COMPANY_NAME:-}
+        NEXT_PUBLIC_PILOT_USER_NAME: ${NEXT_PUBLIC_PILOT_USER_NAME:-}
+        NEXT_PUBLIC_PILOT_USER_EMAIL: ${NEXT_PUBLIC_PILOT_USER_EMAIL:-}
+        NEXT_PUBLIC_PILOT_USER_PASSWORD: ${NEXT_PUBLIC_PILOT_USER_PASSWORD:-}
     image: obrafacil-web:pilot
     restart: unless-stopped
     ports:

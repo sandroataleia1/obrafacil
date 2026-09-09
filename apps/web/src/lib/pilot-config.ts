@@ -51,8 +51,13 @@ export const companyName: string = process.env.NEXT_PUBLIC_COMPANY_NAME?.trim() 
  * only to let one client have one login for one quick test — never treat
  * this password as a secret, and never build real security on top of it.
  */
+const pilotUserName = process.env.NEXT_PUBLIC_PILOT_USER_NAME?.trim() || "Administrador";
+
 export const pilotUser = {
-  name: process.env.NEXT_PUBLIC_PILOT_USER_NAME?.trim() || "Administrador",
+  name: pilotUserName,
+  /** First token of `name` — the Dashboard greeting ("Olá, {firstName}")
+   * derives from this instead of a separate hardcoded identity mock. */
+  firstName: pilotUserName.split(/\s+/)[0] ?? pilotUserName,
   email: process.env.NEXT_PUBLIC_PILOT_USER_EMAIL?.trim() || "admin@admin.com",
   password: process.env.NEXT_PUBLIC_PILOT_USER_PASSWORD || "admin@123",
 };
