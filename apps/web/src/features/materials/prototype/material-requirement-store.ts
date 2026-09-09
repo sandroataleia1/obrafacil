@@ -9,6 +9,7 @@
  */
 
 import { materialRequirements as seedRequirements } from "@/mocks/material-requirements";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { MaterialRequirement } from "../types";
 
 const STORAGE_KEY = "obrafacil:material-requirements";
@@ -55,8 +56,10 @@ export function listRequirements(): MaterialRequirement[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, MaterialRequirement>();
-  for (const requirement of seedRequirements) {
-    if (!deleted.has(requirement.id)) merged.set(requirement.id, requirement);
+  if (demoDataEnabled) {
+    for (const requirement of seedRequirements) {
+      if (!deleted.has(requirement.id)) merged.set(requirement.id, requirement);
+    }
   }
   for (const requirement of Object.values(stored)) {
     if (!deleted.has(requirement.id)) merged.set(requirement.id, requirement);
@@ -80,6 +83,7 @@ export function getRequirement(id: string): MaterialRequirement | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedRequirements.find((requirement) => requirement.id === id) ?? null;
 }
 

@@ -12,6 +12,7 @@
  */
 
 import { projectTeamAssignments as seedAssignments } from "@/mocks/project-team-assignments";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { ProjectTeamAssignment } from "./types";
 
 const STORAGE_KEY = "obrafacil:project-team-assignments";
@@ -41,7 +42,9 @@ function writeStore(store: Record<string, ProjectTeamAssignment>): void {
 export function listAllProjectTeamAssignments(): ProjectTeamAssignment[] {
   const stored = readStore();
   const merged = new Map<string, ProjectTeamAssignment>();
-  for (const assignment of seedAssignments) merged.set(assignment.id, assignment);
+  if (demoDataEnabled) {
+    for (const assignment of seedAssignments) merged.set(assignment.id, assignment);
+  }
   for (const assignment of Object.values(stored)) merged.set(assignment.id, assignment);
   return Array.from(merged.values()).sort((a, b) => b.startDate.localeCompare(a.startDate));
 }
@@ -57,6 +60,7 @@ export function listAssignmentsByEmployee(employeeId: string): ProjectTeamAssign
 export function getProjectTeamAssignment(id: string): ProjectTeamAssignment | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
+  if (!demoDataEnabled) return null;
   return seedAssignments.find((assignment) => assignment.id === id) ?? null;
 }
 

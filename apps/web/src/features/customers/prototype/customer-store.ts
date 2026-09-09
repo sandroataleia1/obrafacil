@@ -9,6 +9,7 @@
 import { customers as seedCustomers } from "@/mocks/customers";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Customer } from "../types";
 
 const STORAGE_KEY = "obrafacil:customers";
@@ -55,8 +56,10 @@ export function listAllCustomers(): Customer[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, Customer>();
-  for (const customer of seedCustomers) {
-    if (!deleted.has(customer.id)) merged.set(customer.id, customer);
+  if (demoDataEnabled) {
+    for (const customer of seedCustomers) {
+      if (!deleted.has(customer.id)) merged.set(customer.id, customer);
+    }
   }
   for (const customer of Object.values(stored)) {
     if (!deleted.has(customer.id)) merged.set(customer.id, customer);
@@ -68,6 +71,7 @@ export function getCustomer(id: string): Customer | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedCustomers.find((customer) => customer.id === id) ?? null;
 }
 

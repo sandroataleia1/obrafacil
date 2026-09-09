@@ -8,6 +8,7 @@
  */
 
 import { payables as seedPayables } from "@/mocks/payables";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Payable, PayableOriginType } from "../types";
 
 const STORAGE_KEY = "obrafacil:payables";
@@ -58,8 +59,10 @@ export function listAllPayables(): Payable[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, Payable>();
-  for (const payable of seedPayables) {
-    if (!deleted.has(payable.id)) merged.set(payable.id, payable);
+  if (demoDataEnabled) {
+    for (const payable of seedPayables) {
+      if (!deleted.has(payable.id)) merged.set(payable.id, payable);
+    }
   }
   for (const payable of Object.values(stored)) {
     if (!deleted.has(payable.id)) merged.set(payable.id, payable);
@@ -101,6 +104,7 @@ export function getPayable(id: string): Payable | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedPayables.find((payable) => payable.id === id) ?? null;
 }
 

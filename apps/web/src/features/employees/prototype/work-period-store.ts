@@ -10,6 +10,7 @@
 
 import { todayIso } from "@/lib/date";
 import { employeeWorkPeriods as seedWorkPeriods } from "@/mocks/employee-work-periods";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Employee, EmployeeWorkPeriod } from "../types";
 
 const STORAGE_KEY = "obrafacil:employee-work-periods";
@@ -43,7 +44,9 @@ function sortByPeriodDesc(a: EmployeeWorkPeriod, b: EmployeeWorkPeriod): number 
 export function listAllWorkPeriods(): EmployeeWorkPeriod[] {
   const stored = readStore();
   const merged = new Map<string, EmployeeWorkPeriod>();
-  for (const period of seedWorkPeriods) merged.set(period.id, period);
+  if (demoDataEnabled) {
+    for (const period of seedWorkPeriods) merged.set(period.id, period);
+  }
   for (const period of Object.values(stored)) merged.set(period.id, period);
   return Array.from(merged.values()).sort(sortByPeriodDesc);
 }
@@ -55,6 +58,7 @@ export function listWorkPeriodsByEmployee(employeeId: string): EmployeeWorkPerio
 export function getWorkPeriod(id: string): EmployeeWorkPeriod | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
+  if (!demoDataEnabled) return null;
   return seedWorkPeriods.find((period) => period.id === id) ?? null;
 }
 

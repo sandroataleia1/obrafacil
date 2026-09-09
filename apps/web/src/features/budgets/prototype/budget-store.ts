@@ -9,6 +9,7 @@
  */
 
 import { budgets as seedBudgets } from "@/mocks/budgets";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Budget } from "../types";
 
 const STORAGE_KEY = "obrafacil:budgets";
@@ -58,8 +59,10 @@ export function listAllBudgets(): Budget[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, Budget>();
-  for (const budget of seedBudgets) {
-    if (!deleted.has(budget.id)) merged.set(budget.id, budget);
+  if (demoDataEnabled) {
+    for (const budget of seedBudgets) {
+      if (!deleted.has(budget.id)) merged.set(budget.id, budget);
+    }
   }
   for (const budget of Object.values(stored)) {
     if (!deleted.has(budget.id)) merged.set(budget.id, budget);
@@ -73,6 +76,7 @@ export function getBudget(id: string): Budget | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedBudgets.find((budget) => budget.id === id) ?? null;
 }
 

@@ -7,6 +7,7 @@
  */
 
 import { purchaseOrders as seedPurchaseOrders } from "@/mocks/purchase-orders";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { PurchaseOrder } from "../types";
 
 const STORAGE_KEY = "obrafacil:purchase-orders";
@@ -57,8 +58,10 @@ export function listPurchaseOrders(): PurchaseOrder[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, PurchaseOrder>();
-  for (const purchaseOrder of seedPurchaseOrders) {
-    if (!deleted.has(purchaseOrder.id)) merged.set(purchaseOrder.id, purchaseOrder);
+  if (demoDataEnabled) {
+    for (const purchaseOrder of seedPurchaseOrders) {
+      if (!deleted.has(purchaseOrder.id)) merged.set(purchaseOrder.id, purchaseOrder);
+    }
   }
   for (const purchaseOrder of Object.values(stored)) {
     if (!deleted.has(purchaseOrder.id)) merged.set(purchaseOrder.id, purchaseOrder);
@@ -78,6 +81,7 @@ export function getPurchaseOrder(id: string): PurchaseOrder | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedPurchaseOrders.find((purchaseOrder) => purchaseOrder.id === id) ?? null;
 }
 

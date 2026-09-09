@@ -15,6 +15,7 @@ import {
   type PilotBackupFile,
 } from "./pilot-backup";
 import { resetPilotTestData } from "./pilot-reset";
+import { pilotResetEnabled } from "@/lib/pilot-config";
 
 function formatExportedAt(iso: string): string {
   const date = new Date(iso);
@@ -180,24 +181,26 @@ export function BackupPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Zerar dados de teste</CardTitle>
-          <CardDescription>
-            Apaga obras, orçamentos, cálculos, compras, estoque e clientes — incluindo os
-            exemplos que já vêm no aplicativo.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Fornecedores, equipe, catálogo de materiais e financeiro não são afetados.
-          </p>
-          <Button type="button" variant="outline" onClick={() => setResetConfirmOpen(true)}>
-            <Eraser className="size-4" aria-hidden="true" />
-            Zerar dados de teste
-          </Button>
-        </CardContent>
-      </Card>
+      {pilotResetEnabled ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Zerar dados de teste</CardTitle>
+            <CardDescription>
+              Apaga obras, orçamentos, cálculos, compras, estoque e clientes — incluindo os
+              exemplos que já vêm no aplicativo.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Fornecedores, equipe, catálogo de materiais e financeiro não são afetados.
+            </p>
+            <Button type="button" variant="outline" onClick={() => setResetConfirmOpen(true)}>
+              <Eraser className="size-4" aria-hidden="true" />
+              Zerar dados de teste
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <ConfirmActionDialog
         open={confirmOpen}

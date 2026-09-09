@@ -5,6 +5,7 @@
  */
 
 import { goodsReceiptItems as seedGoodsReceiptItems } from "@/mocks/goods-receipt-items";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { GoodsReceiptItem } from "../types";
 import { listItemsByPurchaseOrder } from "./purchase-order-item-store";
 
@@ -52,8 +53,10 @@ export function listAllGoodsReceiptItems(): GoodsReceiptItem[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, GoodsReceiptItem>();
-  for (const item of seedGoodsReceiptItems) {
-    if (!deleted.has(item.id)) merged.set(item.id, item);
+  if (demoDataEnabled) {
+    for (const item of seedGoodsReceiptItems) {
+      if (!deleted.has(item.id)) merged.set(item.id, item);
+    }
   }
   for (const item of Object.values(stored)) {
     if (!deleted.has(item.id)) merged.set(item.id, item);

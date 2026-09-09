@@ -13,6 +13,7 @@
  */
 
 import { receivables as seedReceivables } from "@/mocks/receivables";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Receivable } from "../types";
 
 const STORAGE_KEY = "obrafacil:receivables";
@@ -63,8 +64,10 @@ export function listAllReceivables(): Receivable[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, Receivable>();
-  for (const receivable of seedReceivables) {
-    if (!deleted.has(receivable.id)) merged.set(receivable.id, receivable);
+  if (demoDataEnabled) {
+    for (const receivable of seedReceivables) {
+      if (!deleted.has(receivable.id)) merged.set(receivable.id, receivable);
+    }
   }
   for (const receivable of Object.values(stored)) {
     if (!deleted.has(receivable.id)) merged.set(receivable.id, receivable);
@@ -84,6 +87,7 @@ export function getReceivable(id: string): Receivable | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedReceivables.find((receivable) => receivable.id === id) ?? null;
 }
 

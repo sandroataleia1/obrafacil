@@ -6,6 +6,7 @@
  */
 
 import { receipts as seedReceipts } from "@/mocks/receipts";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Receipt } from "../types";
 
 const STORAGE_KEY = "obrafacil:receipts";
@@ -56,8 +57,10 @@ function listAllReceipts(): Receipt[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, Receipt>();
-  for (const receipt of seedReceipts) {
-    if (!deleted.has(receipt.id)) merged.set(receipt.id, receipt);
+  if (demoDataEnabled) {
+    for (const receipt of seedReceipts) {
+      if (!deleted.has(receipt.id)) merged.set(receipt.id, receipt);
+    }
   }
   for (const receipt of Object.values(stored)) {
     if (!deleted.has(receipt.id)) merged.set(receipt.id, receipt);
@@ -75,6 +78,7 @@ export function getReceipt(id: string): Receipt | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedReceipts.find((receipt) => receipt.id === id) ?? null;
 }
 

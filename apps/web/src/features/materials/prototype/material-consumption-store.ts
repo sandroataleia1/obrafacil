@@ -8,6 +8,7 @@
  */
 
 import { materialConsumptions as seedMaterialConsumptions } from "@/mocks/material-consumptions";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { MaterialConsumption } from "../types";
 
 const STORAGE_KEY = "obrafacil:material-consumptions";
@@ -58,8 +59,10 @@ export function listMaterialConsumptions(): MaterialConsumption[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, MaterialConsumption>();
-  for (const consumption of seedMaterialConsumptions) {
-    if (!deleted.has(consumption.id)) merged.set(consumption.id, consumption);
+  if (demoDataEnabled) {
+    for (const consumption of seedMaterialConsumptions) {
+      if (!deleted.has(consumption.id)) merged.set(consumption.id, consumption);
+    }
   }
   for (const consumption of Object.values(stored)) {
     if (!deleted.has(consumption.id)) merged.set(consumption.id, consumption);
@@ -84,6 +87,7 @@ export function getMaterialConsumption(id: string): MaterialConsumption | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedMaterialConsumptions.find((consumption) => consumption.id === id) ?? null;
 }
 

@@ -10,14 +10,16 @@
  * custom crypto, or a middleware that pretends to validate a secret
  * that doesn't actually exist on the client.
  *
- * The demo password is a plain constant needed to validate the login
- * — it is NEVER written to the persisted session. Only the minimal
- * `DemoAuthSession` shape below is persisted.
+ * The demo password comes from `pilot-config.ts` (build-time env, with a
+ * dev-safe fallback) — it is NEVER written to the persisted session.
+ * Only the minimal `DemoAuthSession` shape below is persisted.
  */
 
-const DEMO_EMAIL = "admin@admin.com";
-const DEMO_PASSWORD = "admin@123";
-const DEMO_USER: DemoAuthUser = { email: DEMO_EMAIL, name: "Administrador" };
+import { pilotUser } from "@/lib/pilot-config";
+
+const DEMO_EMAIL = pilotUser.email;
+const DEMO_PASSWORD = pilotUser.password;
+const DEMO_USER: DemoAuthUser = { email: DEMO_EMAIL, name: pilotUser.name };
 
 const STORAGE_KEY = "obrafacil:demo-auth-session";
 

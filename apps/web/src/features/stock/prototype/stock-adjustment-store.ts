@@ -8,6 +8,7 @@
  */
 
 import { stockAdjustments as seedStockAdjustments } from "@/mocks/stock-adjustments";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { StockAdjustment } from "../types";
 
 const STORAGE_KEY = "obrafacil:stock-adjustments";
@@ -49,8 +50,10 @@ export function listAllStockAdjustments(): StockAdjustment[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, StockAdjustment>();
-  for (const adjustment of seedStockAdjustments) {
-    if (!deleted.has(adjustment.id)) merged.set(adjustment.id, adjustment);
+  if (demoDataEnabled) {
+    for (const adjustment of seedStockAdjustments) {
+      if (!deleted.has(adjustment.id)) merged.set(adjustment.id, adjustment);
+    }
   }
   for (const adjustment of Object.values(stored)) {
     if (!deleted.has(adjustment.id)) merged.set(adjustment.id, adjustment);

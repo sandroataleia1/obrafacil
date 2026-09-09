@@ -11,6 +11,7 @@
  */
 
 import { employees as seedEmployees } from "@/mocks/employees";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Employee } from "../types";
 
 const STORAGE_KEY = "obrafacil:employees";
@@ -40,7 +41,9 @@ function writeStore(store: Record<string, Employee>): void {
 export function listAllEmployees(): Employee[] {
   const stored = readStore();
   const merged = new Map<string, Employee>();
-  for (const employee of seedEmployees) merged.set(employee.id, employee);
+  if (demoDataEnabled) {
+    for (const employee of seedEmployees) merged.set(employee.id, employee);
+  }
   for (const employee of Object.values(stored)) merged.set(employee.id, employee);
   return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 }
@@ -48,6 +51,7 @@ export function listAllEmployees(): Employee[] {
 export function getEmployee(id: string): Employee | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
+  if (!demoDataEnabled) return null;
   return seedEmployees.find((employee) => employee.id === id) ?? null;
 }
 

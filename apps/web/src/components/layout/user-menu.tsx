@@ -7,6 +7,7 @@ import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/compo
 import { performDemoLogout } from "@/features/auth/logout-button";
 import type { DemoAuthUser } from "@/features/auth/demo-auth";
 import { releaseInfo } from "@/lib/release-info";
+import { companyName } from "@/lib/pilot-config";
 
 /**
  * "Sandro Almeida" -> "SA" (first letter of the first two words);
@@ -54,6 +55,10 @@ export function UserMenu({ user }: { user: DemoAuthUser }) {
         <div className="min-w-0 px-3 py-2">
           <p className="truncate text-sm font-medium text-foreground">{user.name}</p>
           <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+        </div>
+        <MenuSeparator />
+        <div className="min-w-0 px-3 py-2 text-xs text-muted-foreground">
+          <p className="max-w-56 truncate font-medium text-foreground/80">{companyName}</p>
         </div>
         <MenuSeparator />
         <div className="min-w-0 px-3 py-2 text-xs text-muted-foreground">

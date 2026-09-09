@@ -15,6 +15,7 @@
 
 import { suppliers as seedSuppliers } from "@/mocks/suppliers";
 import { listPurchaseOrdersBySupplier } from "@/features/purchases/prototype/purchase-order-store";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Supplier } from "../types";
 
 const STORAGE_KEY = "obrafacil:suppliers";
@@ -65,8 +66,10 @@ export function listSuppliers(): Supplier[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, Supplier>();
-  for (const supplier of seedSuppliers) {
-    if (!deleted.has(supplier.id)) merged.set(supplier.id, supplier);
+  if (demoDataEnabled) {
+    for (const supplier of seedSuppliers) {
+      if (!deleted.has(supplier.id)) merged.set(supplier.id, supplier);
+    }
   }
   for (const supplier of Object.values(stored)) {
     if (!deleted.has(supplier.id)) merged.set(supplier.id, supplier);
@@ -82,6 +85,7 @@ export function getSupplier(id: string): Supplier | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedSuppliers.find((supplier) => supplier.id === id) ?? null;
 }
 

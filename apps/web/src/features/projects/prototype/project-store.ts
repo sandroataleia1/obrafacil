@@ -8,6 +8,7 @@
  */
 
 import { projects as seedProjects } from "@/mocks/projects";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { Project } from "../types";
 
 const STORAGE_KEY = "obrafacil:projects";
@@ -49,8 +50,10 @@ export function listAllProjects(): Project[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, Project>();
-  for (const project of seedProjects) {
-    if (!deleted.has(project.id)) merged.set(project.id, project);
+  if (demoDataEnabled) {
+    for (const project of seedProjects) {
+      if (!deleted.has(project.id)) merged.set(project.id, project);
+    }
   }
   for (const project of Object.values(stored)) {
     if (!deleted.has(project.id)) merged.set(project.id, project);
@@ -64,6 +67,7 @@ export function getProject(id: string): Project | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedProjects.find((project) => project.id === id) ?? null;
 }
 

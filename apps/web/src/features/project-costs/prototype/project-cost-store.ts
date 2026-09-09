@@ -8,6 +8,7 @@
  */
 
 import { projectCosts as seedProjectCosts } from "@/mocks/project-costs";
+import { demoDataEnabled } from "@/lib/pilot-config";
 import type { ProjectCost, ProjectCostOriginType } from "../types";
 
 const STORAGE_KEY = "obrafacil:project-costs";
@@ -58,8 +59,10 @@ export function listAllProjectCosts(): ProjectCost[] {
   const stored = readStore();
   const deleted = readDeleted();
   const merged = new Map<string, ProjectCost>();
-  for (const cost of seedProjectCosts) {
-    if (!deleted.has(cost.id)) merged.set(cost.id, cost);
+  if (demoDataEnabled) {
+    for (const cost of seedProjectCosts) {
+      if (!deleted.has(cost.id)) merged.set(cost.id, cost);
+    }
   }
   for (const cost of Object.values(stored)) {
     if (!deleted.has(cost.id)) merged.set(cost.id, cost);
@@ -86,6 +89,7 @@ export function getProjectCost(id: string): ProjectCost | null {
   const stored = readStore();
   if (stored[id]) return stored[id];
   if (readDeleted().has(id)) return null;
+  if (!demoDataEnabled) return null;
   return seedProjectCosts.find((cost) => cost.id === id) ?? null;
 }
 
