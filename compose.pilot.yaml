@@ -1,0 +1,46 @@
+# Minimal production compose for the ObraFácil pilot (PILOT-04A).
+#
+# Web-only, deliberately: apps/web makes zero runtime calls to
+# apps/api (confirmed by audit — no fetch/axios anywhere in
+# `apps/web/src`, `NEXT_PUBLIC_API_URL` is documented but unused).
+# postgres/redis/api are not pulled in here because nothing in this
+# release needs them — they remain exactly as before in `compose.yaml`
+# for local development, untouched by this file.
+#
+# Build (SHA is the actual build identifier shown in the app's
+# UserMenu — see `apps/web/src/lib/release-info.ts`):
+#
+#   NEXT_PUBLIC_BUILD_SHA=$(git rev-parse HEAD) \
+#     docker compose -f compose.pilot.yaml build
+#
+# Run:
+#
+#   docker compose -f compose.pilot.yaml up -d
+#
+# This file does not deploy anywhere by itself — it only describes how
+# to build and run the artifact locally/on a host Docker already
+# reaches. External access (domain, HTTPS, reverse proxy) is PILOT-04B.
+
+services:
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: ../../infrastructure/docker/web/Dockerfile.prod
+      args:
+        NEXT_PUBLIC_BUILD_SHA: ${NEXT_PUBLIC_BUILD_SHA:-}
+    image: obrafacil-web:pilot
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      # 127.0.0.1, not localhost: Alpine's wget resolves "localhost" to
+      # ::1 first, and the standalone server only listens on the IPv4
+      # 0.0.0.0 — "localhost" here reliably fails with "Connection
+      # refused" even though the app is up (confirmed while validating
+      # this file; the host-mapped port was never affected, only this
+      # in-container check).
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3000/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

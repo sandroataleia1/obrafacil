@@ -1,0 +1,63 @@
+# Production artifact for the ObraFácil pilot (PILOT-04A).
+#
+# Separate from `Dockerfile` (development, `pnpm dev`, bind-mounted
+# source, hot reload) — that file is untouched and keeps working
+# exactly as before for local development via `compose.yaml`.
+#
+# Build context is `./apps/web` (see `compose.pilot.yaml`), so every
+# COPY below is relative to that directory — including its own
+# self-contained `package.json`/`pnpm-lock.yaml`/`pnpm-workspace.yaml`
+# (this app already installs standalone from its own lockfile, not the
+# monorepo root one — confirmed by the existing dev `Dockerfile` using
+# the same pattern).
+#
+# `deps` -> `builder` -> `runner`: the runner stage never sees pnpm,
+# the toolchain, or full `node_modules` — only what `next build`'s
+# `output: "standalone"` traced as actually needed at runtime.
+
+FROM node:22-alpine AS deps
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+
+FROM node:22-alpine AS builder
+RUN corepack enable
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Public, non-secret build identifier (Pilot-Ready "PILOT-03 —
+# Identificação de Release") — must be present *before* `pnpm build`:
+# Next.js inlines `NEXT_PUBLIC_*` values into the client bundle at
+# build time, never reads them at runtime. Omitted at build time ->
+# `release-info.ts` falls back to the literal "local", it never fails
+# the build.
+ARG NEXT_PUBLIC_BUILD_SHA
+ENV NEXT_PUBLIC_BUILD_SHA=$NEXT_PUBLIC_BUILD_SHA
+
+RUN pnpm build
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Non-root process (Alpine's `addgroup`/`adduser`, not the Debian
+# `useradd` syntax) — the standalone server never needs root.
+RUN addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+EXPOSE 3000
+
+# `output: "standalone"` (next.config.ts) emits a self-contained
+# server.js with its own trimmed node_modules — no `pnpm start` needed
+# or available here.
+CMD ["node", "server.js"]

@@ -8,6 +8,12 @@ const nextConfig: NextConfig = {
   // (clicks/selects silently doing nothing) while the initial HTML still
   // loads fine — see https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
   allowedDevOrigins: ["192.168.1.*"],
+  // Only consulted by `next build`/`next start` — `next dev` ignores it
+  // entirely, so local development is unaffected. Emits `.next/standalone`,
+  // a self-contained server with only the node_modules it actually traced
+  // as used, which `Dockerfile.prod` (PILOT-04A) copies into a lean,
+  // non-root runner image with no pnpm/toolchain at all.
+  output: "standalone",
 };
 
 export default nextConfig;
