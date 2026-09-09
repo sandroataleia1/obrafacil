@@ -5,7 +5,7 @@ export interface CurrentUser {
 }
 
 export const currentUser: CurrentUser = {
-  firstName: "João",
-  fullName: "João Oliveira",
+  firstName: "Jeferson",
+  fullName: "Jeferson Oliveira",
   companyName: "JO Construções",
 };
