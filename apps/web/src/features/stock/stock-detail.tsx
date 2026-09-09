@@ -79,7 +79,7 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
   if (!project || !material) {
     return (
       <div className="space-y-6">
-        <BackLink title="Estoque" href="/estoque" />
+        <BackLink icon={Boxes} title="Estoque" href="/estoque" />
         <EmptyState
           icon={Boxes}
           title="Estoque não encontrado"
@@ -97,7 +97,7 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
   return (
     <div className="w-full max-w-3xl space-y-6">
       <div className="space-y-1">
-        <BackLink title={material.name} href="/estoque" />
+        <BackLink icon={Boxes} title={material.name} href="/estoque" />
         <p className="text-sm text-muted-foreground">{subtitle}</p>
       </div>
 

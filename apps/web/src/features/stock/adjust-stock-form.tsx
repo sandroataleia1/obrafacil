@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Boxes } from "lucide-react";
 
 import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
@@ -143,6 +144,7 @@ export function AdjustStockForm() {
   return (
     <div className="w-full max-w-3xl space-y-6 pb-6">
       <BackLink
+        icon={Boxes}
         title="Ajustar estoque"
         description="Registre uma correção de entrada ou saída do estoque."
         href={destination()}

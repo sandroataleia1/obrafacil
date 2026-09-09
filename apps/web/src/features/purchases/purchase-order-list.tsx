@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, ClipboardList, Eye, Pencil, Plus, Search, Tr
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { PageTitle } from "@/components/shared/page-title";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -322,7 +323,7 @@ export function PurchaseOrderList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Compras</h1>
+          <PageTitle icon={ClipboardList}>Compras</PageTitle>
           <p className="text-sm text-muted-foreground">
             {project
               ? `Compras · ${project.name}`

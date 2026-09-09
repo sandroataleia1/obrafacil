@@ -6,6 +6,7 @@ import { Boxes, ChevronDown, Eye, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { PageTitle } from "@/components/shared/page-title";
 import { Pagination as SharedPagination } from "@/features/budgets/components/pagination";
 import { formatQuantity } from "@/lib/quantity";
 import { cn } from "@/lib/utils";
@@ -368,7 +369,7 @@ export function StockList() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Estoque</h1>
+          <PageTitle icon={Boxes}>Estoque</PageTitle>
           <p className="text-sm text-muted-foreground">
             Acompanhe necessidade, compra, recebimento e saldo de materiais nas obras.
           </p>

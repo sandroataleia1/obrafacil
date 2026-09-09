@@ -1,6 +1,7 @@
 import { ScrollText } from "lucide-react";
 
 import { EmptyState } from "@/components/shared/empty-state";
+import { PageTitle } from "@/components/shared/page-title";
 
 /**
  * Roadmap placeholder (Pilot "Adendo de Escopo" — Notas Fiscais). Real
@@ -14,7 +15,7 @@ export default function NotasFiscaisPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Notas Fiscais</h1>
+        <PageTitle icon={ScrollText}>Notas Fiscais</PageTitle>
         <p className="text-sm text-muted-foreground">Emissão e controle de notas fiscais da obra.</p>
       </div>
 

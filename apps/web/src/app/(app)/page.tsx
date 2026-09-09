@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Calculator, CalendarClock, FileText, Plus } from "lucide-react";
+import { Calculator, CalendarClock, FileText, House, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { pilotUser } from "@/lib/pilot-config";
@@ -58,7 +58,8 @@ export default function HomePage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-[1.75rem] font-semibold tracking-tight text-foreground sm:text-3xl">
+          <h1 className="flex items-center gap-2 text-[1.75rem] font-semibold tracking-tight text-foreground sm:text-3xl">
+            <House className="size-6 shrink-0 text-muted-foreground" aria-hidden="true" />
             Olá, {pilotUser.firstName}
           </h1>
           <p className="text-sm text-muted-foreground">

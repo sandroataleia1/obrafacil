@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -9,6 +9,10 @@ interface BackLinkContentProps {
   title: string;
   description?: string;
   step?: { current: number; total: number };
+  /** Module icon (from `nav-items.ts` — never a second, divergent icon
+   * table) shown before `title`. Internal pages (novo/detalhe/editar)
+   * pass their parent module's icon; omit where no module applies. */
+  icon?: LucideIcon;
 }
 
 type BackLinkProps = BackLinkContentProps &
@@ -33,7 +37,7 @@ const CONTROL_CLASSNAME =
  * when the destination genuinely depends on runtime logic that isn't a
  * plain route (e.g. a multi-step wizard going back one internal step).
  */
-export function BackLink({ title, description, step, href, onBack }: BackLinkProps) {
+export function BackLink({ title, description, step, icon: Icon, href, onBack }: BackLinkProps) {
   const control =
     href !== undefined ? (
       <Link href={href} className={CONTROL_CLASSNAME}>
@@ -53,11 +57,12 @@ export function BackLink({ title, description, step, href, onBack }: BackLinkPro
       <div className="min-w-0 space-y-1">
         <h1
           className={cn(
-            "truncate font-semibold tracking-tight text-foreground",
+            "flex items-center gap-2 truncate font-semibold tracking-tight text-foreground",
             step ? "text-lg" : "text-2xl"
           )}
         >
-          {title}
+          {Icon ? <Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+          <span className="truncate">{title}</span>
         </h1>
         {step ? (
           <p className="text-xs text-muted-foreground">

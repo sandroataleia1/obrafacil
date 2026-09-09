@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { CalendarCheck, ChevronLeft, ChevronRight, Eye, Pencil, Plus, Search, Users } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, Eye, HardHat, Pencil, Plus, Search, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { PageTitle } from "@/components/shared/page-title";
 import { formatCurrency } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 import { CreateEmployeeDialog } from "./attendance/create-employee-dialog";
@@ -253,7 +254,7 @@ export function EmployeeList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Equipe</h1>
+          <PageTitle icon={HardHat}>Equipe</PageTitle>
           <p className="text-sm text-muted-foreground">
             Funcionários e controle de dias trabalhados.
           </p>

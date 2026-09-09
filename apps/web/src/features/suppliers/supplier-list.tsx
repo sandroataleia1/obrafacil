@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Eye, Pencil, Plus, Search, Trash2, Truck } f
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { PageTitle } from "@/components/shared/page-title";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatPhoneInput } from "@/lib/phone";
 import { cn } from "@/lib/utils";
@@ -240,7 +241,7 @@ export function SupplierList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Fornecedores</h1>
+          <PageTitle icon={Truck}>Fornecedores</PageTitle>
           <p className="text-sm text-muted-foreground">Quem fornece materiais e serviços.</p>
         </div>
         <Button size="sm" type="button" onClick={() => setCreateOpen(true)}>

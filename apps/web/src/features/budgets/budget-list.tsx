@@ -9,6 +9,7 @@ import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
+import { PageTitle } from "@/components/shared/page-title";
 import { calculateBudgetTotals } from "./prototype/budget-totals";
 import { listAllBudgets } from "./prototype/budget-store";
 import { StatusBadge } from "./components/status-badge";
@@ -219,9 +220,7 @@ export function BudgetList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Orçamentos
-          </h1>
+          <PageTitle icon={FileText}>Orçamentos</PageTitle>
           <p className="text-sm text-muted-foreground">
             Acompanhe e crie propostas para seus clientes.
           </p>

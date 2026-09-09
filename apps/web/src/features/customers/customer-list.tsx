@@ -16,6 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { PageTitle } from "@/components/shared/page-title";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatPhoneInput } from "@/lib/phone";
 import { cn } from "@/lib/utils";
@@ -249,9 +250,7 @@ export function CustomerList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Clientes
-          </h1>
+          <PageTitle icon={Users}>Clientes</PageTitle>
           <p className="text-sm text-muted-foreground">
             Pessoas e empresas para quem você trabalha.
           </p>

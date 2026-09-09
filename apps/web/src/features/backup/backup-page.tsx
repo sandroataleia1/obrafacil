@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
-import { Download, Eraser } from "lucide-react";
+import { DatabaseBackup, Download, Eraser } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
+import { PageTitle } from "@/components/shared/page-title";
 import {
   buildPilotBackup,
   defaultPilotBackupFilename,
@@ -125,7 +126,7 @@ export function BackupPage() {
   return (
     <div className="max-w-2xl space-y-6">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Dados e backup</h1>
+        <PageTitle icon={DatabaseBackup}>Dados e backup</PageTitle>
         <p className="text-sm text-muted-foreground">
           Faça uma cópia dos dados deste navegador para evitar perdas acidentais.
         </p>
