@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
-import { Download } from "lucide-react";
+import { Download, Eraser } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import {
   validatePilotBackup,
   type PilotBackupFile,
 } from "./pilot-backup";
+import { resetPilotTestData } from "./pilot-reset";
 
 function formatExportedAt(iso: string): string {
   const date = new Date(iso);
@@ -39,6 +40,9 @@ export function BackupPage() {
 
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   function handleExport() {
     setExportError(null);
@@ -103,6 +107,20 @@ export function BackupPage() {
     window.location.reload();
   }
 
+  function handleConfirmReset() {
+    setResetting(true);
+
+    // Safety backup of the CURRENT state, started before anything is
+    // erased — the recovery path if this was triggered by mistake.
+    const preReset = buildPilotBackup();
+    if (preReset.ok) {
+      downloadPilotBackup(preReset.file, defaultPilotBackupFilename(new Date(), "before-reset"));
+    }
+
+    resetPilotTestData();
+    window.location.reload();
+  }
+
   return (
     <div className="max-w-2xl space-y-6">
       <div className="space-y-1">
@@ -162,6 +180,24 @@ export function BackupPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Zerar dados de teste</CardTitle>
+          <CardDescription>
+            Apaga obras, orçamentos, cálculos, compras, estoque e clientes deste navegador.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Fornecedores, equipe, catálogo de materiais e financeiro não são afetados.
+          </p>
+          <Button type="button" variant="outline" onClick={() => setResetConfirmOpen(true)}>
+            <Eraser className="size-4" aria-hidden="true" />
+            Zerar dados de teste
+          </Button>
+        </CardContent>
+      </Card>
+
       <ConfirmActionDialog
         open={confirmOpen}
         onOpenChange={(open) => {
@@ -179,6 +215,20 @@ export function BackupPage() {
           <p className="text-xs text-muted-foreground">Backup de {formatExportedAt(validatedFile.exportedAt)}.</p>
         ) : null}
       </ConfirmActionDialog>
+
+      <ConfirmActionDialog
+        open={resetConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !resetting) setResetConfirmOpen(false);
+        }}
+        title="Zerar dados de teste?"
+        description="Obras, orçamentos, cálculos, compras, estoque e clientes deste navegador serão apagados. Um backup de segurança será baixado automaticamente antes."
+        confirmLabel={resetting ? "Zerando..." : "Zerar dados"}
+        cancelLabel="Cancelar"
+        destructive
+        disabled={resetting}
+        onConfirm={handleConfirmReset}
+      />
     </div>
   );
 }
