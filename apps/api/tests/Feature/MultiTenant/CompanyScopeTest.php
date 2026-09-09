@@ -110,4 +110,48 @@ class CompanyScopeTest extends TestCase
         $this->assertSame(['A-only'], $seenByA);
         $this->assertSame(['B-only'], $seenByB);
     }
+
+    /** run() restores the previous company even when the callback throws. */
+    public function test_run_restores_previous_context_after_exception(): void
+    {
+        $companyA = Company::factory()->create();
+        $companyB = Company::factory()->create();
+
+        $context = app(CurrentCompanyContext::class);
+
+        $context->run($companyA, function () use ($context, $companyA, $companyB): void {
+            try {
+                $context->run($companyB, function (): void {
+                    throw new RuntimeException('boom');
+                });
+                $this->fail('Expected exception was not thrown.');
+            } catch (RuntimeException $e) {
+                $this->assertSame('boom', $e->getMessage());
+            }
+
+            $this->assertSame($companyA->id, $context->id());
+        });
+
+        $this->assertFalse($context->has());
+    }
+
+    /** run() restores "no context" (not some stale company) when there was nothing set before it. */
+    public function test_run_restores_empty_context_after_exception_with_no_prior_company(): void
+    {
+        $companyA = Company::factory()->create();
+
+        $context = app(CurrentCompanyContext::class);
+        $context->clear();
+
+        try {
+            $context->run($companyA, function (): void {
+                throw new RuntimeException('boom');
+            });
+            $this->fail('Expected exception was not thrown.');
+        } catch (RuntimeException) {
+            // expected
+        }
+
+        $this->assertFalse($context->has());
+    }
 }
