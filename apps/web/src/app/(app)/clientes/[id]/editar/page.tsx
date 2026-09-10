@@ -1,4 +1,4 @@
-import { CustomerForm } from "@/features/customers/customer-form";
+import { CustomerEditForm } from "@/features/customers/customer-edit-form";
 
 export default async function ClienteEditarPage({
   params,
@@ -6,5 +6,5 @@ export default async function ClienteEditarPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <CustomerForm customerId={id} />;
+  return <CustomerEditForm customerId={id} />;
 }

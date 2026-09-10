@@ -1,11 +1,11 @@
 import { Suspense } from "react";
 
-import { CustomerForm } from "@/features/customers/customer-form";
+import { CustomerCreateForm } from "@/features/customers/customer-create-form";
 
 export default function NovoClientePage() {
   return (
     <Suspense fallback={null}>
-      <CustomerForm />
+      <CustomerCreateForm />
     </Suspense>
   );
 }

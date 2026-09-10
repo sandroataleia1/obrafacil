@@ -19,8 +19,8 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/currency";
 import { getBudget, saveBudget } from "@/features/budgets/prototype/budget-store";
-import { listAllCustomers } from "@/features/customers/prototype/customer-store";
-import type { Customer } from "@/features/customers/types";
+import { listCustomers } from "@/features/customers/customers-client";
+import type { CustomerListItem } from "@/features/customers/types";
 import {
   clearPendingProject,
   getPendingProject,
@@ -42,7 +42,10 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
   const [pendingProject, setPendingProject] = useState<
     PendingProject | null | undefined
   >(undefined);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  // FRONTEND-CLIENTS-01 §8: only the *source* of this selector changed —
+  // it now lists real, active Customers from the API instead of the
+  // localStorage prototype. Project itself stays a localStorage prototype.
+  const [customers, setCustomers] = useState<CustomerListItem[]>([]);
 
   const [name, setName] = useState("");
   const [customerId, setCustomerId] = useState(preselectedCustomerId);
@@ -57,7 +60,10 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
     const pending = isEditing ? null : getPendingProject();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingProject(pending);
-    setCustomers(listAllCustomers());
+
+    listCustomers({ perPage: 100 })
+      .then((response) => setCustomers(response.data.filter((customer) => customer.active)))
+      .catch(() => setCustomers([]));
 
     if (pending) {
       setName(pending.budgetName);
@@ -88,9 +94,15 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
     if (!canSubmit) return;
 
     if (isEditing && existingProject) {
+      const customerName =
+        customers.find((item) => item.id === customerId)?.name ??
+        (customerId === existingProject.customerId ? existingProject.customerName : "");
+      if (!customerName) return;
+
       const result = updateProjectDetails(existingProject, {
         name,
         customerId,
+        customerName,
         reference,
         address,
         expectedStartDate,
@@ -232,10 +244,14 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
             <Select value={customerId} onValueChange={(value) => setCustomerId(value ?? "")}>
               <SelectTrigger className="h-12 w-full px-4 text-base">
                 <SelectValue placeholder="Selecione um cliente">
-                  {(value: string | null) =>
-                    customers.find((customer) => customer.id === value)?.name ??
-                    "Selecione um cliente"
-                  }
+                  {(value: string | null) => {
+                    const match = customers.find((customer) => customer.id === value)?.name;
+                    if (match) return match;
+                    if (value && isEditing && value === existingProject?.customerId) {
+                      return `Cliente legado: ${existingProject.customerName}`;
+                    }
+                    return "Selecione um cliente";
+                  }}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>

@@ -14,8 +14,8 @@ import {
 import { BackHeader } from "@/components/shared/back-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FileText } from "lucide-react";
-import { listAllCustomers } from "@/features/customers/prototype/customer-store";
-import type { Customer } from "@/features/customers/types";
+import { listCustomers } from "@/features/customers/customers-client";
+import type { CustomerListItem } from "@/features/customers/types";
 import { DEFAULT_MARGIN_PERCENTAGE } from "@/mocks/pricing";
 import { PendingItemPreview } from "./components/pending-item-preview";
 import {
@@ -42,18 +42,25 @@ export function BudgetForm({ budgetId }: { budgetId?: string }) {
   const [pendingItem, setPendingItem] = useState<PendingBudgetItem | null | undefined>(
     undefined
   );
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  // FRONTEND-CLIENTS-01 §8: only the *source* of this selector changed —
+  // it now lists real, active Customers from the API instead of the
+  // localStorage prototype. Budget itself stays a localStorage prototype.
+  const [customers, setCustomers] = useState<CustomerListItem[]>([]);
+
   const [name, setName] = useState("");
   const [customerId, setCustomerId] = useState(preselectedCustomerId);
   const [reference, setReference] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // sessionStorage/localStorage read after mount: server/hydration both
-    // render `undefined`/`[]` first, so there is no mismatch.
+    // sessionStorage read after mount: server/hydration both render
+    // `undefined` first, so there is no mismatch.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingItem(getPendingBudgetItem());
-    setCustomers(listAllCustomers());
+
+    listCustomers({ perPage: 100 })
+      .then((response) => setCustomers(response.data.filter((customer) => customer.active)))
+      .catch(() => setCustomers([]));
   }, []);
 
   useEffect(() => {
@@ -73,9 +80,19 @@ export function BudgetForm({ budgetId }: { budgetId?: string }) {
     if (!canSubmit) return;
 
     if (isEditing && existingBudget) {
+      // §9: if the id still matches a real API customer, snapshot its
+      // current name; if the user kept the original (possibly legacy)
+      // customer untouched, preserve the existing snapshot instead of
+      // zeroing it out just because it's not in this active-only list.
+      const customerName =
+        customers.find((item) => item.id === customerId)?.name ??
+        (customerId === existingBudget.customerId ? existingBudget.customerName : "");
+      if (!customerName) return;
+
       const result = updateBudgetDetails(existingBudget, {
         name,
         customerId,
+        customerName,
         projectReference: reference,
       });
       if (!result.ok) {
@@ -180,10 +197,14 @@ export function BudgetForm({ budgetId }: { budgetId?: string }) {
           >
             <SelectTrigger className="h-12 w-full px-4 text-base">
               <SelectValue placeholder="Selecione um cliente">
-                {(value: string | null) =>
-                  customers.find((customer) => customer.id === value)?.name ??
-                  "Selecione um cliente"
-                }
+                {(value: string | null) => {
+                  const match = customers.find((customer) => customer.id === value)?.name;
+                  if (match) return match;
+                  if (value && isEditing && value === existingBudget?.customerId) {
+                    return `Cliente legado: ${existingBudget.customerName}`;
+                  }
+                  return "Selecione um cliente";
+                }}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>

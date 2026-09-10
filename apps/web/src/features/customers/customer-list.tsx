@@ -1,51 +1,51 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Eye,
-  Pencil,
-  Phone,
-  Plus,
-  Search,
-  Trash2,
-  Users,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Pencil, Phone, Plus, Search, Trash2, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageTitle } from "@/components/shared/page-title";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
-import { formatPhoneInput } from "@/lib/phone";
+import { ApiError } from "@/lib/api-client";
+import { formatCpfCnpj, formatE164PhoneForDisplay } from "@/lib/document";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/features/auth/auth-provider";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
-import { CreateCustomerDialog } from "./create-customer-dialog";
-import { listAllCustomers, removeCustomer } from "./prototype/customer-store";
-import type { Customer } from "./types";
+import { deleteCustomer, listCustomers } from "./customers-client";
+import type { CustomerListItem, CustomerPaginationResponse } from "./types";
 
-function normalize(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
-}
+const PER_PAGE = 15;
+const SEARCH_DEBOUNCE_MS = 300;
 
-function getCustomerCounts(customer: Customer): { budgetsCount: number; projectsCount: number } {
-  const budgetsCount = listAllBudgets().filter(
-    (budget) => budget.customerId === customer.id
-  ).length;
-  const projectsCount = listAllProjects().filter(
-    (project) => project.customerId === customer.id
-  ).length;
+type LoadStatus = "loading" | "success" | "error";
+
+/** §12 transitional guard: Budget/Project are still localStorage prototypes
+ * and the backend has no knowledge of them, so this check stays client-side
+ * until they migrate to their own backend gates. */
+function getLocalLinkCounts(customerId: string): { budgetsCount: number; projectsCount: number } {
+  const budgetsCount = listAllBudgets().filter((budget) => budget.customerId === customerId).length;
+  const projectsCount = listAllProjects().filter((project) => project.customerId === customerId).length;
   return { budgetsCount, projectsCount };
 }
 
+function kindLabel(kind: CustomerListItem["kind"]): string {
+  return kind === "company" ? "PJ" : "PF";
+}
+
+function addressSummary(customer: CustomerListItem): string | null {
+  const address = customer.primary_address;
+  if (!address) return null;
+  const parts = [address.street, address.city, address.state].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : address.label;
+}
+
 interface RowActionsProps {
-  customer: Customer;
-  onDelete: (customer: Customer) => void;
+  customer: CustomerListItem;
+  onDelete: (customer: CustomerListItem) => void;
 }
 
 function RowActions({ customer, onDelete }: RowActionsProps) {
@@ -77,39 +77,66 @@ function RowActions({ customer, onDelete }: RowActionsProps) {
   );
 }
 
-function CustomerCard({ customer, onDelete }: { customer: Customer; onDelete: (customer: Customer) => void }) {
-  const { budgetsCount, projectsCount } = getCustomerCounts(customer);
-
+function CustomerCard({ customer, onDelete }: { customer: CustomerListItem; onDelete: (customer: CustomerListItem) => void }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p className="truncate text-sm font-semibold text-foreground">{customer.name}</p>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Phone className="size-3.5" aria-hidden="true" />
-          {formatPhoneInput(customer.phone)}
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-semibold text-foreground">{customer.name}</p>
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            {kindLabel(customer.kind)}
+          </span>
+          {!customer.active ? (
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              Inativo
+            </span>
+          ) : null}
         </div>
-        <p className="text-xs text-muted-foreground">
-          {budgetsCount} {budgetsCount === 1 ? "orçamento" : "orçamentos"} ·{" "}
-          {projectsCount} {projectsCount === 1 ? "obra" : "obras"}
-        </p>
+        {customer.document ? (
+          <p className="text-xs text-muted-foreground">{formatCpfCnpj(customer.document)}</p>
+        ) : null}
+        {customer.phone ? (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Phone className="size-3.5" aria-hidden="true" />
+            {formatE164PhoneForDisplay(customer.phone)}
+          </div>
+        ) : null}
+        {customer.primary_contact ? (
+          <p className="truncate text-xs text-muted-foreground">Contato: {customer.primary_contact.name}</p>
+        ) : null}
+        {addressSummary(customer) ? (
+          <p className="truncate text-xs text-muted-foreground">{addressSummary(customer)}</p>
+        ) : null}
       </div>
       <RowActions customer={customer} onDelete={onDelete} />
     </div>
   );
 }
 
-const TABLE_ROW_GRID = "lg:grid lg:grid-cols-[minmax(0,1fr)_160px_180px_112px] lg:items-center lg:gap-4";
+const TABLE_ROW_GRID = "lg:grid lg:grid-cols-[minmax(0,1fr)_100px_160px_160px_112px] lg:items-center lg:gap-4";
 
-function CustomerTableRow({ customer, onDelete }: { customer: Customer; onDelete: (customer: Customer) => void }) {
-  const { budgetsCount, projectsCount } = getCustomerCounts(customer);
-
+function CustomerTableRow({ customer, onDelete }: { customer: CustomerListItem; onDelete: (customer: CustomerListItem) => void }) {
   return (
     <div className={cn("flex items-center px-4 py-3.5", TABLE_ROW_GRID)}>
-      <p className="min-w-0 truncate text-sm font-medium text-foreground">{customer.name}</p>
-      <span className="text-sm text-muted-foreground">{formatPhoneInput(customer.phone)}</span>
+      <div className="min-w-0 space-y-0.5">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-medium text-foreground">{customer.name}</p>
+          {!customer.active ? (
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              Inativo
+            </span>
+          ) : null}
+        </div>
+        {customer.document ? (
+          <p className="truncate text-xs text-muted-foreground">{formatCpfCnpj(customer.document)}</p>
+        ) : null}
+      </div>
+      <span className="text-sm text-muted-foreground">{kindLabel(customer.kind)}</span>
       <span className="text-sm text-muted-foreground">
-        {budgetsCount} {budgetsCount === 1 ? "orçamento" : "orçamentos"} · {projectsCount}{" "}
-        {projectsCount === 1 ? "obra" : "obras"}
+        {customer.phone ? formatE164PhoneForDisplay(customer.phone) : "—"}
+      </span>
+      <span className="truncate text-sm text-muted-foreground">
+        {customer.primary_contact?.name ?? "—"}
       </span>
       <div className="justify-self-end">
         <RowActions customer={customer} onDelete={onDelete} />
@@ -122,8 +149,8 @@ function CustomerTable({
   customers,
   onDelete,
 }: {
-  customers: Customer[];
-  onDelete: (customer: Customer) => void;
+  customers: CustomerListItem[];
+  onDelete: (customer: CustomerListItem) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
@@ -134,8 +161,9 @@ function CustomerTable({
         )}
       >
         <span>Cliente</span>
+        <span>Tipo</span>
         <span>Telefone</span>
-        <span>Orçamentos e obras</span>
+        <span>Contato</span>
         <span className="justify-self-end">Ações</span>
       </div>
       <div className="divide-y divide-border">
@@ -147,44 +175,27 @@ function CustomerTable({
   );
 }
 
-const MOBILE_PAGE_SIZE = 5;
-const DESKTOP_PAGE_SIZE = 15;
-
 function Pagination({
   page,
-  totalPages,
+  lastPage,
   onChange,
-  className,
 }: {
   page: number;
-  totalPages: number;
+  lastPage: number;
   onChange: (page: number) => void;
-  className?: string;
 }) {
-  if (totalPages <= 1) return null;
+  if (lastPage <= 1) return null;
 
   return (
-    <div className={cn("flex items-center justify-between gap-3", className)}>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => onChange(page - 1)}
-        disabled={page === 0}
-      >
+    <div className="flex items-center justify-between gap-3">
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange(page - 1)} disabled={page <= 1}>
         <ChevronLeft className="size-4" aria-hidden="true" />
         Anterior
       </Button>
       <span className="text-xs text-muted-foreground">
-        Página {page + 1} de {totalPages}
+        Página {page} de {lastPage}
       </span>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => onChange(page + 1)}
-        disabled={page >= totalPages - 1}
-      >
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange(page + 1)} disabled={page >= lastPage}>
         Próxima
         <ChevronRight className="size-4" aria-hidden="true" />
       </Button>
@@ -192,120 +203,165 @@ function Pagination({
   );
 }
 
+function ListSkeleton() {
+  return (
+    <div className="space-y-3" role="status" aria-busy="true">
+      <span className="sr-only">Carregando clientes</span>
+      {[0, 1, 2, 3].map((index) => (
+        <Skeleton key={index} className="h-20 rounded-xl" />
+      ))}
+    </div>
+  );
+}
+
 export function CustomerList() {
-  const [customers, setCustomers] = useState<Customer[] | null>(null);
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+
+  const [status, setStatus] = useState<LoadStatus>("loading");
+  const [response, setResponse] = useState<CustomerPaginationResponse | null>(null);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [mobilePage, setMobilePage] = useState(0);
-  const [desktopPage, setDesktopPage] = useState(0);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
+  const [page, setPage] = useState(1);
+  const [deletingCustomer, setDeletingCustomer] = useState<CustomerListItem | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // §64: guards against a slower earlier request ("jo") overwriting a
+  // faster later one ("joao") — only the most recently *issued* request's
+  // response is ever applied.
+  const requestSequence = useRef(0);
 
   useEffect(() => {
-    // localStorage read after mount: server/hydration both render `null`
-    // (loading) first, so there is no mismatch.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCustomers(listAllCustomers());
-  }, []);
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-  function refresh() {
-    setCustomers(listAllCustomers());
+  const load = useCallback(async () => {
+    const requestId = ++requestSequence.current;
+    setStatus("loading");
+    try {
+      const result = await listCustomers({ search: search || undefined, page, perPage: PER_PAGE });
+      if (requestSequence.current !== requestId) return;
+      setResponse(result);
+      setStatus("success");
+    } catch (error) {
+      if (requestSequence.current !== requestId) return;
+      if (error instanceof ApiError && error.status === 401) {
+        void auth.refresh();
+        return;
+      }
+      setStatus("error");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, page, activeCompanyId]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  function handleDeleteRequest(customer: CustomerListItem) {
+    setDeleteError(null);
+    setDeletingCustomer(customer);
   }
 
-  function handleConfirmDelete() {
+  async function handleConfirmDelete() {
     if (!deletingCustomer) return;
-    const result = removeCustomer(deletingCustomer);
-    if (!result.ok) {
-      setDeleteError(result.error);
+
+    const { budgetsCount, projectsCount } = getLocalLinkCounts(deletingCustomer.id);
+    if (budgetsCount > 0 || projectsCount > 0) {
+      setDeleteError("Este cliente possui orçamentos ou obras vinculados e não pode ser excluído.");
       return;
     }
-    setDeleteError(null);
-    setDeletingCustomer(null);
-    refresh();
+
+    setDeleting(true);
+    try {
+      await deleteCustomer(deletingCustomer.id);
+      setDeletingCustomer(null);
+      setDeleteError(null);
+      void load();
+    } catch {
+      setDeleteError("Não foi possível excluir este cliente agora.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
-  const normalizedSearch = normalize(search.trim());
-  const filtered = (customers ?? []).filter(
-    (customer) => normalizedSearch === "" || normalize(customer.name).includes(normalizedSearch)
-  );
-
-  function updateSearch(value: string) {
-    setSearch(value);
-    setMobilePage(0);
-    setDesktopPage(0);
-  }
-
-  const mobileTotalPages = Math.max(1, Math.ceil(filtered.length / MOBILE_PAGE_SIZE));
-  const desktopTotalPages = Math.max(1, Math.ceil(filtered.length / DESKTOP_PAGE_SIZE));
-  const mobileCustomers = filtered.slice(
-    mobilePage * MOBILE_PAGE_SIZE,
-    mobilePage * MOBILE_PAGE_SIZE + MOBILE_PAGE_SIZE
-  );
-  const desktopCustomers = filtered.slice(
-    desktopPage * DESKTOP_PAGE_SIZE,
-    desktopPage * DESKTOP_PAGE_SIZE + DESKTOP_PAGE_SIZE
-  );
+  const items = response?.data ?? [];
+  const lastPage = response?.meta.last_page ?? 1;
+  const isEmptyOverall = status === "success" && items.length === 0 && search === "" && page === 1;
+  const isEmptySearch = status === "success" && items.length === 0 && !isEmptyOverall;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
           <PageTitle icon={Users}>Clientes</PageTitle>
-          <p className="text-sm text-muted-foreground">
-            Pessoas e empresas para quem você trabalha.
-          </p>
+          <p className="text-sm text-muted-foreground">Pessoas e empresas para quem você trabalha.</p>
         </div>
-        <Button size="sm" type="button" onClick={() => setCreateOpen(true)}>
-          <Plus className="size-4" aria-hidden="true" />
-          Novo
-        </Button>
+        <Button
+          size="sm"
+          nativeButton={false}
+          render={
+            <Link href="/clientes/novo">
+              <Plus className="size-4" aria-hidden="true" />
+              Novo
+            </Link>
+          }
+        />
       </div>
 
-      {customers === null || customers.length === 0 ? null : (
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => updateSearch(event.target.value)}
-            placeholder="Buscar por nome do cliente"
-            aria-label="Buscar por nome do cliente"
-            className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-          />
-        </div>
-      )}
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <input
+          type="text"
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
+          placeholder="Buscar por nome, documento, telefone ou contato"
+          aria-label="Buscar clientes"
+          className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+        />
+      </div>
 
-      {customers === null ? null : customers.length === 0 ? (
+      {status === "loading" && !response ? (
+        <ListSkeleton />
+      ) : status === "error" ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar os clientes agora.
+          </p>
+          <Button type="button" onClick={() => void load()}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : isEmptyOverall ? (
         <EmptyState
           icon={Users}
           title="Nenhum cliente ainda"
           description="Cadastre seu primeiro cliente para criar orçamentos e obras."
         />
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={Users}
-          title="Nenhum cliente encontrado"
-          description="Ajuste a busca para ver outros clientes."
-        />
+      ) : isEmptySearch ? (
+        <EmptyState icon={Users} title="Nenhum cliente encontrado" description="Ajuste a busca para ver outros clientes." />
       ) : (
         <>
           <div className="space-y-3 lg:hidden">
-            {mobileCustomers.map((customer) => (
-              <CustomerCard key={customer.id} customer={customer} onDelete={setDeletingCustomer} />
+            {items.map((customer) => (
+              <CustomerCard key={customer.id} customer={customer} onDelete={handleDeleteRequest} />
             ))}
-            <Pagination page={mobilePage} totalPages={mobileTotalPages} onChange={setMobilePage} />
           </div>
-          <div className="hidden space-y-3 lg:block">
-            <CustomerTable customers={desktopCustomers} onDelete={setDeletingCustomer} />
-            <Pagination page={desktopPage} totalPages={desktopTotalPages} onChange={setDesktopPage} />
+          <div className="hidden lg:block">
+            <CustomerTable customers={items} onDelete={handleDeleteRequest} />
           </div>
+          <Pagination page={response?.meta.current_page ?? page} lastPage={lastPage} onChange={setPage} />
         </>
       )}
-
-      <CreateCustomerDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={refresh} />
 
       <ConfirmActionDialog
         open={deletingCustomer !== null}
@@ -317,15 +373,18 @@ export function CustomerList() {
         }}
         title="Excluir cliente?"
         description={
-          deletingCustomer
-            ? `Excluir o cliente "${deletingCustomer.name}"? Esta ação não pode ser desfeita.`
-            : undefined
+          deletingCustomer ? `Excluir o cliente "${deletingCustomer.name}"? Esta ação não pode ser desfeita.` : undefined
         }
         confirmLabel="Excluir"
         destructive
-        onConfirm={handleConfirmDelete}
+        disabled={deleting}
+        onConfirm={() => void handleConfirmDelete()}
       >
-        {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+        {deleteError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {deleteError}
+          </p>
+        ) : null}
       </ConfirmActionDialog>
     </div>
   );

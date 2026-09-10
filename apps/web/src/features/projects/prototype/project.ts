@@ -34,7 +34,6 @@
  */
 
 import { todayIso } from "@/lib/date";
-import { getCustomer } from "@/features/customers/prototype/customer-store";
 import { listReceivablesByProject } from "@/features/receivables/prototype/receivable-store";
 import { saveProject } from "./project-store";
 import type { Project } from "../types";
@@ -44,6 +43,10 @@ export type ProjectResult = { ok: true; project: Project } | { ok: false; error:
 export interface ProjectDetailsChanges {
   name: string;
   customerId: string;
+  /** FRONTEND-CLIENTS-01 §10: resolved by the caller (ProjectForm) from
+   * the real Customers API — this module never looks the customer up
+   * itself, it only snapshots what it's given. */
+  customerName: string;
   reference?: string;
   address?: string;
   expectedStartDate?: string;
@@ -73,16 +76,15 @@ export function updateProjectDetails(existing: Project, changes: ProjectDetailsC
     }
   }
 
-  const customer = getCustomer(changes.customerId);
-  if (!customer) {
-    return { ok: false, error: "Cliente não encontrado." };
+  if (changes.customerId.trim() === "") {
+    return { ok: false, error: "Selecione um cliente." };
   }
 
   const updated: Project = {
     ...existing,
     name: changes.name.trim(),
-    customerId: customer.id,
-    customerName: customer.name,
+    customerId: changes.customerId,
+    customerName: changes.customerName,
     reference: changes.reference?.trim() || undefined,
     address: changes.address?.trim() || undefined,
     expectedStartDate: changes.expectedStartDate || undefined,

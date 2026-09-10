@@ -38,7 +38,6 @@
  */
 
 import { todayIso } from "@/lib/date";
-import { getCustomer } from "@/features/customers/prototype/customer-store";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
 import { deleteBudget as deleteBudgetRecord, saveBudget } from "./budget-store";
 import type { Budget, BudgetStatus } from "../types";
@@ -55,6 +54,14 @@ function isEditable(budget: Budget): boolean {
 export interface BudgetDetailsChanges {
   name: string;
   customerId: string;
+  /**
+   * FRONTEND-CLIENTS-01 §9: the caller (BudgetForm) already resolved this
+   * from the real Customers API when the user picked/kept a customer —
+   * this module no longer looks the customer up itself (it has no
+   * business knowing whether the id is a real API UUID or a legacy
+   * localStorage id), it just snapshots what it's given.
+   */
+  customerName: string;
   projectReference?: string;
 }
 
@@ -69,16 +76,15 @@ export function updateBudgetDetails(existing: Budget, changes: BudgetDetailsChan
   if (changes.name.trim() === "") {
     return { ok: false, error: "Informe o nome do orçamento." };
   }
-  const customer = getCustomer(changes.customerId);
-  if (!customer) {
-    return { ok: false, error: "Cliente não encontrado." };
+  if (changes.customerId.trim() === "") {
+    return { ok: false, error: "Selecione um cliente." };
   }
 
   const updated: Budget = {
     ...existing,
     name: changes.name.trim(),
-    customerId: customer.id,
-    customerName: customer.name,
+    customerId: changes.customerId,
+    customerName: changes.customerName,
     projectReference: changes.projectReference?.trim() || undefined,
     updatedAt: todayIso(),
   };

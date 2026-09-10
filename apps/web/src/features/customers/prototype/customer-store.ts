@@ -1,16 +1,21 @@
 /**
- * Prototype browser persistence for Clientes.
+ * LEGACY/TRANSITION (FRONTEND-CLIENTS-01 §7/§89) — prototype browser
+ * persistence for Clientes, pre-API.
  *
- * There is no backend yet, so created customers are kept in localStorage,
- * layered on top of the seed data in `src/mocks/customers.ts`. Laravel +
- * PostgreSQL will replace this storage entirely once the real API exists.
+ * The real Clientes module (list/detail/create/edit) no longer reads,
+ * writes, or deletes through this store — PostgreSQL via
+ * `features/customers/customers-client.ts` is now the only source of
+ * truth for real Customers. This file is kept only because
+ * `features/receivables` (out of scope this round) still reads its
+ * localStorage-backed seed/created data. Never import this from the new
+ * Clientes module; never write a real API Customer here.
  */
 
 import { customers as seedCustomers } from "@/mocks/customers";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
 import { listAllProjects } from "@/features/projects/prototype/project-store";
 import { demoDataEnabled } from "@/lib/pilot-config";
-import type { Customer } from "../types";
+import type { LegacyCustomer as Customer } from "./legacy-types";
 
 const STORAGE_KEY = "obrafacil:customers";
 const DELETED_KEY = "obrafacil:customers:deleted";

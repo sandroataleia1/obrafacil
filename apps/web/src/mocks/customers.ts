@@ -1,4 +1,4 @@
-import type { Customer } from "@/features/customers/types";
+import type { LegacyCustomer as Customer } from "@/features/customers/prototype/legacy-types";
 
 export const customers: Customer[] = [
   {

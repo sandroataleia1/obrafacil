@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { parseCurrencyInput } from "@/lib/currency";
 import { listAllCustomers } from "@/features/customers/prototype/customer-store";
-import type { Customer } from "@/features/customers/types";
+import type { LegacyCustomer as Customer } from "@/features/customers/prototype/legacy-types";
 import { getProject, listProjectsByCustomer } from "@/features/projects/prototype/project-store";
 import type { Project } from "@/features/projects/types";
 import { createReceivable, updateReceivable } from "./prototype/receivable";
