@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\EvolutionWebhookController;
 use App\Http\Controllers\Api\V1\LoginController;
 use App\Http\Controllers\Api\V1\LogoutController;
 use App\Http\Controllers\Api\V1\MeController;
+use App\Http\Controllers\Api\V1\NotificationSettingsController;
 use App\Http\Controllers\Api\V1\RegisterController;
 use Illuminate\Support\Facades\Route;
 
@@ -26,4 +27,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/v1/logout', LogoutController::class);
     Route::get('/v1/me', MeController::class);
     Route::post('/v1/companies/{company}/activate', CompanyActivationController::class);
+
+    Route::middleware('resolve-current-company')->group(function () {
+        Route::get('/v1/notifications/settings', [NotificationSettingsController::class, 'show']);
+        Route::put('/v1/notifications/settings', [NotificationSettingsController::class, 'update']);
+    });
 });

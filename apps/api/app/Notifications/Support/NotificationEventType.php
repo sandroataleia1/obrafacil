@@ -19,10 +19,14 @@ enum NotificationEventType: string
     case SystemTest = 'system.test';
 
     case ServiceOrderCreated = 'service_order.created';
+    case ServiceOrderScheduled = 'service_order.scheduled';
+    case ServiceOrderDue2Hours = 'service_order.due_2_hours';
+    case ServiceOrderStarted = 'service_order.started';
     case ServiceOrderDueTomorrow = 'service_order.due_tomorrow';
     case ServiceOrderDueToday = 'service_order.due_today';
     case ServiceOrderOverdue = 'service_order.overdue';
     case ServiceOrderCompleted = 'service_order.completed';
+    case ServiceOrderCancelled = 'service_order.cancelled';
 
     case PayableDueIn7Days = 'payable.due_in_7_days';
     case PayableDueIn3Days = 'payable.due_in_3_days';
@@ -58,5 +62,38 @@ enum NotificationEventType: string
     public function isCritical(): bool
     {
         return false;
+    }
+
+    /**
+     * Whether a user can turn this event on/off for themselves via the
+     * generic notification preferences API (NOTIFICATIONS-API-01 §15/§18).
+     *
+     * False for:
+     *  - SystemTest: an internal pipeline-proving event, not something a
+     *    real user would ever see a toggle for;
+     *  - SummaryDaily/SummaryWeekly: these are controlled exclusively by
+     *    `notification_settings.daily_summary_enabled` /
+     *    `weekly_summary_enabled` — allowing them to ALSO appear as a
+     *    generic per-event preference would create two independent ways to
+     *    turn the same thing on/off that could disagree with each other
+     *    (§18's "summary não duplicado").
+     */
+    public function isUserConfigurable(): bool
+    {
+        return match ($this) {
+            self::SystemTest, self::SummaryDaily, self::SummaryWeekly => false,
+            default => true,
+        };
+    }
+
+    /**
+     * The domain segment before the first `.` in the event's value — e.g.
+     * `service_order.created` groups as `service_order`. Metadata for a
+     * future UI to cluster preferences under a heading; deliberately no
+     * Portuguese labels here (§16 — that's a frontend concern).
+     */
+    public function group(): string
+    {
+        return explode('.', $this->value)[0];
     }
 }
