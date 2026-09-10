@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\CompanyActivationController;
+use App\Http\Controllers\Api\V1\EvolutionWebhookController;
 use App\Http\Controllers\Api\V1\LoginController;
 use App\Http\Controllers\Api\V1\LogoutController;
 use App\Http\Controllers\Api\V1\MeController;
@@ -15,6 +16,11 @@ Route::get('/v1/health', function () {
 
 Route::post('/v1/register', RegisterController::class)->middleware('throttle:register');
 Route::post('/v1/login', LoginController::class)->middleware('throttle:login');
+
+// Machine-to-machine (Evolution API server), never Sanctum (§30). Not
+// configured against the real VPS instance yet — see EVOLUTION-01.
+Route::post('/v1/webhooks/evolution', EvolutionWebhookController::class)
+    ->middleware('evolution-webhook-secret');
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/v1/logout', LogoutController::class);

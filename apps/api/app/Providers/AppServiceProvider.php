@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Notifications\Contracts\WhatsAppProvider;
+use App\Notifications\Providers\EvolutionApiProvider;
 use App\Support\CurrentCompanyContext;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -17,6 +19,18 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(CurrentCompanyContext::class);
+
+        // Every domain depends on the WhatsAppProvider interface, never on
+        // EvolutionApiProvider directly (Gate BACKEND-03 §2/§5) — swapping
+        // providers later means rebinding this, not touching call sites.
+        $this->app->bind(WhatsAppProvider::class, function (): EvolutionApiProvider {
+            return new EvolutionApiProvider(
+                baseUrl: (string) config('evolution.base_url'),
+                apiKey: (string) config('evolution.api_key'),
+                instance: (string) config('evolution.instance'),
+                timeoutSeconds: (int) config('evolution.timeout_seconds'),
+            );
+        });
     }
 
     /**

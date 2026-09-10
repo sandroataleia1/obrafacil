@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\ResolveCurrentCompany;
+use App\Http\Middleware\VerifyEvolutionWebhookSecret;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -23,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'resolve-current-company' => ResolveCurrentCompany::class,
+            'evolution-webhook-secret' => VerifyEvolutionWebhookSecret::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
