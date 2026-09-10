@@ -123,4 +123,109 @@ describe("RegisterForm", () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
     expect(screen.queryByLabelText(/Nome da empresa/)).not.toBeInTheDocument();
   });
+
+  describe("password confirmation visibility toggle", () => {
+    async function renderForm() {
+      vi.mocked(fetchMe).mockRejectedValue(new ApiError(401, "Unauthenticated."));
+      render(
+        <AuthProvider>
+          <RegisterForm />
+        </AuthProvider>
+      );
+      await waitFor(() => expect(screen.getByLabelText(/Nome da empresa/)).toBeInTheDocument());
+      return userEvent.setup();
+    }
+
+    /** A1: Senha starts as type=password. */
+    it("A1: password field starts as type=password", async () => {
+      await renderForm();
+      expect(screen.getByLabelText("Senha *")).toHaveAttribute("type", "password");
+    });
+
+    /** A2: Confirmar senha starts as type=password. */
+    it("A2: password confirmation field starts as type=password", async () => {
+      await renderForm();
+      expect(screen.getByLabelText(/Confirmar senha/)).toHaveAttribute("type", "password");
+    });
+
+    /** A3: toggling Senha's eye only affects Senha, never Confirmar senha. */
+    it("A3: toggling the password eye affects only the password field", async () => {
+      const user = await renderForm();
+
+      await user.click(screen.getByRole("button", { name: "Mostrar senha" }));
+
+      expect(screen.getByLabelText("Senha *")).toHaveAttribute("type", "text");
+      expect(screen.getByLabelText(/Confirmar senha/)).toHaveAttribute("type", "password");
+    });
+
+    /** A4: toggling Confirmar senha's eye only affects Confirmar senha, never Senha. */
+    it("A4: toggling the confirmation eye affects only the confirmation field", async () => {
+      const user = await renderForm();
+
+      await user.click(screen.getByRole("button", { name: "Mostrar confirmação de senha" }));
+
+      expect(screen.getByLabelText(/Confirmar senha/)).toHaveAttribute("type", "text");
+      expect(screen.getByLabelText("Senha *")).toHaveAttribute("type", "password");
+    });
+
+    /** A5: clicking again independently returns each field to type=password. */
+    it("A5: clicking again returns each field independently to type=password", async () => {
+      const user = await renderForm();
+
+      await user.click(screen.getByRole("button", { name: "Mostrar senha" }));
+      await user.click(screen.getByRole("button", { name: "Mostrar confirmação de senha" }));
+      expect(screen.getByLabelText("Senha *")).toHaveAttribute("type", "text");
+      expect(screen.getByLabelText(/Confirmar senha/)).toHaveAttribute("type", "text");
+
+      await user.click(screen.getByRole("button", { name: "Ocultar senha" }));
+      expect(screen.getByLabelText("Senha *")).toHaveAttribute("type", "password");
+      expect(screen.getByLabelText(/Confirmar senha/)).toHaveAttribute("type", "text");
+
+      await user.click(screen.getByRole("button", { name: "Ocultar confirmação de senha" }));
+      expect(screen.getByLabelText(/Confirmar senha/)).toHaveAttribute("type", "password");
+    });
+
+    /** A6: toggling visibility never changes the typed values. */
+    it("A6: toggling visibility preserves typed values", async () => {
+      const user = await renderForm();
+
+      await user.type(screen.getByLabelText("Senha *"), "minha-senha-1");
+      await user.type(screen.getByLabelText(/Confirmar senha/), "outra-senha-2");
+
+      await user.click(screen.getByRole("button", { name: "Mostrar senha" }));
+      await user.click(screen.getByRole("button", { name: "Mostrar confirmação de senha" }));
+
+      expect(screen.getByLabelText("Senha *")).toHaveValue("minha-senha-1");
+      expect(screen.getByLabelText(/Confirmar senha/)).toHaveValue("outra-senha-2");
+    });
+
+    /** A7: both toggle buttons are type=button and never submit the form. */
+    it("A7: toggle buttons are type=button and do not submit the form", async () => {
+      const user = await renderForm();
+
+      const passwordToggle = screen.getByRole("button", { name: "Mostrar senha" });
+      const confirmationToggle = screen.getByRole("button", { name: "Mostrar confirmação de senha" });
+      expect(passwordToggle).toHaveAttribute("type", "button");
+      expect(confirmationToggle).toHaveAttribute("type", "button");
+
+      await user.click(passwordToggle);
+      await user.click(confirmationToggle);
+
+      expect(register).not.toHaveBeenCalled();
+      expect(replace).not.toHaveBeenCalled();
+    });
+
+    /** A8: aria-label changes correctly for each field independently. */
+    it("A8: aria-label reflects each field's own visibility state", async () => {
+      const user = await renderForm();
+
+      await user.click(screen.getByRole("button", { name: "Mostrar senha" }));
+      expect(screen.getByRole("button", { name: "Ocultar senha" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mostrar confirmação de senha" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Mostrar confirmação de senha" }));
+      expect(screen.getByRole("button", { name: "Ocultar senha" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Ocultar confirmação de senha" })).toBeInTheDocument();
+    });
+  });
 });

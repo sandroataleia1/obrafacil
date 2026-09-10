@@ -48,6 +48,7 @@ export function RegisterForm() {
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordConfirmation, setShowPasswordConfirmation] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -259,16 +260,30 @@ export function RegisterForm() {
           <label htmlFor="register-password-confirmation" className="text-sm font-medium text-foreground">
             Confirmar senha *
           </label>
-          <input
-            id="register-password-confirmation"
-            type={showPassword ? "text" : "password"}
-            autoComplete="new-password"
-            required
-            minLength={8}
-            value={passwordConfirmation}
-            onChange={(event) => setPasswordConfirmation(event.target.value)}
-            className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-          />
+          <div className="relative">
+            <input
+              id="register-password-confirmation"
+              type={showPasswordConfirmation ? "text" : "password"}
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={passwordConfirmation}
+              onChange={(event) => setPasswordConfirmation(event.target.value)}
+              className="w-full rounded-xl border border-border bg-background px-4 py-3 pr-12 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPasswordConfirmation((value) => !value)}
+              aria-label={showPasswordConfirmation ? "Ocultar confirmação de senha" : "Mostrar confirmação de senha"}
+              className="absolute top-1/2 right-3 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {showPasswordConfirmation ? (
+                <EyeOff className="size-4" aria-hidden="true" />
+              ) : (
+                <Eye className="size-4" aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </div>
 
         {generalError ? (
