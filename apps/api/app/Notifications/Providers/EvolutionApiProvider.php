@@ -24,6 +24,21 @@ use Illuminate\Support\Str;
  * audit is EVOLUTION-01's job. If the real shape differs, only this class
  * needs to change; WhatsAppSendResult's contract to the rest of the app
  * stays the same.
+ *
+ * BACKEND-03A §11 — timeout ambiguity, documented and NOT solved here: a
+ * WhatsAppTimeoutException means this client never saw a response, not
+ * that the provider never accepted the message. Evolution may have already
+ * queued/sent it before the socket timed out on our end. Retrying that
+ * delivery (our recoverable-error retry policy does exactly this) can
+ * therefore produce a genuine duplicate WhatsApp message on the recipient's
+ * phone. `notification_deliveries.idempotency_key` does NOT protect against
+ * this — it only deduplicates *our own* database/queue writes, and has no
+ * effect once a request has actually left this process for Evolution.
+ * Closing this gap requires the real provider to support some form of
+ * client-supplied message id / idempotency key on the send endpoint, which
+ * has not been verified for the installed VPS version. Until EVOLUTION-01
+ * audits that, this risk is accepted and documented, not silently assumed
+ * away.
  */
 class EvolutionApiProvider implements WhatsAppProvider
 {

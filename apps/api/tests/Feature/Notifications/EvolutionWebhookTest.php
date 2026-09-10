@@ -126,4 +126,83 @@ class EvolutionWebhookTest extends TestCase
     {
         $this->callWebhook([])->assertStatus(422);
     }
+
+    /**
+     * C3: two deliveries sharing the same provider_message_id (possible
+     * since the column is only indexed, not unique — §13) means neither is
+     * updated. Guessing which one the callback meant would risk silently
+     * corrupting the wrong tenant's delivery.
+     */
+    public function test_c3_ambiguous_message_id_updates_neither_delivery(): void
+    {
+        $sharedId = 'EVO-AMBIGUOUS-ID';
+
+        [$companyA, $userA] = $this->makeCompanyWithMember(userAttributes: ['phone' => '+5511999999999']);
+        $deliveryA = $this->currentCompanyContext()->run($companyA, function () use ($userA, $sharedId) {
+            return NotificationDelivery::factory()->create([
+                'user_id' => $userA->id,
+                'status' => NotificationDeliveryStatus::Sent,
+                'provider_message_id' => $sharedId,
+                'sent_at' => now(),
+            ]);
+        });
+
+        [$companyB, $userB] = $this->makeCompanyWithMember(userAttributes: ['phone' => '+5511988888888']);
+        $deliveryB = $this->currentCompanyContext()->run($companyB, function () use ($userB, $sharedId) {
+            return NotificationDelivery::factory()->create([
+                'user_id' => $userB->id,
+                'status' => NotificationDeliveryStatus::Sent,
+                'provider_message_id' => $sharedId,
+                'sent_at' => now(),
+            ]);
+        });
+
+        $this->callWebhook([
+            'data' => ['key' => ['id' => $sharedId], 'status' => 'DELIVERY_ACK'],
+        ])->assertStatus(200);
+
+        $this->assertSame(NotificationDeliveryStatus::Sent, $deliveryA->fresh()->status);
+        $this->assertSame(NotificationDeliveryStatus::Sent, $deliveryB->fresh()->status);
+        $this->assertNull($deliveryA->fresh()->delivered_at);
+        $this->assertNull($deliveryB->fresh()->delivered_at);
+    }
+
+    /**
+     * C4: the ambiguity check never picks an arbitrary tenant (e.g. via an
+     * implicit first()) even when the two candidates belong to different
+     * companies — same scenario as C3, phrased explicitly around
+     * cross-tenant safety.
+     */
+    public function test_c4_ambiguity_never_arbitrarily_picks_a_tenant(): void
+    {
+        $sharedId = 'EVO-CROSS-TENANT-AMBIGUOUS';
+
+        [$companyA, $userA] = $this->makeCompanyWithMember(userAttributes: ['phone' => '+5511999999999']);
+        $deliveryA = $this->currentCompanyContext()->run($companyA, function () use ($userA, $sharedId) {
+            return NotificationDelivery::factory()->create([
+                'user_id' => $userA->id,
+                'status' => NotificationDeliveryStatus::Sent,
+                'provider_message_id' => $sharedId,
+                'sent_at' => now(),
+            ]);
+        });
+
+        [$companyB, $userB] = $this->makeCompanyWithMember(userAttributes: ['phone' => '+5511988888888']);
+        $deliveryB = $this->currentCompanyContext()->run($companyB, function () use ($userB, $sharedId) {
+            return NotificationDelivery::factory()->create([
+                'user_id' => $userB->id,
+                'status' => NotificationDeliveryStatus::Sent,
+                'provider_message_id' => $sharedId,
+                'sent_at' => now(),
+            ]);
+        });
+
+        $this->callWebhook([
+            'data' => ['key' => ['id' => $sharedId], 'status' => 'READ'],
+        ])->assertStatus(200);
+
+        // Neither company's delivery was arbitrarily chosen and advanced.
+        $this->assertSame(NotificationDeliveryStatus::Sent, $deliveryA->fresh()->status);
+        $this->assertSame(NotificationDeliveryStatus::Sent, $deliveryB->fresh()->status);
+    }
 }

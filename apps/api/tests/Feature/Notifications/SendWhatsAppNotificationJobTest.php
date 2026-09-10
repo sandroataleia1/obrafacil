@@ -97,8 +97,7 @@ class SendWhatsAppNotificationJobTest extends TestCase
         }
 
         $fresh = $delivery->fresh();
-        $this->assertNotSame(NotificationDeliveryStatus::Failed, $fresh->status);
-        $this->assertNotSame(NotificationDeliveryStatus::Sent, $fresh->status);
+        $this->assertSame(NotificationDeliveryStatus::Retrying, $fresh->status);
         $this->assertNotNull($fresh->last_error);
     }
 
@@ -137,15 +136,38 @@ class SendWhatsAppNotificationJobTest extends TestCase
         $this->assertNotNull($delivery->fresh()->last_error);
     }
 
-    /** J6: attempts increments on every handle() invocation. */
-    public function test_j6_attempts_increments_on_each_run(): void
+    /**
+     * J6: attempts increments only for an execution that actually wins the
+     * claim and calls the provider.
+     *
+     * BACKEND-03A changed this test: it used to reset a `sent` delivery
+     * straight back to `queued` to simulate a second cycle. That reset was
+     * only possible because the old canTransitionTo() fallback silently
+     * allowed it and the old job never checked transitionTo()'s return
+     * value before calling the provider — exactly the duplicate-send bug
+     * this round fixes. `sent -> queued` is illegal now (not sendable, not
+     * a legal transition), so the only legitimate way back to a sendable
+     * state is the explicit reprocessing path this round introduces:
+     * `sent -> failed -> queued`.
+     */
+    public function test_j6_attempts_increments_only_for_the_execution_that_wins_the_claim(): void
     {
         [$company, $delivery] = $this->makeQueuedDelivery();
 
         $this->runJob($company, $delivery, new FakeWhatsAppProvider);
         $this->assertSame(1, $delivery->fresh()->attempts);
+        $this->assertSame(NotificationDeliveryStatus::Sent, $delivery->fresh()->status);
 
-        // Force it back to a non-terminal state to simulate a second attempt cycle.
+        // A stale/duplicate job for the same (already sent) delivery must
+        // never call the provider again and must never increment attempts.
+        $this->runJob($company, $delivery->fresh(), new FakeWhatsAppProvider);
+        $this->assertSame(1, $delivery->fresh()->attempts);
+
+        // Explicit reprocessing (§5) is the only legitimate way back to a
+        // sendable state once a delivery has moved on — never automatic.
+        $this->currentCompanyContext()->run($company, function () use ($delivery) {
+            $delivery->fresh()->transitionTo(NotificationDeliveryStatus::Failed);
+        });
         $this->currentCompanyContext()->run($company, function () use ($delivery) {
             $delivery->fresh()->transitionTo(NotificationDeliveryStatus::Queued);
         });
