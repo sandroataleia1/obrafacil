@@ -112,10 +112,22 @@ class CustomerController extends Controller
             // §91: a customer is also findable by one of its contacts —
             // via EXISTS, never a JOIN (which would duplicate the
             // customer row per matching contact and break pagination).
+            //
+            // BACKEND-04B: this subquery is raw Query Builder, not an
+            // Eloquent model query — CustomerContact's BelongsToCompany /
+            // CompanyScope is never applied here automatically. The tenant
+            // boundary is therefore asserted explicitly in the subquery
+            // itself (company_id = company_id), never inferred from
+            // request input and never assumed from "customer_id already
+            // matched, so the row must be fine" — a structurally corrupted
+            // customer_contacts row (wrong company_id for its customer_id)
+            // must not surface a customer via this search regardless of
+            // how it got that way.
             $inner->orWhereExists(function ($sub) use ($term, $digits) {
                 $sub->selectRaw('1')
                     ->from('customer_contacts')
                     ->whereColumn('customer_contacts.customer_id', 'customers.id')
+                    ->whereColumn('customer_contacts.company_id', 'customers.company_id')
                     ->where(function ($contactQuery) use ($term, $digits) {
                         $contactQuery->whereRaw('customer_contacts.name ILIKE ?', ["%{$term}%"])
                             ->orWhereRaw('customer_contacts.email ILIKE ?', ["%{$term}%"]);
