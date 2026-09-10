@@ -14,6 +14,7 @@ use App\Notifications\Support\NotificationEventType;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 use Tests\Feature\Notifications\Concerns\InteractsWithNotifications;
@@ -434,16 +435,22 @@ class NotificationSettingsApiTest extends TestCase
 
     /**
      * A2: a failure while writing preferences rolls back the settings write
-     * too. Bypasses HTTP validation deliberately (calls the service
-     * directly with a null event_type, which validation would normally
-     * reject) to force a real database-level failure and prove the
-     * transaction boundary, not just that validation blocks bad input.
+     * too. NOTIFICATIONS-API-01A rewrote save() to always build preference
+     * rows from the registry (configurableEventTypes()), never directly
+     * from client input — so a hostile event_type in the payload (the old
+     * way this test forced a failure) no longer reaches the database at
+     * all, it's simply absent from the submitted map. To still prove the
+     * real transaction boundary (not just that validation blocks bad
+     * input), this test forces a genuine lower-level failure by breaking
+     * the preferences table's schema for the duration of the call.
      */
     public function test_a2_failure_during_preferences_rolls_back_settings(): void
     {
         [$company, $user] = $this->makeCompanyWithMember();
 
         $service = app(NotificationSettingsService::class);
+
+        DB::statement('ALTER TABLE notification_preferences RENAME COLUMN enabled TO enabled_renamed_for_a2_test');
 
         try {
             $this->currentCompanyContext()->run($company, function () use ($service, $company, $user) {
@@ -454,12 +461,14 @@ class NotificationSettingsApiTest extends TestCase
                     'quiet_end' => '07:00',
                     'daily_summary_enabled' => false,
                     'weekly_summary_enabled' => false,
-                    'preferences' => [['event_type' => null, 'enabled' => true]],
+                    'preferences' => [['event_type' => 'payable.due_today', 'enabled' => true]],
                 ]);
             });
-            $this->fail('Expected a QueryException from the null event_type.');
+            $this->fail('Expected a QueryException from the broken preferences schema.');
         } catch (QueryException) {
             // expected
+        } finally {
+            DB::statement('ALTER TABLE notification_preferences RENAME COLUMN enabled_renamed_for_a2_test TO enabled');
         }
 
         $count = $this->currentCompanyContext()->run($company, fn () => NotificationSetting::query()->count());
@@ -594,5 +603,150 @@ class NotificationSettingsApiTest extends TestCase
         // The nested hostile field is simply not part of the validated
         // preference shape — it's never read, not even ignored-with-effect.
         $response->assertOk();
+    }
+
+    // ---------------------------------------------------------------
+    // S1-S7: snapshot semantics (NOTIFICATIONS-API-01A)
+    // ---------------------------------------------------------------
+
+    private function preferenceEnabled(array $preferences, string $eventType): bool
+    {
+        $preference = collect($preferences)->firstWhere('event_type', $eventType);
+        $this->assertNotNull($preference, "event_type {$eventType} missing from preferences response");
+
+        return $preference['enabled'];
+    }
+
+    /** S1: existing A=true, B=true; PUT with only A=false -> A=false AND B=false. */
+    public function test_s1_omitted_preference_reverts_to_false(): void
+    {
+        [, $user] = $this->makeCompanyWithMember();
+        Sanctum::actingAs($user);
+
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [
+                ['event_type' => 'service_order.created', 'enabled' => true],
+                ['event_type' => 'payable.due_today', 'enabled' => true],
+            ],
+        ]))->assertOk();
+
+        $response = $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [
+                ['event_type' => 'service_order.created', 'enabled' => false],
+            ],
+        ]))->assertOk();
+
+        $preferences = $response->json('preferences');
+        $this->assertFalse($this->preferenceEnabled($preferences, 'service_order.created'));
+        $this->assertFalse($this->preferenceEnabled($preferences, 'payable.due_today'));
+    }
+
+    /** S2: existing A=true; PUT preferences=[] -> A=false. */
+    public function test_s2_empty_preferences_array_disables_everything(): void
+    {
+        [, $user] = $this->makeCompanyWithMember();
+        Sanctum::actingAs($user);
+
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [['event_type' => 'service_order.created', 'enabled' => true]],
+        ]))->assertOk();
+
+        $response = $this->putJson(self::ENDPOINT, $this->fullValidPayload(['preferences' => []]))->assertOk();
+
+        $this->assertFalse($this->preferenceEnabled($response->json('preferences'), 'service_order.created'));
+    }
+
+    /** S3: PUT A=true omitting B -> A=true, B=false. */
+    public function test_s3_submitted_true_persists_omitted_stays_false(): void
+    {
+        [, $user] = $this->makeCompanyWithMember();
+        Sanctum::actingAs($user);
+
+        $response = $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [['event_type' => 'service_order.created', 'enabled' => true]],
+        ]))->assertOk();
+
+        $preferences = $response->json('preferences');
+        $this->assertTrue($this->preferenceEnabled($preferences, 'service_order.created'));
+        $this->assertFalse($this->preferenceEnabled($preferences, 'payable.due_today'));
+    }
+
+    /** S4: a new user PUTting a partial list still sees every omitted configurable event as false on GET. */
+    public function test_s4_get_after_partial_put_shows_all_configurable_events(): void
+    {
+        [, $user] = $this->makeCompanyWithMember();
+        Sanctum::actingAs($user);
+
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [['event_type' => 'service_order.created', 'enabled' => true]],
+        ]))->assertOk();
+
+        $response = $this->getJson(self::ENDPOINT)->assertOk();
+        $preferences = $response->json('preferences');
+
+        $this->assertCount($this->configurableCount(), $preferences);
+        $this->assertTrue($this->preferenceEnabled($preferences, 'service_order.created'));
+        $this->assertFalse($this->preferenceEnabled($preferences, 'payable.overdue'));
+    }
+
+    /** S5: a second partial PUT never resurrects a previously-true value it doesn't mention. */
+    public function test_s5_second_partial_put_does_not_resurrect_old_value(): void
+    {
+        [, $user] = $this->makeCompanyWithMember();
+        Sanctum::actingAs($user);
+
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [['event_type' => 'payable.due_today', 'enabled' => true]],
+        ]))->assertOk();
+
+        // This PUT doesn't mention payable.due_today at all.
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [['event_type' => 'service_order.created', 'enabled' => true]],
+        ]))->assertOk();
+
+        $response = $this->getJson(self::ENDPOINT)->assertOk();
+        $this->assertFalse($this->preferenceEnabled($response->json('preferences'), 'payable.due_today'));
+    }
+
+    /** S6: Company A and Company B remain independent under the new algorithm. */
+    public function test_s6_companies_remain_independent(): void
+    {
+        $user = User::factory()->create();
+        $companyA = Company::factory()->create();
+        $companyB = Company::factory()->create();
+        $companyA->memberships()->create(['user_id' => $user->id, 'role' => CompanyRole::Owner]);
+        $companyB->memberships()->create(['user_id' => $user->id, 'role' => CompanyRole::Owner]);
+
+        Sanctum::actingAs($user);
+
+        $this->postJson("/api/v1/companies/{$companyA->id}/activate")->assertOk();
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [['event_type' => 'payable.due_today', 'enabled' => true]],
+        ]))->assertOk();
+
+        $this->postJson("/api/v1/companies/{$companyB->id}/activate")->assertOk();
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload(['preferences' => []]))->assertOk();
+
+        $this->postJson("/api/v1/companies/{$companyA->id}/activate")->assertOk();
+        $response = $this->getJson(self::ENDPOINT)->assertOk();
+        $this->assertTrue($this->preferenceEnabled($response->json('preferences'), 'payable.due_today'));
+    }
+
+    /** S7: system.test / summary.daily / summary.weekly are never materialized as generic preference rows. */
+    public function test_s7_non_configurable_events_are_never_materialized(): void
+    {
+        [$company, $user] = $this->makeCompanyWithMember();
+        Sanctum::actingAs($user);
+
+        $this->putJson(self::ENDPOINT, $this->fullValidPayload([
+            'preferences' => [['event_type' => 'service_order.created', 'enabled' => true]],
+        ]))->assertOk();
+
+        $this->currentCompanyContext()->run($company, function () {
+            foreach ([NotificationEventType::SystemTest, NotificationEventType::SummaryDaily, NotificationEventType::SummaryWeekly] as $type) {
+                $exists = NotificationPreference::query()->where('event_type', $type->value)->exists();
+                $this->assertFalse($exists, "{$type->value} should never have a row");
+            }
+        });
     }
 }

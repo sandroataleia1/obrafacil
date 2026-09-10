@@ -78,24 +78,38 @@ class NotificationSettingsService
                 'updated_at',
             ]);
 
-            $preferenceRows = array_map(fn (array $preference) => [
+            // NOTIFICATIONS-API-01A: a PUT is a complete snapshot (§19 of
+            // the original gate) — every user-configurable event type gets
+            // a row every time, not just the ones the client happened to
+            // include. Building rows only from $validated['preferences']
+            // left a previously-true, now-omitted preference untouched
+            // (still true) instead of reverting it to false, which is the
+            // documented contract for an omitted configurable event.
+            $submittedMap = collect($validated['preferences'] ?? [])
+                ->mapWithKeys(fn (array $preference) => [$preference['event_type'] => (bool) $preference['enabled']])
+                ->all();
+
+            $preferenceRows = array_map(fn (NotificationEventType $type) => [
                 'id' => (string) Str::uuid(),
                 'company_id' => $company->id,
                 'user_id' => $user->id,
-                'event_type' => $preference['event_type'],
+                'event_type' => $type->value,
                 'channel' => NotificationChannel::WhatsApp->value,
-                'enabled' => $preference['enabled'],
+                // Omitted = false — never preserves a stale true from a
+                // previous PUT (§2/§5/§7). configurableEventTypes() (not
+                // NotificationEventType::cases()) stays the only source of
+                // which event types ever get a generic row — system.test
+                // and the two summary.* types never do (§6).
+                'enabled' => $submittedMap[$type->value] ?? false,
                 'created_at' => $now,
                 'updated_at' => $now,
-            ], $validated['preferences'] ?? []);
+            ], $this->configurableEventTypes());
 
-            if ($preferenceRows !== []) {
-                NotificationPreference::upsert(
-                    $preferenceRows,
-                    uniqueBy: ['company_id', 'user_id', 'event_type', 'channel'],
-                    update: ['enabled', 'updated_at'],
-                );
-            }
+            NotificationPreference::upsert(
+                $preferenceRows,
+                uniqueBy: ['company_id', 'user_id', 'event_type', 'channel'],
+                update: ['enabled', 'updated_at'],
+            );
 
             $setting = NotificationSetting::query()->where('user_id', $user->id)->first();
             $preferenceMap = $this->currentPreferenceMap($user);
