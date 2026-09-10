@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { toE164BR } from "@/features/auth/phone-e164";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
-import { formatCnpj, formatCpf, onlyDigits } from "@/lib/document";
+import { formatCnpj, formatCpf, formatE164PhoneForDisplay, onlyDigits } from "@/lib/document";
 import { formatPhoneInput } from "@/lib/phone";
 import { AddressFields, EMPTY_ADDRESS_FIELDS, type AddressFieldsValue } from "./address-fields";
 import { ContactFields, EMPTY_CONTACT_FIELDS, type ContactFieldsValue } from "./contact-fields";
@@ -137,7 +137,7 @@ export function CustomerCreateForm() {
 
       setLegalName((current) => current || result.legal_name);
       setTradeName((current) => current || result.trade_name || "");
-      setPhone((current) => current || (result.phone ? formatPhoneInput(result.phone) : ""));
+      setPhone((current) => current || (result.phone ? formatE164PhoneForDisplay(result.phone) : ""));
       setEmail((current) => current || result.email || "");
       setName((current) => current || result.trade_name || result.legal_name);
 

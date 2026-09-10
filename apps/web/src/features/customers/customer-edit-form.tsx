@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Search, Users } from "lucide-react";
 
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useAuth } from "@/features/auth/auth-provider";
 import { toE164BR } from "@/features/auth/phone-e164";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { formatCnpj, formatCpf, formatE164PhoneForDisplay, onlyDigits } from "@/lib/document";
@@ -22,9 +23,16 @@ function firstError(errors: Record<string, string[]>, key: string): string | nul
 
 export function CustomerEditForm({ customerId }: { customerId: string }) {
   const router = useRouter();
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
 
   const [status, setStatus] = useState<"loading" | "success" | "error" | "not_found">("loading");
   const [original, setOriginal] = useState<Customer | null>(null);
+
+  // §11: guards against a slower earlier tenant's GET resolving after a
+  // faster later one and repopulating this form with the wrong tenant's
+  // Customer.
+  const requestSequence = useRef(0);
 
   const [kind, setKind] = useState<CustomerKind>("individual");
   const [name, setName] = useState("");
@@ -44,9 +52,14 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
 
   const load = useCallback(async () => {
+    const requestId = ++requestSequence.current;
+    // §10: never keep the previous tenant's form populated while the new
+    // GET is in flight — invalidate immediately.
     setStatus("loading");
+    setOriginal(null);
     try {
       const customer = await getCustomer(customerId);
+      if (requestSequence.current !== requestId) return;
       setOriginal(customer);
       setKind(customer.kind);
       setName(customer.name);
@@ -59,13 +72,17 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
       setActive(customer.active);
       setStatus("success");
     } catch (error) {
+      if (requestSequence.current !== requestId) return;
       if (error instanceof ApiError && error.status === 404) {
         setStatus("not_found");
         return;
       }
       setStatus("error");
     }
-  }, [customerId]);
+    // §10: a company switch must always trigger a fresh GET, even though
+    // `customerId` alone didn't change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, activeCompanyId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -86,7 +103,7 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
       const result = await lookupCnpj(digits);
       setLegalName((current) => current || result.legal_name);
       setTradeName((current) => current || result.trade_name || "");
-      setPhone((current) => current || (result.phone ? formatPhoneInput(result.phone) : ""));
+      setPhone((current) => current || (result.phone ? formatE164PhoneForDisplay(result.phone) : ""));
       setEmail((current) => current || result.email || "");
       setCnpjStatus("idle");
     } catch (error) {

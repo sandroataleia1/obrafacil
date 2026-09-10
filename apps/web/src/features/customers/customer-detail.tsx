@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -26,6 +26,7 @@ import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { formatCep, formatCpfCnpj, formatE164PhoneForDisplay } from "@/lib/document";
 import { formatCurrency } from "@/lib/currency";
+import { useAuth } from "@/features/auth/auth-provider";
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
 import { StatusBadge } from "@/features/budgets/components/status-badge";
@@ -106,6 +107,9 @@ function addressCityLine(address: CustomerAddress): string {
 
 export function CustomerDetail({ id }: { id: string }) {
   const router = useRouter();
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+
   const [status, setStatus] = useState<"loading" | "success" | "error" | "not_found">("loading");
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [budgets, setBudgets] = useState<Budget[] | null>(null);
@@ -128,21 +132,36 @@ export function CustomerDetail({ id }: { id: string }) {
   const [deleteContactError, setDeleteContactError] = useState<string | null>(null);
   const [deletingCustomer, setDeletingCustomer] = useState(false);
   const [deleteCustomerError, setDeleteCustomerError] = useState<string | null>(null);
+  const [primaryActionError, setPrimaryActionError] = useState<string | null>(null);
+
+  // §11: guards against a slower earlier tenant's GET (Company A) resolving
+  // after a faster later one (Company B) and re-populating this screen with
+  // the wrong tenant's Customer.
+  const requestSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = ++requestSequence.current;
+    // §9: never keep showing the previous tenant's Customer while the new
+    // GET is in flight — invalidate immediately, not just on success.
     setStatus("loading");
+    setCustomer(null);
     try {
       const data = await getCustomer(id);
+      if (requestSequence.current !== requestId) return;
       setCustomer(data);
       setStatus("success");
     } catch (error) {
+      if (requestSequence.current !== requestId) return;
       if (error instanceof ApiError && error.status === 404) {
         setStatus("not_found");
         return;
       }
       setStatus("error");
     }
-  }, [id]);
+    // §8: a company switch must always trigger a fresh GET, even though
+    // `id` alone didn't change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, activeCompanyId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -158,12 +177,14 @@ export function CustomerDetail({ id }: { id: string }) {
 
   function openAddAddress() {
     setAddressError(null);
+    setPrimaryActionError(null);
     setAddressDraft(EMPTY_ADDRESS_FIELDS);
     setAddressDialog({ address: null });
   }
 
   function openEditAddress(address: CustomerAddress) {
     setAddressError(null);
+    setPrimaryActionError(null);
     setAddressDraft({
       label: address.label,
       type: address.type,
@@ -216,6 +237,7 @@ export function CustomerDetail({ id }: { id: string }) {
 
   async function handleSetPrimaryAddress(address: CustomerAddress) {
     if (!customer) return;
+    setPrimaryActionError(null);
     try {
       await updateAddress(customer.id, address.id, {
         label: address.label,
@@ -232,7 +254,8 @@ export function CustomerDetail({ id }: { id: string }) {
       });
       await load();
     } catch {
-      // Non-blocking: the list simply keeps its previous primary on failure.
+      // §18: never let the action look like it silently succeeded.
+      setPrimaryActionError("Não foi possível tornar este endereço principal agora.");
     }
   }
 
@@ -256,6 +279,7 @@ export function CustomerDetail({ id }: { id: string }) {
 
   function openAddContact() {
     setContactError(null);
+    setPrimaryActionError(null);
     setContactDraft(EMPTY_CONTACT_FIELDS);
     setContactActive(true);
     setContactDialog({ contact: null });
@@ -263,6 +287,7 @@ export function CustomerDetail({ id }: { id: string }) {
 
   function openEditContact(contact: CustomerContact) {
     setContactError(null);
+    setPrimaryActionError(null);
     setContactDraft({
       name: contact.name,
       role: contact.role ?? "",
@@ -311,6 +336,7 @@ export function CustomerDetail({ id }: { id: string }) {
 
   async function handleSetPrimaryContact(contact: CustomerContact) {
     if (!customer) return;
+    setPrimaryActionError(null);
     try {
       await updateContact(customer.id, contact.id, {
         name: contact.name,
@@ -325,7 +351,8 @@ export function CustomerDetail({ id }: { id: string }) {
       });
       await load();
     } catch {
-      // Non-blocking.
+      // §18: never let the action look like it silently succeeded.
+      setPrimaryActionError("Não foi possível tornar este contato principal agora.");
     }
   }
 
@@ -410,6 +437,12 @@ export function CustomerDetail({ id }: { id: string }) {
         ) : null}
       </div>
 
+      {primaryActionError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {primaryActionError}
+        </p>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-2">
         <Button variant="outline" nativeButton={false} render={<Link href={`/clientes/${customer.id}/editar`} />}>
           <Pencil className="size-4" aria-hidden="true" />
@@ -469,7 +502,12 @@ export function CustomerDetail({ id }: { id: string }) {
               <div key={address.id} className="space-y-1.5 rounded-xl border border-border bg-card p-3.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5">
-                    {address.is_primary ? <Star className="size-3.5 fill-primary text-primary" aria-hidden="true" /> : null}
+                    {address.is_primary ? (
+                      <span className="flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                        <Star className="size-3 fill-primary text-primary" aria-hidden="true" />
+                        Principal
+                      </span>
+                    ) : null}
                     <p className="text-sm font-medium text-foreground">{address.label}</p>
                     <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                       {ADDRESS_TYPE_LABELS[address.type]}
@@ -530,7 +568,12 @@ export function CustomerDetail({ id }: { id: string }) {
               <div key={contact.id} className="space-y-1.5 rounded-xl border border-border bg-card p-3.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5">
-                    {contact.is_primary ? <Star className="size-3.5 fill-primary text-primary" aria-hidden="true" /> : null}
+                    {contact.is_primary ? (
+                      <span className="flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                        <Star className="size-3 fill-primary text-primary" aria-hidden="true" />
+                        Principal
+                      </span>
+                    ) : null}
                     <p className="text-sm font-medium text-foreground">{contact.name}</p>
                     {!contact.active ? (
                       <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -576,6 +619,7 @@ export function CustomerDetail({ id }: { id: string }) {
                 ) : null}
                 {contact.whatsapp ? <p className="text-xs text-muted-foreground">WhatsApp: {formatE164PhoneForDisplay(contact.whatsapp)}</p> : null}
                 {contact.email ? <p className="text-xs text-muted-foreground">{contact.email}</p> : null}
+                {contact.notes ? <p className="text-xs text-muted-foreground">Observações: {contact.notes}</p> : null}
               </div>
             ))}
           </div>

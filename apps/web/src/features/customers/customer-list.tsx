@@ -113,7 +113,8 @@ function CustomerCard({ customer, onDelete }: { customer: CustomerListItem; onDe
   );
 }
 
-const TABLE_ROW_GRID = "lg:grid lg:grid-cols-[minmax(0,1fr)_100px_160px_160px_112px] lg:items-center lg:gap-4";
+const TABLE_ROW_GRID =
+  "lg:grid lg:grid-cols-[minmax(0,1fr)_80px_140px_140px_minmax(0,160px)_112px] lg:items-center lg:gap-4";
 
 function CustomerTableRow({ customer, onDelete }: { customer: CustomerListItem; onDelete: (customer: CustomerListItem) => void }) {
   return (
@@ -138,6 +139,7 @@ function CustomerTableRow({ customer, onDelete }: { customer: CustomerListItem; 
       <span className="truncate text-sm text-muted-foreground">
         {customer.primary_contact?.name ?? "—"}
       </span>
+      <span className="truncate text-sm text-muted-foreground">{addressSummary(customer) ?? "—"}</span>
       <div className="justify-self-end">
         <RowActions customer={customer} onDelete={onDelete} />
       </div>
@@ -164,6 +166,7 @@ function CustomerTable({
         <span>Tipo</span>
         <span>Telefone</span>
         <span>Contato</span>
+        <span>Endereço principal</span>
         <span className="justify-self-end">Ações</span>
       </div>
       <div className="divide-y divide-border">
