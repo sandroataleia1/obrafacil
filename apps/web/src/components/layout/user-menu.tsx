@@ -28,7 +28,7 @@ function getInitials(name: string): string {
  */
 export function UserMenu() {
   const auth = useAuth();
-  const performLogout = usePerformLogout();
+  const { performLogout, status: logoutStatus, error: logoutError } = usePerformLogout();
 
   // AppShell only renders this once authenticated with an active
   // company, but stay defensive rather than assume it non-null here.
@@ -71,9 +71,20 @@ export function UserMenu() {
           <p>Build {releaseInfo.build}</p>
         </div>
         <MenuSeparator />
-        <MenuItem closeOnClick onClick={() => void performLogout()}>
-          Sair
+        <MenuItem
+          closeOnClick={false}
+          disabled={logoutStatus === "pending"}
+          onClick={() => void performLogout()}
+        >
+          {logoutStatus === "pending" ? "Saindo..." : "Sair"}
         </MenuItem>
+        {logoutStatus === "error" && logoutError ? (
+          <div className="px-3 pb-2">
+            <p role="alert" className="text-xs text-destructive">
+              {logoutError}
+            </p>
+          </div>
+        ) : null}
       </MenuContent>
     </Menu>
   );

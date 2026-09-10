@@ -5,7 +5,29 @@
  * `NEXT_PUBLIC_API_URL` or the `XSRF-TOKEN` cookie directly.
  */
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
+/**
+ * No fallback to a `localhost` default (Gate FRONTEND-AUTH-01A §5/§15):
+ * a production build with a forgotten/missing `NEXT_PUBLIC_API_URL` must
+ * fail loudly at first use, never silently ship a bundle that quietly
+ * tries to reach the *browser's own* localhost. Evaluated once at module
+ * load — the same place the old fallback lived — so the failure surfaces
+ * as early as possible instead of deep inside some unrelated request.
+ */
+function resolveApiUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_API_URL;
+
+  if (!raw || raw.trim() === "") {
+    throw new Error(
+      "NEXT_PUBLIC_API_URL is not configured. Set it explicitly (e.g. apps/web/.env.local for " +
+        "local development, or as a build-time env var for a real deployment) — there is no " +
+        "default/fallback API host."
+    );
+  }
+
+  return raw.trim().replace(/\/+$/, "");
+}
+
+const API_URL = resolveApiUrl();
 
 export class ApiValidationError extends Error {
   readonly status = 422 as const;
@@ -47,15 +69,27 @@ function readCookie(name: string): string | null {
  * establishes the session cookie and the XSRF-TOKEN cookie the next
  * request reads from. Safe to call repeatedly: Laravel just reissues the
  * same session's token.
+ *
+ * The response is checked explicitly (Gate FRONTEND-AUTH-01A §7/§8): a
+ * non-2xx response here (404/419/429/500/503/...) is a real, distinct
+ * failure — never silently treated as "CSRF is now ready". A server error
+ * (`ApiError`) must never be reported as a network error (`ApiNetworkError`)
+ * or vice versa; the caller (and the user-facing message it picks) depends
+ * on knowing which one actually happened.
  */
 export async function ensureCsrfCookie(): Promise<void> {
+  let response: Response;
   try {
-    await fetch(`${API_URL}/sanctum/csrf-cookie`, {
+    response = await fetch(`${API_URL}/sanctum/csrf-cookie`, {
       credentials: "include",
       headers: { Accept: "application/json" },
     });
   } catch {
     throw new ApiNetworkError();
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, `Failed to initialize CSRF (status ${response.status})`);
   }
 }
 
@@ -66,14 +100,18 @@ interface ApiRequestOptions {
 
 /**
  * @throws {ApiValidationError} on 422
- * @throws {ApiError} on 401/403/404/409/419/429/5xx (and anything else non-OK)
- * @throws {ApiNetworkError} when the request never reached the server
+ * @throws {ApiError} on 401/403/404/409/419/429/5xx (and anything else non-OK),
+ *   including when CSRF initialization itself fails for a mutating request —
+ *   the request is never attempted in that case (Gate FRONTEND-AUTH-01A §9).
+ * @throws {ApiNetworkError} when a request never reached the server
  */
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const isMutating = method !== "GET";
 
   if (isMutating) {
+    // Throws (ApiError or ApiNetworkError) on failure, which propagates
+    // straight out of apiRequest — the mutating fetch below never runs.
     await ensureCsrfCookie();
   }
 
