@@ -12,6 +12,7 @@ import {
   Package,
   Receipt,
   ScrollText,
+  Settings,
   Truck,
   Users,
 } from "lucide-react";
@@ -60,4 +61,5 @@ export const DESKTOP_NAV_FINANCE_ITEMS: NavItem[] = [
 // its own quiet group instead of crowding "Gestão" or "Financeiro".
 export const DESKTOP_NAV_SYSTEM_ITEMS: NavItem[] = [
   { href: "/dados-e-backup", label: "Dados e backup", icon: DatabaseBackup },
+  { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
