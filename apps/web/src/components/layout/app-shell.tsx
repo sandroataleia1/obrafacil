@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
-import { useDemoAuthSession } from "@/features/auth/use-demo-auth";
+import { useAuth } from "@/features/auth/auth-provider";
 import { MIN_PAGE_SKELETON_MS } from "@/lib/min-duration";
 import { DesktopSidebar } from "./desktop-sidebar";
 import { isFocusedFlowRoute } from "./focused-flow";
@@ -31,15 +31,51 @@ function PageSkeleton({ pathname }: { pathname: string }) {
   return <DetailPageSkeleton />;
 }
 
+function SkeletonShell({ pathname }: { pathname: string }) {
+  return (
+    <div className="min-h-dvh bg-background px-4 py-6 sm:px-6 md:px-10 md:py-12 lg:px-12 xl:px-16">
+      <div className="mx-auto w-full max-w-xl sm:max-w-2xl md:max-w-2xl lg:max-w-none">
+        <PageSkeleton pathname={pathname} />
+      </div>
+    </div>
+  );
+}
+
+function OfflineShell({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-background px-6">
+      <div className="w-full max-w-sm space-y-4 text-center">
+        <p role="alert" className="text-sm text-muted-foreground">
+          Não foi possível conectar ao servidor.
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        >
+          Tentar novamente
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
- * Central guard for every route under the `(app)` group (Pilot-Ready
- * "Login de Demonstração" §8) — no per-page guard duplicated anywhere.
- * `/login` lives outside this route group entirely, so it is never
- * subject to this check. `session === undefined` (not yet read from
- * localStorage) and `session === null` (redirecting) both render the
- * same route-appropriate Skeleton used for in-app navigation, instead
- * of a blank screen or a second, different loading style — internal
- * pages show exactly one kind of loading indicator (the skeleton).
+ * Central guard for every route under the `(app)` group (Gate
+ * FRONTEND-AUTH-01 §22) — no per-page guard duplicated anywhere. `/login`,
+ * `/cadastro` and `/selecionar-empresa` live outside this route group
+ * entirely, so they are never subject to this check.
+ *
+ * Rules, in order:
+ *   - loading            -> skeleton, never private content, never a
+ *                           redirect fired prematurely.
+ *   - offline             -> a controlled "couldn't connect" screen with a
+ *                           retry action — never silently treated as
+ *                           logged out (an unreachable API is not the same
+ *                           thing as an invalid session).
+ *   - unauthenticated     -> redirect to /login.
+ *   - requiresCompanySelection -> redirect to /selecionar-empresa.
+ *   - authenticated + active company -> the app shell renders normally.
  *
  * The skeleton-on-navigation logic also lives here rather than in
  * `app/(app)/template.tsx`: a route-group `template.tsx` only remounts
@@ -53,7 +89,7 @@ function PageSkeleton({ pathname }: { pathname: string }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { session } = useDemoAuthSession();
+  const auth = useAuth();
   const focused = isFocusedFlowRoute(pathname);
 
   // `activePathname` lags one tick behind `pathname` on every
@@ -70,19 +106,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [pathname, transitioning]);
 
   useEffect(() => {
-    if (session === null) {
+    if (auth.status === "unauthenticated") {
       router.replace("/login");
+      return;
     }
-  }, [session, router]);
+    if (auth.status === "authenticated" && auth.requiresCompanySelection) {
+      router.replace("/selecionar-empresa");
+    }
+  }, [auth, router]);
 
-  if (session === undefined || session === null) {
-    return (
-      <div className="min-h-dvh bg-background px-4 py-6 sm:px-6 md:px-10 md:py-12 lg:px-12 xl:px-16">
-        <div className="mx-auto w-full max-w-xl sm:max-w-2xl md:max-w-2xl lg:max-w-none">
-          <PageSkeleton pathname={pathname} />
-        </div>
-      </div>
-    );
+  if (auth.status === "offline") {
+    return <OfflineShell onRetry={() => auth.refresh()} />;
+  }
+
+  if (
+    auth.status === "loading" ||
+    auth.status === "unauthenticated" ||
+    (auth.status === "authenticated" && auth.requiresCompanySelection)
+  ) {
+    return <SkeletonShell pathname={pathname} />;
   }
 
   return (
@@ -90,7 +132,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <DesktopSidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={session.user} />
+        <Topbar />
 
         <main
           className={cn(

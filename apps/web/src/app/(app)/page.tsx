@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Calculator, CalendarClock, FileText, House, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { pilotUser } from "@/lib/pilot-config";
+import { useAuth } from "@/features/auth/auth-provider";
 import { useDashboardSummary } from "@/features/dashboard/prototype/use-dashboard-summary";
 import {
   formatMaxDaysLateText,
@@ -49,10 +49,13 @@ function HeaderActions() {
 }
 
 export default function HomePage() {
+  const auth = useAuth();
   const summary = useDashboardSummary();
   const supplySummary = useDashboardSupplySummary();
 
-  if (summary === undefined || supplySummary === undefined) return null;
+  if (summary === undefined || supplySummary === undefined || auth.user === null) return null;
+
+  const firstName = auth.user.name.trim().split(/\s+/)[0] ?? auth.user.name;
 
   return (
     <div className="space-y-6">
@@ -60,7 +63,7 @@ export default function HomePage() {
         <div className="space-y-1">
           <h1 className="flex items-center gap-2 text-[1.75rem] font-semibold tracking-tight text-foreground sm:text-3xl">
             <House className="size-6 shrink-0 text-muted-foreground" aria-hidden="true" />
-            Olá, {pilotUser.firstName}
+            Olá, {firstName}
           </h1>
           <p className="text-sm text-muted-foreground">
             Acompanhe a situação das suas obras e finanças.

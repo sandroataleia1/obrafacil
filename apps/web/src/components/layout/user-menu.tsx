@@ -1,13 +1,11 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
-import { performDemoLogout } from "@/features/auth/logout-button";
-import type { DemoAuthUser } from "@/features/auth/demo-auth";
+import { usePerformLogout } from "@/features/auth/logout-button";
+import { useAuth } from "@/features/auth/auth-provider";
 import { releaseInfo } from "@/lib/release-info";
-import { companyName } from "@/lib/pilot-config";
 
 /**
  * "Sandro Almeida" -> "SA" (first letter of the first two words);
@@ -23,23 +21,25 @@ function getInitials(name: string): string {
 
 /**
  * Session identity + logout, surfaced from the Topbar (Gate Shell
- * "Topbar Global" §6–§9). Receives `user` as a prop — resolved once by
- * `AppShell`'s own session gate — instead of re-reading the session
- * locally, so there is no second async read that could render with an
- * empty user for a frame before filling in (§20).
- *
- * `performDemoLogout` is the exact same function the sidebar's
- * (now-removed) and `/mais`'s "Sair" triggers use — no second logout
- * implementation.
+ * "Topbar Global" §6–§9). Reads the session directly from `useAuth()` —
+ * the same single source `AppShell` already gated on — instead of a
+ * second, separate read, so there is never a frame where this renders
+ * with a stale or empty identity (§20).
  */
-export function UserMenu({ user }: { user: DemoAuthUser }) {
-  const router = useRouter();
-  const initials = getInitials(user.name);
+export function UserMenu() {
+  const auth = useAuth();
+  const performLogout = usePerformLogout();
+
+  // AppShell only renders this once authenticated with an active
+  // company, but stay defensive rather than assume it non-null here.
+  if (auth.user === null) return null;
+
+  const initials = getInitials(auth.user.name);
 
   return (
     <Menu>
       <MenuTrigger
-        aria-label={`Conta de ${user.name}`}
+        aria-label={`Conta de ${auth.user.name}`}
         className="flex items-center gap-2 rounded-lg py-1.5 pr-2 pl-1.5 text-sm font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring aria-expanded:bg-muted"
       >
         <span
@@ -48,26 +48,30 @@ export function UserMenu({ user }: { user: DemoAuthUser }) {
         >
           {initials}
         </span>
-        <span className="hidden max-w-32 truncate sm:inline">{user.name}</span>
+        <span className="hidden max-w-32 truncate sm:inline">{auth.user.name}</span>
         <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       </MenuTrigger>
       <MenuContent>
         <div className="min-w-0 px-3 py-2">
-          <p className="truncate text-sm font-medium text-foreground">{user.name}</p>
-          <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+          <p className="truncate text-sm font-medium text-foreground">{auth.user.name}</p>
+          <p className="truncate text-xs text-muted-foreground">{auth.user.email}</p>
         </div>
         <MenuSeparator />
-        <div className="min-w-0 px-3 py-2 text-xs text-muted-foreground">
-          <p className="max-w-56 truncate font-medium text-foreground/80">{companyName}</p>
-        </div>
-        <MenuSeparator />
+        {auth.activeCompany ? (
+          <>
+            <div className="min-w-0 px-3 py-2 text-xs text-muted-foreground">
+              <p className="max-w-56 truncate font-medium text-foreground/80">{auth.activeCompany.name}</p>
+            </div>
+            <MenuSeparator />
+          </>
+        ) : null}
         <div className="min-w-0 px-3 py-2 text-xs text-muted-foreground">
           <p className="font-medium text-foreground/80">{releaseInfo.channel}</p>
           <p>Versão {releaseInfo.version}</p>
           <p>Build {releaseInfo.build}</p>
         </div>
         <MenuSeparator />
-        <MenuItem closeOnClick onClick={() => performDemoLogout(router)}>
+        <MenuItem closeOnClick onClick={() => void performLogout()}>
           Sair
         </MenuItem>
       </MenuContent>

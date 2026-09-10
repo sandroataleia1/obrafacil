@@ -5,12 +5,18 @@
  * `process.env.NEXT_PUBLIC_*` directly, so there is exactly one place
  * that knows the env var names and the dev-safe fallbacks.
  *
- * All values are `NEXT_PUBLIC_*` because this app has no backend yet —
- * Next.js inlines them into the client bundle at `next build` time (same
- * mechanism already used by `NEXT_PUBLIC_BUILD_SHA`, see `release-info.ts`).
- * Each is referenced as a static `process.env.NEXT_PUBLIC_X` property
- * access below (never through a loop or computed key) because that static
- * form is what Next.js's build-time inliner requires to replace it.
+ * All values are `NEXT_PUBLIC_*` — Next.js inlines them into the client
+ * bundle at `next build` time (same mechanism already used by
+ * `NEXT_PUBLIC_BUILD_SHA`, see `release-info.ts`). Each is referenced as a
+ * static `process.env.NEXT_PUBLIC_X` property access below (never through
+ * a loop or computed key) because that static form is what Next.js's
+ * build-time inliner requires to replace it.
+ *
+ * As of Gate FRONTEND-AUTH-01, identity/credentials are no longer this
+ * module's responsibility — `pilotUser`/`companyName` were removed once
+ * `features/auth/demo-auth.ts` (their only consumer) was deleted in favor
+ * of the real Laravel/Sanctum session (`features/auth/auth-provider.tsx`).
+ * This module still governs seed-data visibility, unrelated to auth.
  */
 
 function readBooleanEnv(raw: string | undefined, defaultValue: boolean): boolean {
@@ -34,30 +40,3 @@ export const demoDataEnabled: boolean = readBooleanEnv(process.env.NEXT_PUBLIC_D
  * is never removed — see PILOT-CLEAN §9, this only controls visibility.
  */
 export const pilotResetEnabled: boolean = readBooleanEnv(process.env.NEXT_PUBLIC_PILOT_RESET_ENABLED, true);
-
-/**
- * Display name for the client's company, shown next to the session
- * identity (UserMenu) — never a hardcoded client name in a component.
- * "ObraFácil" itself is the product name and is never replaced by this.
- */
-export const companyName: string = process.env.NEXT_PUBLIC_COMPANY_NAME?.trim() || "ObraFácil Demo";
-
-/**
- * The pilot's single login. This authentication is entirely client-side
- * (see `features/auth/demo-auth.ts`) — there is no backend, no hash, no
- * token. `NEXT_PUBLIC_*` values are inlined into the browser bundle and
- * are trivially inspectable there; this is an ACCEPTED, TEMPORARY
- * limitation for this controlled pilot, not real security. It exists
- * only to let one client have one login for one quick test — never treat
- * this password as a secret, and never build real security on top of it.
- */
-const pilotUserName = process.env.NEXT_PUBLIC_PILOT_USER_NAME?.trim() || "Administrador";
-
-export const pilotUser = {
-  name: pilotUserName,
-  /** First token of `name` — the Dashboard greeting ("Olá, {firstName}")
-   * derives from this instead of a separate hardcoded identity mock. */
-  firstName: pilotUserName.split(/\s+/)[0] ?? pilotUserName,
-  email: process.env.NEXT_PUBLIC_PILOT_USER_EMAIL?.trim() || "admin@admin.com",
-  password: process.env.NEXT_PUBLIC_PILOT_USER_PASSWORD || "admin@123",
-};
