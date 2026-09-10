@@ -32,5 +32,12 @@ class AppServiceProvider extends ServiceProvider
 
             return Limit::perMinute(5)->by($key);
         });
+
+        // IP-only (not email+IP like login): registration creates new
+        // identities, so keying by an attacker-supplied email would let
+        // them rotate emails from one IP to bypass the limit entirely.
+        RateLimiter::for('register', function (Request $request) {
+            return Limit::perMinute(5)->by($request->ip());
+        });
     }
 }
