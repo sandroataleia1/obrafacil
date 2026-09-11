@@ -13,6 +13,7 @@ import {
   Receipt,
   ScrollText,
   Settings,
+  Tags,
   Truck,
   Users,
 } from "lucide-react";
@@ -46,6 +47,7 @@ export const DESKTOP_NAV_ITEMS: NavItem[] = [
 export const DESKTOP_NAV_EXTRA_ITEMS: NavItem[] = [
   { href: "/equipe", label: "Equipe", icon: HardHat },
   { href: "/fornecedores", label: "Fornecedores", icon: Truck },
+  { href: "/catalogo", label: "Produtos e serviços", icon: Tags },
   { href: "/materiais", label: "Materiais", icon: Package },
   { href: "/compras", label: "Compras", icon: ClipboardList },
   { href: "/estoque", label: "Estoque", icon: Boxes },
