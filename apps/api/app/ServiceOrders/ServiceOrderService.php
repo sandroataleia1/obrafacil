@@ -14,12 +14,25 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * BACKEND-06 §38-42/§48-52. The single place a ServiceOrder header is
- * created/updated/transitioned — controllers stay thin. `create()` is the
- * one atomic transaction described in §38: number allocation, customer/
- * address/contact resolution + snapshot copy, initial items, and totals
- * all succeed or all roll back together (including the sequence
- * increment — see ServiceOrderNumberAllocator's docblock).
+ * BACKEND-06 §38-42/§48-52. BACKEND-06B §5-8. The single place a
+ * ServiceOrder header is created/updated/transitioned — controllers stay
+ * thin. `create()` is the one atomic transaction described in §38: number
+ * allocation, customer/address/contact resolution + snapshot copy,
+ * initial items, and totals all succeed or all roll back together
+ * (including the sequence increment — see ServiceOrderNumberAllocator's
+ * docblock).
+ *
+ * `updateHeader()`/`start()`/`complete()`/`cancel()` each wrap their
+ * ENTIRE body in `DB::transaction()` and lock the target row
+ * (`ServiceOrderLocker::lock()`, a real `SELECT ... FOR UPDATE`) as the
+ * very first statement — before reading `status`/`subtotal`/anything
+ * else. A `$order` instance the caller loaded before the call is never
+ * trusted for those fields; only the locked, freshly-queried instance
+ * returned by the locker is authoritative from that point on
+ * (BACKEND-06B §3/§5-8/§21). This is what turns "two concurrent
+ * complete/cancel/start calls on the same O.S." into "exactly one wins,
+ * the other observes the post-lock state and gets a clean 409" instead of
+ * a lost update or last-write-wins race.
  */
 class ServiceOrderService
 {
@@ -27,6 +40,7 @@ class ServiceOrderService
         private readonly ServiceOrderNumberAllocator $numberAllocator,
         private readonly ServiceOrderSettingsService $settingsService,
         private readonly ServiceOrderItemService $itemService,
+        private readonly ServiceOrderLocker $locker,
     ) {}
 
     /**
@@ -101,13 +115,19 @@ class ServiceOrderService
      * unchanged — never trusts a snapshot from the frontend. Items are
      * never touched here (§39 — "NÃO sincroniza items silenciosamente").
      *
+     * BACKEND-06B §5: locks the row first, then rechecks `status` and
+     * calculates `total` against the LOCKED instance's `subtotal` —
+     * never the `$order->subtotal` the caller loaded before this call,
+     * which a concurrent item mutation could have already changed.
+     *
      * @param  array<string, mixed>  $validated
      */
-    public function updateHeader(ServiceOrder $order, array $validated): ServiceOrder
+    public function updateHeader(ServiceOrder|string $order, array $validated): ServiceOrder
     {
-        $this->assertEditable($order);
-
         return DB::transaction(function () use ($order, $validated) {
+            $lockedOrder = $this->locker->lock($order);
+            $this->assertEditable($lockedOrder);
+
             $customer = Customer::query()->findOrFail($validated['customer_id']);
             $address = CustomerAddress::query()->where('customer_id', $customer->id)->findOrFail($validated['customer_address_id']);
             $contact = $this->resolveContact($customer, $validated['customer_contact_id'] ?? null);
@@ -115,9 +135,9 @@ class ServiceOrderService
             $orderDiscount = Money::normalize((string) ($validated['order_discount'] ?? '0.00'));
             $travelFee = Money::normalize((string) ($validated['travel_fee'] ?? '0.00'));
 
-            $this->assertOrderDiscountWithinSubtotal($orderDiscount, (string) $order->subtotal);
+            $this->assertOrderDiscountWithinSubtotal($orderDiscount, (string) $lockedOrder->subtotal);
 
-            $order->fill(array_merge(
+            $lockedOrder->fill(array_merge(
                 [
                     'responsible_user_id' => $validated['responsible_user_id'] ?? null,
                     'title' => $validated['title'],
@@ -126,7 +146,7 @@ class ServiceOrderService
                     'scheduled_end_at' => $validated['scheduled_end_at'] ?? null,
                     'order_discount' => $orderDiscount,
                     'travel_fee' => $travelFee,
-                    'total' => ServiceOrderCalculator::total((string) $order->subtotal, $orderDiscount, $travelFee),
+                    'total' => ServiceOrderCalculator::total((string) $lockedOrder->subtotal, $orderDiscount, $travelFee),
                     'notes' => $validated['notes'] ?? null,
                 ],
                 $this->customerSnapshot($customer),
@@ -138,54 +158,84 @@ class ServiceOrderService
                     'customer_contact_id' => $contact?->id,
                 ]
             ));
-            $order->save();
+            $lockedOrder->save();
 
-            return $order;
+            return $lockedOrder;
         });
     }
 
-    public function start(ServiceOrder $order): ServiceOrder
+    /**
+     * BACKEND-06B §6: locks first, then checks `status` on the locked
+     * instance — a second concurrent `start()` only ever gets to run
+     * after the first one's transaction has committed (or rolled back),
+     * so it always observes the real post-lock status and cleanly 409s
+     * instead of racing the first one's write.
+     */
+    public function start(ServiceOrder|string $order): ServiceOrder
     {
-        if ($order->status !== ServiceOrderStatus::Open) {
-            throw new ServiceOrderStatusConflictException(
-                $order->status->isTerminal()
-                    ? 'Esta O.S. já foi finalizada ou cancelada.'
-                    : 'Esta O.S. já está em andamento.'
-            );
-        }
+        return DB::transaction(function () use ($order) {
+            $lockedOrder = $this->locker->lock($order);
 
-        $order->status = ServiceOrderStatus::InProgress;
-        $order->started_at = now();
-        $order->save();
+            if ($lockedOrder->status !== ServiceOrderStatus::Open) {
+                throw new ServiceOrderStatusConflictException(
+                    $lockedOrder->status->isTerminal()
+                        ? 'Esta O.S. já foi finalizada ou cancelada.'
+                        : 'Esta O.S. já está em andamento.'
+                );
+            }
 
-        return $order;
+            $lockedOrder->status = ServiceOrderStatus::InProgress;
+            $lockedOrder->started_at = now();
+            $lockedOrder->save();
+
+            return $lockedOrder;
+        });
     }
 
-    public function complete(ServiceOrder $order): ServiceOrder
+    /**
+     * BACKEND-06B §7/§14/§15/§17: locks first. `complete` racing `cancel`
+     * (or another `complete`) always resolves to exactly one terminal
+     * transition — whichever transaction acquires the lock first commits
+     * its transition, and the other observes `isTerminal() === true` once
+     * it finally acquires the lock and 409s, never overwriting the first
+     * decision.
+     */
+    public function complete(ServiceOrder|string $order): ServiceOrder
     {
-        if ($order->status->isTerminal()) {
-            throw new ServiceOrderStatusConflictException('Esta O.S. já foi finalizada ou cancelada.');
-        }
+        return DB::transaction(function () use ($order) {
+            $lockedOrder = $this->locker->lock($order);
 
-        $order->status = ServiceOrderStatus::Completed;
-        $order->completed_at = now();
-        $order->save();
+            if ($lockedOrder->status->isTerminal()) {
+                throw new ServiceOrderStatusConflictException('Esta O.S. já foi finalizada ou cancelada.');
+            }
 
-        return $order;
+            $lockedOrder->status = ServiceOrderStatus::Completed;
+            $lockedOrder->completed_at = now();
+            $lockedOrder->save();
+
+            return $lockedOrder;
+        });
     }
 
-    public function cancel(ServiceOrder $order, string $reason): ServiceOrder
+    /**
+     * BACKEND-06B §8/§16: same guarantee as `complete()`, symmetrically.
+     */
+    public function cancel(ServiceOrder|string $order, string $reason): ServiceOrder
     {
-        if ($order->status->isTerminal()) {
-            throw new ServiceOrderStatusConflictException('Esta O.S. já foi finalizada ou cancelada.');
-        }
+        return DB::transaction(function () use ($order, $reason) {
+            $lockedOrder = $this->locker->lock($order);
 
-        $order->status = ServiceOrderStatus::Cancelled;
-        $order->cancelled_at = now();
-        $order->cancellation_reason = $reason;
-        $order->save();
+            if ($lockedOrder->status->isTerminal()) {
+                throw new ServiceOrderStatusConflictException('Esta O.S. já foi finalizada ou cancelada.');
+            }
 
-        return $order;
+            $lockedOrder->status = ServiceOrderStatus::Cancelled;
+            $lockedOrder->cancelled_at = now();
+            $lockedOrder->cancellation_reason = $reason;
+            $lockedOrder->save();
+
+            return $lockedOrder;
+        });
     }
 
     private function resolveContact(Customer $customer, ?string $contactId): ?CustomerContact

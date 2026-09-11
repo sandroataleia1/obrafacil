@@ -10,46 +10,61 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * BACKEND-06 §19-26/§43-46. All ServiceOrderItem mutation lives here —
- * controllers stay thin. Every method recalculates and persists the
- * parent ServiceOrder's subtotal/total in the same call (§15/§16/§17 of
- * the item-total spec block), so the header is never left stale after an
- * item add/update/delete.
+ * BACKEND-06 §19-26/§43-46. BACKEND-06B §9-11/§26. All ServiceOrderItem
+ * mutation lives here — controllers stay thin. Every method recalculates
+ * and persists the parent ServiceOrder's subtotal/total in the same call,
+ * so the header is never left stale after an item add/update/delete.
+ *
+ * Every public method here wraps its ENTIRE body — lock, editability
+ * check, resolution, calculation, write, recalculation — in one
+ * `DB::transaction()`. The parent ServiceOrder is locked
+ * (`ServiceOrderLocker::lock()`, a real `SELECT ... FOR UPDATE`) as the
+ * very first statement, before `assertEditable()` or anything else reads
+ * its status: a caller may pass an `$order`/`$item` instance loaded
+ * before this call, possibly stale by the time this transaction actually
+ * runs, so only the locked/re-resolved instances inside the closure are
+ * ever trusted (BACKEND-06B §3/§9/§10/§21). Lock order is always parent
+ * first (never a child row locked ahead of it), matching
+ * ServiceOrderService's own locking order, so two mutations on the same
+ * O.S. can only ever serialize, never deadlock against each other
+ * (§26/§27).
  */
 class ServiceOrderItemService
 {
+    public function __construct(private readonly ServiceOrderLocker $locker) {}
+
     /**
      * @param  array<string, mixed>  $input
      */
-    public function addItem(ServiceOrder $order, array $input): ServiceOrderItem
+    public function addItem(ServiceOrder|string $order, array $input): ServiceOrderItem
     {
-        $this->assertEditable($order);
+        return DB::transaction(function () use ($order, $input) {
+            $lockedOrder = $this->locker->lock($order);
+            $this->assertEditable($lockedOrder);
 
-        $catalogItem = CatalogItem::query()->find($input['catalog_item_id']);
-        if ($catalogItem === null) {
-            throw ValidationException::withMessages(['catalog_item_id' => 'Item de catálogo inválido.']);
-        }
-        if (! $catalogItem->active) {
-            throw ValidationException::withMessages(['catalog_item_id' => 'Este item do catálogo está inativo.']);
-        }
+            $catalogItem = CatalogItem::query()->find($input['catalog_item_id']);
+            if ($catalogItem === null) {
+                throw ValidationException::withMessages(['catalog_item_id' => 'Item de catálogo inválido.']);
+            }
+            if (! $catalogItem->active) {
+                throw ValidationException::withMessages(['catalog_item_id' => 'Este item do catálogo está inativo.']);
+            }
 
-        $quantity = Money::normalize((string) $input['quantity'], 3);
-        $unitPrice = $this->resolveUnitPrice($input, $catalogItem);
-        $lineDiscount = Money::normalize((string) ($input['line_discount'] ?? '0.00'));
+            $quantity = Money::normalize((string) $input['quantity'], 3);
+            $unitPrice = $this->resolveUnitPrice($input, $catalogItem);
+            $lineDiscount = Money::normalize((string) ($input['line_discount'] ?? '0.00'));
 
-        $gross = ServiceOrderCalculator::grossLine($quantity, $unitPrice);
-        $this->assertDiscountWithinGross($lineDiscount, $gross);
+            $gross = ServiceOrderCalculator::grossLine($quantity, $unitPrice);
+            $this->assertDiscountWithinGross($lineDiscount, $gross);
 
-        // §15/§45: item insert + header recalculation happen atomically —
-        // a nested DB::transaction() becomes a real Postgres SAVEPOINT
-        // inside the caller's own transaction (or RefreshDatabase's, in
-        // tests), so a later ValidationException here rolls back the
-        // insert too, never leaving an orphaned item behind.
-        return DB::transaction(function () use ($order, $catalogItem, $quantity, $unitPrice, $lineDiscount, $gross, $input) {
-            $nextSortOrder = ((int) $order->items()->max('sort_order')) + 1;
+            // §18: protected by the parent lock — no concurrent addItem()
+            // for this same O.S. can compute this MAX() until the other
+            // one commits/rolls back, so two concurrent inserts always
+            // land on distinct sort_order values.
+            $nextSortOrder = ((int) $lockedOrder->items()->max('sort_order')) + 1;
 
             $item = ServiceOrderItem::create([
-                'service_order_id' => $order->id,
+                'service_order_id' => $lockedOrder->id,
                 'catalog_item_id' => $catalogItem->id,
                 'type' => $catalogItem->type->value,
                 'code' => $catalogItem->code,
@@ -64,7 +79,7 @@ class ServiceOrderItemService
                 'sort_order' => $nextSortOrder,
             ]);
 
-            $this->recalculateTotals($order);
+            $this->recalculateTotals($lockedOrder);
 
             return $item;
         });
@@ -77,48 +92,66 @@ class ServiceOrderItemService
      *
      * @param  array<string, mixed>  $input
      */
-    public function updateItem(ServiceOrder $order, ServiceOrderItem $item, array $input): ServiceOrderItem
+    public function updateItem(ServiceOrder|string $order, ServiceOrderItem|string $item, array $input): ServiceOrderItem
     {
-        $this->assertEditable($order);
+        return DB::transaction(function () use ($order, $item, $input) {
+            $lockedOrder = $this->locker->lock($order);
+            $this->assertEditable($lockedOrder);
 
-        $quantity = array_key_exists('quantity', $input)
-            ? Money::normalize((string) $input['quantity'], 3)
-            : (string) $item->quantity;
-        $unitPrice = array_key_exists('unit_price', $input) && $input['unit_price'] !== null
-            ? Money::normalize((string) $input['unit_price'])
-            : (string) $item->unit_price;
-        $lineDiscount = array_key_exists('line_discount', $input) && $input['line_discount'] !== null
-            ? Money::normalize((string) $input['line_discount'])
-            : (string) $item->line_discount;
+            // §10: never trust a possibly-stale ServiceOrderItem instance
+            // the caller loaded before this transaction — re-resolve it
+            // scoped to the now-locked parent, which is also what keeps a
+            // cross-order item id a 404 (ModelNotFoundException) instead
+            // of mutating another O.S.'s line.
+            $itemId = $item instanceof ServiceOrderItem ? $item->id : $item;
+            $lockedItem = $lockedOrder->items()->whereKey($itemId)->firstOrFail();
 
-        $gross = ServiceOrderCalculator::grossLine($quantity, $unitPrice);
-        $this->assertDiscountWithinGross($lineDiscount, $gross);
+            $quantity = array_key_exists('quantity', $input)
+                ? Money::normalize((string) $input['quantity'], 3)
+                : (string) $lockedItem->quantity;
+            $unitPrice = array_key_exists('unit_price', $input) && $input['unit_price'] !== null
+                ? Money::normalize((string) $input['unit_price'])
+                : (string) $lockedItem->unit_price;
+            $lineDiscount = array_key_exists('line_discount', $input) && $input['line_discount'] !== null
+                ? Money::normalize((string) $input['line_discount'])
+                : (string) $lockedItem->line_discount;
 
-        return DB::transaction(function () use ($order, $item, $quantity, $unitPrice, $lineDiscount, $gross, $input) {
-            $item->fill([
+            $gross = ServiceOrderCalculator::grossLine($quantity, $unitPrice);
+            $this->assertDiscountWithinGross($lineDiscount, $gross);
+
+            $lockedItem->fill([
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
                 'line_discount' => $lineDiscount,
                 'line_total' => Money::subtract($gross, $lineDiscount),
-                'notes' => array_key_exists('notes', $input) ? $input['notes'] : $item->notes,
-                'sort_order' => array_key_exists('sort_order', $input) ? $input['sort_order'] : $item->sort_order,
+                'notes' => array_key_exists('notes', $input) ? $input['notes'] : $lockedItem->notes,
+                'sort_order' => array_key_exists('sort_order', $input) ? $input['sort_order'] : $lockedItem->sort_order,
             ]);
-            $item->save();
+            $lockedItem->save();
 
-            $this->recalculateTotals($order);
+            $this->recalculateTotals($lockedOrder);
 
-            return $item->fresh();
+            return $lockedItem->fresh();
         });
     }
 
-    public function deleteItem(ServiceOrder $order, ServiceOrderItem $item): void
+    public function deleteItem(ServiceOrder|string $order, ServiceOrderItem|string $item): void
     {
-        $this->assertEditable($order);
-
         DB::transaction(function () use ($order, $item) {
-            $item->delete();
+            $lockedOrder = $this->locker->lock($order);
+            $this->assertEditable($lockedOrder);
 
-            $this->recalculateTotals($order);
+            $itemId = $item instanceof ServiceOrderItem ? $item->id : $item;
+            $lockedItem = $lockedOrder->items()->whereKey($itemId)->firstOrFail();
+            $lockedItem->delete();
+
+            // §11/§45: recalculateTotals() re-validates order_discount
+            // against the post-delete subtotal and throws if it no longer
+            // fits — the ValidationException propagates out of this
+            // transaction closure, rolling back the delete too, so the
+            // whole operation is rejected wholesale, never leaving the
+            // item gone with a now-invalid discount.
+            $this->recalculateTotals($lockedOrder);
         });
     }
 
@@ -151,13 +184,12 @@ class ServiceOrderItemService
     }
 
     /**
-     * §45/§46: recomputes subtotal from the current items, then re-checks
-     * order_discount against the *new* subtotal — an item removal/edit
-     * that would leave order_discount > subtotal is rejected wholesale
-     * (§45: "Não ajustar desconto silenciosamente"), rolling back the
-     * item mutation itself since this runs inside the same request; the
-     * caller (controller) is expected to run this within a transaction
-     * for multi-statement atomicity when needed.
+     * §12/§45/§46: called only after the parent is locked, so this always
+     * sums the truly-current set of committed-or-in-this-transaction
+     * items — never a stale snapshot from before the lock was acquired.
+     * Re-checks order_discount against the *new* subtotal and rejects the
+     * whole mutation (§45: "Não ajustar desconto silenciosamente") if it
+     * no longer fits.
      */
     private function recalculateTotals(ServiceOrder $order): void
     {
