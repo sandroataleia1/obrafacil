@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\CatalogItemController;
 use App\Http\Controllers\Api\V1\CompanyActivationController;
 use App\Http\Controllers\Api\V1\CompanyRegistryLookupController;
 use App\Http\Controllers\Api\V1\CustomerAddressController;
@@ -50,6 +51,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/v1/customers/{customer}/contacts', [CustomerContactController::class, 'store']);
         Route::put('/v1/customers/{customer}/contacts/{contact}', [CustomerContactController::class, 'update']);
         Route::delete('/v1/customers/{customer}/contacts/{contact}', [CustomerContactController::class, 'destroy']);
+
+        Route::get('/v1/catalog-items', [CatalogItemController::class, 'index']);
+        Route::post('/v1/catalog-items', [CatalogItemController::class, 'store']);
+        Route::get('/v1/catalog-items/{catalogItem}', [CatalogItemController::class, 'show']);
+        Route::put('/v1/catalog-items/{catalogItem}', [CatalogItemController::class, 'update']);
 
         Route::middleware('throttle:lookups')->group(function () {
             Route::get('/v1/lookups/cep', [PostalCodeLookupController::class, 'show']);
