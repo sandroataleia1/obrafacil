@@ -117,6 +117,12 @@ export function CustomerDetail({ id }: { id: string }) {
   // `activeCompanyId` can already have moved on by the time a render
   // happens (the frame between a context change and this effect running).
   const [loadedCompanyId, setLoadedCompanyId] = useState<string | undefined>(undefined);
+  // FRONTEND-CLIENTS-01C: the tenant the *current* status outcome actually
+  // belongs to — set on every settled outcome (success, 404, or error),
+  // unlike `loadedCompanyId` (success only). Without this, a failed GET
+  // never sets any per-tenant marker, so `!isCurrentTenant` stays true
+  // forever and the loading skeleton masks the error state permanently.
+  const [resolvedCompanyId, setResolvedCompanyId] = useState<string | undefined>(undefined);
   const [budgets, setBudgets] = useState<Budget[] | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
 
@@ -174,10 +180,12 @@ export function CustomerDetail({ id }: { id: string }) {
       if (activeCompanyIdRef.current !== requestCompanyId) return;
       setCustomer(data);
       setLoadedCompanyId(requestCompanyId);
+      setResolvedCompanyId(requestCompanyId);
       setStatus("success");
     } catch (error) {
       if (requestSequence.current !== requestId) return;
       if (activeCompanyIdRef.current !== requestCompanyId) return;
+      setResolvedCompanyId(requestCompanyId);
       if (error instanceof ApiError && error.status === 404) {
         setStatus("not_found");
         return;
@@ -197,6 +205,12 @@ export function CustomerDetail({ id }: { id: string }) {
   // tagged with a previous tenant is treated as absent, never as
   // stale-but-displayable, even for a single frame.
   const isCurrentTenant = customer !== null && loadedCompanyId === activeCompanyId;
+  // FRONTEND-CLIENTS-01C §9: whether the *last settled outcome* (success,
+  // 404, or error) belongs to the tenant currently active — deliberately
+  // never satisfied by two `undefined`s (before the very first request
+  // resolves, both sides are `undefined`, and that must still render the
+  // loading skeleton, not "resolved").
+  const isResolvedForCurrentTenant = resolvedCompanyId !== undefined && resolvedCompanyId === activeCompanyId;
 
   useEffect(() => {
     // §11 transitional: Budget/Project stay localStorage prototypes for now.
@@ -416,13 +430,13 @@ export function CustomerDetail({ id }: { id: string }) {
     }
   }
 
-  if (status === "not_found") {
-    return (
-      <EmptyState icon={Users} title="Cliente não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
-    );
-  }
-
-  if (status === "loading" || !isCurrentTenant) {
+  // FRONTEND-CLIENTS-01C §9: loading/tenant-mismatch is checked first —
+  // before `status === "error"` masked it forever, since a failed request
+  // never set any per-tenant marker and `!isCurrentTenant` (customer-based)
+  // was therefore permanently true. `isResolvedForCurrentTenant` now covers
+  // every settled outcome (success, 404, error), so this only stays true
+  // while the current tenant's request is genuinely still in flight.
+  if (status === "loading" || !isResolvedForCurrentTenant) {
     return (
       <div className="space-y-4" role="status" aria-busy="true">
         <span className="sr-only">Carregando cliente</span>
@@ -433,7 +447,13 @@ export function CustomerDetail({ id }: { id: string }) {
     );
   }
 
-  if (status === "error" || !customer) {
+  if (status === "not_found") {
+    return (
+      <EmptyState icon={Users} title="Cliente não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
+    );
+  }
+
+  if (status === "error" || !customer || !isCurrentTenant) {
     return (
       <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
         <p role="alert" className="text-sm text-muted-foreground">

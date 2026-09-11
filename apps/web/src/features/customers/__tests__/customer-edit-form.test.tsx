@@ -169,4 +169,89 @@ describe("CustomerEditForm", () => {
 
     expect(screen.getByLabelText("Nome para identificação")).toHaveValue("Cliente da Empresa B");
   });
+
+  // ---------------------------------------------------------------
+  // FRONTEND-CLIENTS-01C — error hardening (CE1-CE6)
+  // ---------------------------------------------------------------
+
+  /** CE1/CE2: a 500/network error shows the error state (with a retry button), never an infinite skeleton. */
+  it("CE1/CE2: a network/500 error shows 'Não foi possível carregar este cliente agora.' with Tentar novamente, never an infinite skeleton", async () => {
+    vi.mocked(getCustomer).mockRejectedValue(new Error("network"));
+    render(<CustomerEditForm customerId="cust-1" />);
+
+    await screen.findByText("Não foi possível carregar este cliente agora.");
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Nome para identificação")).not.toBeInTheDocument();
+  });
+
+  /** CE3: retry re-fetches and, on success, the form renders pre-filled — no browser reload required. */
+  it("CE3: retry after an error goes back to loading then renders the pre-filled form on success", async () => {
+    vi.mocked(getCustomer)
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce(companyCustomer({ name: "Alpha reloaded" }));
+
+    const user = userEvent.setup();
+    render(<CustomerEditForm customerId="cust-1" />);
+    await screen.findByText("Não foi possível carregar este cliente agora.");
+
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    await waitFor(() => expect(screen.getByLabelText("Nome para identificação")).toHaveValue("Alpha reloaded"));
+    expect(getCustomer).toHaveBeenCalledTimes(2);
+  });
+
+  /** CE4: a 404 still shows "Cliente não encontrado" (unaffected by the error-state fix). */
+  it("CE4: a 404 still shows Cliente não encontrado, never a stale/infinite skeleton", async () => {
+    vi.mocked(getCustomer).mockRejectedValue(new ApiError(404, "not found"));
+    render(<CustomerEditForm customerId="missing" />);
+
+    await screen.findByText("Cliente não encontrado");
+  });
+
+  /** CE5: switching company A→B never leaves Company A's form editable while B's request is pending. */
+  it("CE5: switching companies keeps the loading skeleton (never an editable A form) while B's request is pending", async () => {
+    let resolveB!: (value: Customer) => void;
+    const bPromise = new Promise<Customer>((resolve) => {
+      resolveB = resolve;
+    });
+    vi.mocked(getCustomer)
+      .mockResolvedValueOnce(companyCustomer({ name: "Cliente da Empresa A" }))
+      .mockReturnValueOnce(bPromise);
+
+    const { rerender } = render(<CustomerEditForm customerId="cust-1" />);
+    await waitFor(() => expect(screen.getByLabelText("Nome para identificação")).toHaveValue("Cliente da Empresa A"));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<CustomerEditForm customerId="cust-1" />);
+
+    expect(screen.queryByLabelText("Nome para identificação")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByText("Não foi possível carregar este cliente agora.")).not.toBeInTheDocument();
+
+    resolveB(companyCustomer({ name: "Cliente da Empresa B" }));
+    await waitFor(() => expect(screen.getByLabelText("Nome para identificação")).toHaveValue("Cliente da Empresa B"));
+  });
+
+  /** CE6: a late error/response from the old tenant (A) is discarded after B already succeeded. */
+  it("CE6: a late error response from Company A is discarded after Company B already succeeded", async () => {
+    let rejectA!: (error: Error) => void;
+    const aPromise = new Promise<Customer>((_resolve, reject) => {
+      rejectA = reject;
+    });
+    vi.mocked(getCustomer)
+      .mockReturnValueOnce(aPromise)
+      .mockResolvedValueOnce(companyCustomer({ name: "Cliente da Empresa B" }));
+
+    const { rerender } = render(<CustomerEditForm customerId="cust-1" />);
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<CustomerEditForm customerId="cust-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText("Nome para identificação")).toHaveValue("Cliente da Empresa B"));
+
+    rejectA(new Error("network"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByLabelText("Nome para identificação")).toHaveValue("Cliente da Empresa B");
+    expect(screen.queryByText("Não foi possível carregar este cliente agora.")).not.toBeInTheDocument();
+  });
 });

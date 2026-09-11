@@ -317,4 +317,88 @@ describe("CustomerDetail", () => {
     expect(screen.queryByText('Excluir o endereço "Casa"?')).not.toBeInTheDocument();
     await screen.findByText("Cliente da Empresa B");
   });
+
+  // ---------------------------------------------------------------
+  // FRONTEND-CLIENTS-01C — error hardening (CD1-CD6)
+  // ---------------------------------------------------------------
+
+  /** CD1/CD2: a 500/network error shows the error state, not an infinite skeleton, with a retry button. */
+  it("CD1/CD2: a network/500 error shows 'Não foi possível carregar este cliente agora.' with Tentar novamente, never an infinite skeleton", async () => {
+    vi.mocked(getCustomer).mockRejectedValue(new Error("network"));
+    render(<CustomerDetail id="cust-1" />);
+
+    await screen.findByText("Não foi possível carregar este cliente agora.");
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  /** CD3: clicking "Tentar novamente" re-fetches and, on success, shows the detail — no browser reload required. */
+  it("CD3: retry after an error goes back to loading then renders on success", async () => {
+    vi.mocked(getCustomer)
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce(customerWithTwoAddressesAndContacts());
+
+    const user = userEvent.setup();
+    render(<CustomerDetail id="cust-1" />);
+    await screen.findByText("Não foi possível carregar este cliente agora.");
+
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    await screen.findByText("Cliente Teste");
+    expect(getCustomer).toHaveBeenCalledTimes(2);
+  });
+
+  /** CD4: a 404 still shows "Cliente não encontrado" (unaffected by the error-state fix). */
+  it("CD4: a 404 still shows Cliente não encontrado", async () => {
+    vi.mocked(getCustomer).mockRejectedValue(new ApiError(404, "not found"));
+    render(<CustomerDetail id="missing" />);
+
+    await screen.findByText("Cliente não encontrado");
+  });
+
+  /** CD5: switching company A→B keeps showing the loading skeleton (fail-closed) until B's request settles. */
+  it("CD5: switching companies shows the loading skeleton while B's request is pending, never A's stale error/data", async () => {
+    let resolveB!: (value: Customer) => void;
+    const bPromise = new Promise<Customer>((resolve) => {
+      resolveB = resolve;
+    });
+    vi.mocked(getCustomer)
+      .mockResolvedValueOnce({ ...customerWithTwoAddressesAndContacts(), name: "Cliente da Empresa A" })
+      .mockReturnValueOnce(bPromise);
+
+    const { rerender } = render(<CustomerDetail id="cust-1" />);
+    await screen.findByText("Cliente da Empresa A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<CustomerDetail id="cust-1" />);
+
+    expect(screen.queryByText("Cliente da Empresa A")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByText("Não foi possível carregar este cliente agora.")).not.toBeInTheDocument();
+
+    resolveB({ ...customerWithTwoAddressesAndContacts(), name: "Cliente da Empresa B" });
+    await screen.findByText("Cliente da Empresa B");
+  });
+
+  /** CD6: a late error from the old tenant (A) never replaces B's already-applied success. */
+  it("CD6: a late error response from Company A is discarded after Company B already succeeded", async () => {
+    let rejectA!: (error: Error) => void;
+    const aPromise = new Promise<Customer>((_resolve, reject) => {
+      rejectA = reject;
+    });
+    vi.mocked(getCustomer)
+      .mockReturnValueOnce(aPromise)
+      .mockResolvedValueOnce({ ...customerWithTwoAddressesAndContacts(), name: "Cliente da Empresa B" });
+
+    const { rerender } = render(<CustomerDetail id="cust-1" />);
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<CustomerDetail id="cust-1" />);
+
+    await screen.findByText("Cliente da Empresa B");
+
+    rejectA(new Error("network"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByText("Cliente da Empresa B")).toBeInTheDocument();
+    expect(screen.queryByText("Não foi possível carregar este cliente agora.")).not.toBeInTheDocument();
+  });
 });
