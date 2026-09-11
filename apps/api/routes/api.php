@@ -13,6 +13,10 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\NotificationSettingsController;
 use App\Http\Controllers\Api\V1\PostalCodeLookupController;
 use App\Http\Controllers\Api\V1\RegisterController;
+use App\Http\Controllers\Api\V1\ServiceOrderController;
+use App\Http\Controllers\Api\V1\ServiceOrderItemController;
+use App\Http\Controllers\Api\V1\ServiceOrderSettingsController;
+use App\Http\Controllers\Api\V1\ServiceOrderStatusController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/v1/health', function () {
@@ -56,6 +60,25 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/v1/catalog-items', [CatalogItemController::class, 'store']);
         Route::get('/v1/catalog-items/{catalogItem}', [CatalogItemController::class, 'show']);
         Route::put('/v1/catalog-items/{catalogItem}', [CatalogItemController::class, 'update']);
+
+        // §53: settings routes registered BEFORE the dynamic
+        // {serviceOrder} routes below, so "settings" is never swallowed
+        // as a ServiceOrder id.
+        Route::get('/v1/service-orders/settings', [ServiceOrderSettingsController::class, 'show']);
+        Route::put('/v1/service-orders/settings', [ServiceOrderSettingsController::class, 'update']);
+
+        Route::get('/v1/service-orders', [ServiceOrderController::class, 'index']);
+        Route::post('/v1/service-orders', [ServiceOrderController::class, 'store']);
+        Route::get('/v1/service-orders/{serviceOrder}', [ServiceOrderController::class, 'show']);
+        Route::put('/v1/service-orders/{serviceOrder}', [ServiceOrderController::class, 'update']);
+
+        Route::post('/v1/service-orders/{serviceOrder}/start', [ServiceOrderStatusController::class, 'start']);
+        Route::post('/v1/service-orders/{serviceOrder}/complete', [ServiceOrderStatusController::class, 'complete']);
+        Route::post('/v1/service-orders/{serviceOrder}/cancel', [ServiceOrderStatusController::class, 'cancel']);
+
+        Route::post('/v1/service-orders/{serviceOrder}/items', [ServiceOrderItemController::class, 'store']);
+        Route::put('/v1/service-orders/{serviceOrder}/items/{item}', [ServiceOrderItemController::class, 'update']);
+        Route::delete('/v1/service-orders/{serviceOrder}/items/{item}', [ServiceOrderItemController::class, 'destroy']);
 
         Route::middleware('throttle:lookups')->group(function () {
             Route::get('/v1/lookups/cep', [PostalCodeLookupController::class, 'show']);
