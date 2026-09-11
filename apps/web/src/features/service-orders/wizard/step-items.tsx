@@ -37,11 +37,17 @@ export function StepItems({
   onAdd,
   onUpdate,
   onRemove,
+  requestCompanyId,
+  isStaleRequest,
 }: {
   items: DraftItem[];
   onAdd: (item: DraftItem) => void;
   onUpdate: (clientId: string, patch: Partial<DraftItem>) => void;
   onRemove: (clientId: string) => void;
+  /** Captured by the caller at fire time — see `ServiceOrderWizard`'s tenant-safety contract. */
+  requestCompanyId: string | undefined;
+  /** True once the active company no longer matches `requestCompanyId`. */
+  isStaleRequest: (requestCompanyId: string | undefined) => boolean;
 }) {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -52,6 +58,21 @@ export function StepItems({
   const [quickDialog, setQuickDialog] = useState<CatalogItemType | null>(null);
 
   const searchSequence = useRef(0);
+
+  // §Tenant safety: this component can stay mounted across a company
+  // switch (the user sitting on step 3) — a late Company-A search result
+  // must never populate Company B's catalog list.
+  const stepItemsCompanyIdRef = useRef(requestCompanyId);
+  useEffect(() => {
+    if (stepItemsCompanyIdRef.current === requestCompanyId) return;
+    stepItemsCompanyIdRef.current = requestCompanyId;
+    setSearchInput("");
+    setSearch("");
+    setResults([]);
+    setLoading(false);
+    setError(false);
+    setQuickDialog(null);
+  }, [requestCompanyId]);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
@@ -66,22 +87,28 @@ export function StepItems({
       return;
     }
     const requestId = ++searchSequence.current;
+    // Captured at fire time, alongside the sequence number — a response
+    // is only ever accepted when BOTH still match at settle time.
+    const fireCompanyId = requestCompanyId;
     setLoading(true);
     setError(false);
     listCatalogItems({ search, active: true, type: typeFilter || undefined, page: 1, perPage: 15 })
       .then((response) => {
         if (searchSequence.current !== requestId) return;
+        if (isStaleRequest(fireCompanyId)) return;
         setResults(response.data);
       })
       .catch(() => {
         if (searchSequence.current !== requestId) return;
+        if (isStaleRequest(fireCompanyId)) return;
         setError(true);
       })
       .finally(() => {
         if (searchSequence.current !== requestId) return;
+        if (isStaleRequest(fireCompanyId)) return;
         setLoading(false);
       });
-  }, [search, typeFilter]);
+  }, [search, typeFilter, requestCompanyId, isStaleRequest]);
 
   function addCatalogItem(item: CatalogItem) {
     onAdd({
@@ -99,6 +126,9 @@ export function StepItems({
   }
 
   function handleQuickCreated(item: CatalogItem) {
+    // Belt-and-suspenders — `QuickCatalogDialog` already discards a
+    // stale response itself and never calls `onCreated` in that case.
+    if (isStaleRequest(requestCompanyId)) return;
     addCatalogItem(item);
   }
 

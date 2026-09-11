@@ -30,7 +30,7 @@ vi.mock("../service-orders-client", () => ({
   updateServiceOrderSettings: vi.fn(),
 }));
 
-import { getServiceOrderSettings, listServiceOrders } from "../service-orders-client";
+import { getServiceOrderSettings, listServiceOrders, updateServiceOrderSettings } from "../service-orders-client";
 
 function item(number: string, overrides: Partial<ServiceOrderListItem> = {}): ServiceOrderListItem {
   return {
@@ -229,5 +229,99 @@ describe("ServiceOrderList", () => {
       },
       { timeout: 2000 }
     );
+  });
+
+  it("L15: a stale error for the old tenant never flashes once a new tenant is active", async () => {
+    let resolveB!: (value: ServiceOrderPaginationResponse) => void;
+    const bPromise = new Promise<ServiceOrderPaginationResponse>((resolve) => {
+      resolveB = resolve;
+    });
+    vi.mocked(listServiceOrders).mockRejectedValueOnce(new Error("network")).mockReturnValueOnce(bPromise);
+
+    const { rerender } = render(<ServiceOrderList />);
+    await screen.findByRole("alert");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ServiceOrderList />);
+
+    // The error resolved for Company A must not render once Company B
+    // is active — even before B's own request has resolved.
+    expect(screen.queryByText(/não foi possível carregar as ordens de serviço/i)).not.toBeInTheDocument();
+
+    resolveB(page(["OS-000002"]));
+    await screen.findAllByText("OS-000002");
+  });
+
+  it("OT12: switching company closes the travel-fee settings dialog", async () => {
+    vi.mocked(listServiceOrders).mockResolvedValue(page([]));
+    vi.mocked(getServiceOrderSettings).mockResolvedValue({ default_travel_fee: "25.00" });
+    const user = userEvent.setup();
+    const { rerender } = render(<ServiceOrderList />);
+    await screen.findByText("Nenhuma O.S. ainda");
+
+    await user.click(screen.getByRole("button", { name: /configurar deslocamento/i }));
+    await screen.findByText(/preenchida automaticamente/i);
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ServiceOrderList />);
+
+    await waitFor(() => expect(screen.queryByText(/preenchida automaticamente/i)).not.toBeInTheDocument());
+  });
+
+  it("OT13: a late settings GET for the old tenant never populates the dialog under the new tenant", async () => {
+    vi.mocked(listServiceOrders).mockResolvedValue(page([]));
+    let resolveSettings!: (value: { default_travel_fee: string }) => void;
+    vi.mocked(getServiceOrderSettings).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSettings = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<ServiceOrderList />);
+    await screen.findByText("Nenhuma O.S. ainda");
+
+    await user.click(screen.getByRole("button", { name: /configurar deslocamento/i }));
+    await screen.findByText("Carregando...");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ServiceOrderList />);
+
+    resolveSettings({ default_travel_fee: "99.00" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The dialog closed on the switch and stays closed — the old
+    // tenant's late GET never reopens it or populates anything visible.
+    expect(screen.queryByText(/preenchida automaticamente/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/taxa padrão de deslocamento/i)).not.toBeInTheDocument();
+  });
+
+  it("OT14: a late settings PUT for the old tenant never alters the UI under the new tenant", async () => {
+    vi.mocked(listServiceOrders).mockResolvedValue(page([]));
+    vi.mocked(getServiceOrderSettings).mockResolvedValue({ default_travel_fee: "10.00" });
+    let resolveUpdate!: () => void;
+    vi.mocked(updateServiceOrderSettings).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveUpdate = () => resolve({ default_travel_fee: "10.00" } as never);
+      })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<ServiceOrderList />);
+    await screen.findByText("Nenhuma O.S. ainda");
+
+    await user.click(screen.getByRole("button", { name: /configurar deslocamento/i }));
+    await screen.findByLabelText(/taxa padrão de deslocamento/i);
+    await user.click(screen.getByRole("button", { name: /^salvar$/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ServiceOrderList />);
+    await waitFor(() => expect(screen.queryByText(/preenchida automaticamente/i)).not.toBeInTheDocument());
+
+    resolveUpdate();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The dialog stays closed (it was already closed by the switch) —
+    // the stale PUT never reopens it or otherwise implies success under
+    // the new tenant.
+    expect(screen.queryByText(/preenchida automaticamente/i)).not.toBeInTheDocument();
   });
 });

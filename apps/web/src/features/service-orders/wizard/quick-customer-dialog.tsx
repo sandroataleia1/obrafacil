@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
 import { AddressFields, EMPTY_ADDRESS_FIELDS, type AddressFieldsValue } from "@/features/customers/address-fields";
+import { useAuth } from "@/features/auth/auth-provider";
 import { createCustomer, lookupCnpj } from "@/features/customers/customers-client";
 import type { Customer, CustomerKind } from "@/features/customers/types";
 import { toE164BR } from "@/features/auth/phone-e164";
@@ -20,10 +21,16 @@ import { formatPhoneInput } from "@/lib/phone";
  * unlike the standalone Customer create page which allows it. No contact
  * fields here — contact selection belongs to step 2.
  *
- * `requestCompanyId` is captured by the caller (the wizard) before this
- * fires and re-checked against the *current* active company when the
- * response arrives — this component itself just reports success/cancel;
- * discarding a late response after a tenant switch is the wizard's job.
+ * §Tenant safety: this dialog is self-sufficient — it reads the active
+ * company itself (`useAuth()`) rather than trusting a prop captured at
+ * some earlier render. The company is captured fresh at the moment
+ * "Criar cliente" is actually clicked and re-checked against the live
+ * active company once `createCustomer` resolves; a mismatch means the
+ * company switched while the request was in flight, so `onCreated` is
+ * never called (the created Customer+Address row is still correct and
+ * stays in the old company's data — it just never enters a different
+ * tenant's wizard draft). The dialog also closes and resets itself if
+ * the active company changes while it's open, even before submit.
  */
 export function QuickCustomerDialog({
   open,
@@ -34,6 +41,13 @@ export function QuickCustomerDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: (customer: Customer) => void;
 }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
   const [kind, setKind] = useState<CustomerKind>("individual");
   const [name, setName] = useState("");
   const [document, setDocument] = useState("");
@@ -67,6 +81,25 @@ export function QuickCustomerDialog({
     if (!next) reset();
     onOpenChange(next);
   }
+
+  // Baseline company id captured whenever the dialog opens.
+  const openedCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    if (open) openedCompanyIdRef.current = activeCompanyId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // If the active company changes WHILE the dialog is open, close and
+  // reset it — no Company-A-typed value may survive into a Company-B
+  // session even if the user hasn't submitted yet.
+  useEffect(() => {
+    if (!open) return;
+    if (openedCompanyIdRef.current !== activeCompanyId) {
+      reset();
+      onOpenChange(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCompanyId, open]);
 
   async function handleLookupCnpj() {
     const digits = onlyDigits(document);
@@ -107,6 +140,10 @@ export function QuickCustomerDialog({
 
   async function handleSubmit() {
     if (name.trim() === "") return;
+    // Captured at the moment of the actual submit click — not from a
+    // prop passed down at an earlier render, which can go stale if the
+    // user types for a while before clicking.
+    const requestCompanyIdAtSubmit = activeCompanyId;
     setSubmitting(true);
     setSubmitError(null);
     setFieldErrors({});
@@ -133,6 +170,13 @@ export function QuickCustomerDialog({
           },
         ],
       });
+      if (activeCompanyIdRef.current !== requestCompanyIdAtSubmit) {
+        // The company changed while the request was in flight — the
+        // created Customer+Address stays in the old company's data
+        // permanently; it just never enters this (now different)
+        // tenant's wizard draft. Discard quietly.
+        return;
+      }
       onCreated(created);
       handleOpenChange(false);
     } catch (error) {

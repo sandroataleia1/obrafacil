@@ -38,6 +38,22 @@ export function StepCustomer({
 
   const searchSequence = useRef(0);
 
+  // §Tenant safety: this component can stay mounted across a company
+  // switch (the user sitting on step 1) — a full reset, not just the
+  // wizard's own state, is required so Company A's search results/error
+  // never remain visible under Company B.
+  const stepCustomerCompanyIdRef = useRef(requestCompanyId);
+  useEffect(() => {
+    if (stepCustomerCompanyIdRef.current === requestCompanyId) return;
+    stepCustomerCompanyIdRef.current = requestCompanyId;
+    setSearchInput("");
+    setSearch("");
+    setResults([]);
+    setLoading(false);
+    setError(false);
+    setQuickCreateOpen(false);
+  }, [requestCompanyId]);
+
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -51,23 +67,28 @@ export function StepCustomer({
       return;
     }
     const requestId = ++searchSequence.current;
+    // Captured at fire time, alongside the sequence number — a response
+    // is only ever accepted when BOTH still match at settle time.
+    const fireCompanyId = requestCompanyId;
     setLoading(true);
     setError(false);
     listCustomers({ search, page: 1, perPage: PER_PAGE })
       .then((response) => {
-        // Race-guard: ignore a stale response if a newer search has since fired.
         if (searchSequence.current !== requestId) return;
+        if (isStaleRequest(fireCompanyId)) return;
         setResults(response.data);
       })
       .catch(() => {
         if (searchSequence.current !== requestId) return;
+        if (isStaleRequest(fireCompanyId)) return;
         setError(true);
       })
       .finally(() => {
         if (searchSequence.current !== requestId) return;
+        if (isStaleRequest(fireCompanyId)) return;
         setLoading(false);
       });
-  }, [search]);
+  }, [search, requestCompanyId, isStaleRequest]);
 
   function handleCreated(customer: Customer) {
     if (isStaleRequest(requestCompanyId)) return;

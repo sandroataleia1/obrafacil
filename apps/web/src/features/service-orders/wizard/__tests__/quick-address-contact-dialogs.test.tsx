@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.stubGlobal(
   "matchMedia",
@@ -11,6 +11,13 @@ vi.stubGlobal(
     removeEventListener: vi.fn(),
   }))
 );
+
+const authState: { activeCompany: { id: string; name: string } | null } = {
+  activeCompany: { id: "company-a", name: "Empresa A" },
+};
+vi.mock("@/features/auth/auth-provider", () => ({
+  useAuth: () => authState,
+}));
 
 vi.mock("@/features/customers/customers-client", () => ({
   createAddress: vi.fn(),
@@ -23,6 +30,14 @@ import { QuickAddressDialog } from "../quick-address-dialog";
 import { QuickContactDialog } from "../quick-contact-dialog";
 
 describe("QuickAddressDialog", () => {
+  beforeEach(() => {
+    authState.activeCompany = { id: "company-a", name: "Empresa A" };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("A1: POSTs to the canonical /customers/{customer}/addresses endpoint via createAddress", async () => {
     vi.mocked(createAddress).mockResolvedValue({ id: "addr-1", label: "Obra" } as never);
     const onCreated = vi.fn();
@@ -75,9 +90,52 @@ describe("QuickAddressDialog", () => {
 
     await waitFor(() => expect(screen.getByText(/não foi possível criar o endereço/i)).toBeInTheDocument());
   });
+
+  it("OT5: a create response that resolves after a company switch never calls onCreated", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const createPromise = new Promise((resolve) => {
+      resolveCreate = resolve;
+    });
+    vi.mocked(createAddress).mockReturnValue(createPromise as never);
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<QuickAddressDialog open onOpenChange={() => {}} customerId="cust-1" onCreated={onCreated} />);
+
+    await user.type(screen.getByLabelText(/identificação do endereço/i), "Obra da Empresa A");
+    await user.click(screen.getByRole("button", { name: /criar endereço/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickAddressDialog open onOpenChange={() => {}} customerId="cust-1" onCreated={onCreated} />);
+
+    resolveCreate({ id: "addr-old", label: "Obra da Empresa A" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("closes itself and clears the typed label if the active company changes while open", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<QuickAddressDialog open onOpenChange={onOpenChange} customerId="cust-1" onCreated={vi.fn()} />);
+
+    await user.type(screen.getByLabelText(/identificação do endereço/i), "Obra da Empresa A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickAddressDialog open onOpenChange={onOpenChange} customerId="cust-1" onCreated={vi.fn()} />);
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
 });
 
 describe("QuickContactDialog", () => {
+  beforeEach(() => {
+    authState.activeCompany = { id: "company-a", name: "Empresa A" };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("CT1: POSTs to the canonical /customers/{customer}/contacts endpoint via createContact", async () => {
     vi.mocked(createContact).mockResolvedValue({ id: "contact-1", name: "Maria" } as never);
     const user = userEvent.setup();
@@ -130,5 +188,44 @@ describe("QuickContactDialog", () => {
   it("CT5: the submit button is disabled until a name is entered", () => {
     render(<QuickContactDialog open onOpenChange={() => {}} customerId="cust-1" isFirstContact={false} onCreated={vi.fn()} />);
     expect(screen.getByRole("button", { name: /criar contato/i })).toBeDisabled();
+  });
+
+  it("OT6: a create response that resolves after a company switch never calls onCreated", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const createPromise = new Promise((resolve) => {
+      resolveCreate = resolve;
+    });
+    vi.mocked(createContact).mockReturnValue(createPromise as never);
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <QuickContactDialog open onOpenChange={() => {}} customerId="cust-1" isFirstContact={false} onCreated={onCreated} />
+    );
+
+    await user.type(screen.getByLabelText("Nome"), "Contato da Empresa A");
+    await user.click(screen.getByRole("button", { name: /criar contato/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickContactDialog open onOpenChange={() => {}} customerId="cust-1" isFirstContact={false} onCreated={onCreated} />);
+
+    resolveCreate({ id: "contact-old", name: "Contato da Empresa A" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("closes itself and clears the typed name if the active company changes while open", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <QuickContactDialog open onOpenChange={onOpenChange} customerId="cust-1" isFirstContact={false} onCreated={vi.fn()} />
+    );
+
+    await user.type(screen.getByLabelText("Nome"), "Contato da Empresa A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickContactDialog open onOpenChange={onOpenChange} customerId="cust-1" isFirstContact={false} onCreated={vi.fn()} />);
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 });

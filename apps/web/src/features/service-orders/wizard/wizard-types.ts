@@ -72,3 +72,34 @@ export function findContact(detail: Customer | null, contactId: string): Custome
   if (!detail || contactId === CONTACT_NONE) return null;
   return detail.contacts.find((contact) => contact.id === contactId) ?? null;
 }
+
+export interface CustomerAutoSelection {
+  selectedAddressId: string | null;
+  selectedContactId: string;
+}
+
+/**
+ * Auto-selection rule applied whenever a customer's full detail
+ * (addresses/contacts) is loaded — the primary address (or the only one,
+ * if there's exactly one and no primary), and the primary active contact.
+ * Shared by the initial load effect AND `retryCustomerDetail()` in the
+ * wizard so the two paths can never drift from each other (a retry that
+ * skipped this logic previously left the wizard without an
+ * auto-selected address even though the initial load would have picked
+ * one).
+ */
+export function computeCustomerAutoSelection(
+  detail: Customer,
+  currentSelectedAddressId: string | null
+): CustomerAutoSelection {
+  const primaryAddress = detail.addresses.find((address) => address.is_primary) ?? null;
+  const selectedAddressId =
+    currentSelectedAddressId && detail.addresses.some((address) => address.id === currentSelectedAddressId)
+      ? currentSelectedAddressId
+      : primaryAddress?.id ?? (detail.addresses.length === 1 ? detail.addresses[0]!.id : null);
+  const primaryContact = detail.contacts.find((contact) => contact.is_primary && contact.active) ?? null;
+  return {
+    selectedAddressId,
+    selectedContactId: primaryContact ? primaryContact.id : CONTACT_NONE,
+  };
+}

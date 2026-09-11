@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.stubGlobal(
   "matchMedia",
@@ -12,6 +12,13 @@ vi.stubGlobal(
   }))
 );
 
+const authState: { activeCompany: { id: string; name: string } | null } = {
+  activeCompany: { id: "company-a", name: "Empresa A" },
+};
+vi.mock("@/features/auth/auth-provider", () => ({
+  useAuth: () => authState,
+}));
+
 vi.mock("@/features/catalog/catalog-client", () => ({
   createCatalogItem: vi.fn(),
 }));
@@ -20,6 +27,14 @@ import { createCatalogItem } from "@/features/catalog/catalog-client";
 import { QuickCatalogDialog } from "../quick-catalog-dialog";
 
 describe("QuickCatalogDialog", () => {
+  beforeEach(() => {
+    authState.activeCompany = { id: "company-a", name: "Empresa A" };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("QI1: pre-sets the type from presetType='service'", () => {
     render(<QuickCatalogDialog open onOpenChange={() => {}} presetType="service" onCreated={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Serviço" })).toHaveAttribute("aria-pressed", "true");
@@ -123,5 +138,44 @@ describe("QuickCatalogDialog", () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(createCatalogItem).not.toHaveBeenCalled();
+  });
+
+  it("OT8/OT9: a create response that resolves after a company switch never calls onCreated (product or service)", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const createPromise = new Promise((resolve) => {
+      resolveCreate = resolve;
+    });
+    vi.mocked(createCatalogItem).mockReturnValue(createPromise as never);
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<QuickCatalogDialog open onOpenChange={() => {}} presetType="product" onCreated={onCreated} />);
+
+    await user.type(screen.getByLabelText("Nome"), "Cimento da Empresa A");
+    await user.type(screen.getByLabelText("Unidade"), "sc");
+    await user.click(screen.getByRole("button", { name: /salvar e adicionar/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickCatalogDialog open onOpenChange={() => {}} presetType="product" onCreated={onCreated} />);
+
+    resolveCreate({ id: "item-old", name: "Cimento da Empresa A", type: "product" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("closes itself and clears the typed fields if the active company changes while open", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <QuickCatalogDialog open onOpenChange={onOpenChange} presetType="service" onCreated={vi.fn()} />
+    );
+
+    await user.type(screen.getByLabelText("Nome"), "Pintura da Empresa A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickCatalogDialog open onOpenChange={onOpenChange} presetType="service" onCreated={vi.fn()} />);
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(screen.getByLabelText("Nome")).toHaveValue("");
   });
 });

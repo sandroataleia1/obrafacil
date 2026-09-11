@@ -163,6 +163,7 @@ export function ServiceOrderList() {
 
   const [status, setStatus] = useState<LoadStatus>("loading");
   const [loaded, setLoaded] = useState<LoadedList | null>(null);
+  const [errorCompanyId, setErrorCompanyId] = useState<string | undefined>(undefined);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServiceOrderStatus | "">("");
@@ -175,6 +176,17 @@ export function ServiceOrderList() {
     activeCompanyIdRef.current = activeCompanyId;
   }, [activeCompanyId]);
   const previousCompanyIdRef = useRef(activeCompanyId);
+
+  // §Tenant safety: a company switch must close the global travel-fee
+  // settings dialog immediately, the same way any other open dialog
+  // would react to a tenant change — never leave Company A's fetched or
+  // typed value visible under Company B.
+  const previousCompanyIdForSettingsRef = useRef(activeCompanyId);
+  useEffect(() => {
+    if (previousCompanyIdForSettingsRef.current === activeCompanyId) return;
+    previousCompanyIdForSettingsRef.current = activeCompanyId;
+    setSettingsOpen(false);
+  }, [activeCompanyId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -214,6 +226,7 @@ export function ServiceOrderList() {
         return;
       }
       setStatus("error");
+      setErrorCompanyId(requestCompanyId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, page, statusFilter, activeCompanyId]);
@@ -227,6 +240,11 @@ export function ServiceOrderList() {
   const items = currentResponse?.data ?? [];
   const lastPage = currentResponse?.meta.last_page ?? 1;
   const isCurrentTenant = currentResponse !== null;
+  // §Tenant safety: an error resolved for a since-departed company must
+  // never render — mirrors `ServiceOrderDetail`'s `isResolvedForCurrentTenant`
+  // gate. Without this, a stale "error" status can flash for one render
+  // under the new company before its own request even fires/resolves.
+  const isErrorForCurrentTenant = status === "error" && errorCompanyId === activeCompanyId;
   const isFiltered = search !== "" || statusFilter !== "";
   const isEmptyOverall = isCurrentTenant && status === "success" && items.length === 0 && !isFiltered && page === 1;
   const isEmptySearch = isCurrentTenant && status === "success" && items.length === 0 && !isEmptyOverall;
@@ -294,7 +312,7 @@ export function ServiceOrderList() {
         </div>
       </div>
 
-      {status === "error" ? (
+      {isErrorForCurrentTenant ? (
         <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
           <p role="alert" className="text-sm text-muted-foreground">
             Não foi possível carregar as ordens de serviço agora.

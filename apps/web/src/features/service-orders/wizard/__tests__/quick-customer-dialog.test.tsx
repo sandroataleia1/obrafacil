@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.stubGlobal(
   "matchMedia",
@@ -12,6 +12,13 @@ vi.stubGlobal(
   }))
 );
 
+const authState: { activeCompany: { id: string; name: string } | null } = {
+  activeCompany: { id: "company-a", name: "Empresa A" },
+};
+vi.mock("@/features/auth/auth-provider", () => ({
+  useAuth: () => authState,
+}));
+
 vi.mock("@/features/customers/customers-client", () => ({
   createCustomer: vi.fn(),
   lookupCnpj: vi.fn(),
@@ -21,6 +28,14 @@ import { createCustomer, lookupCnpj } from "@/features/customers/customers-clien
 import { QuickCustomerDialog } from "../quick-customer-dialog";
 
 describe("QuickCustomerDialog", () => {
+  beforeEach(() => {
+    authState.activeCompany = { id: "company-a", name: "Empresa A" };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("QC1: submits Customer + exactly one address in a single atomic POST", async () => {
     vi.mocked(createCustomer).mockResolvedValue({ id: "cust-1", name: "João" } as never);
     const onCreated = vi.fn();
@@ -171,5 +186,43 @@ describe("QuickCustomerDialog", () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(createCustomer).not.toHaveBeenCalled();
+  });
+
+  it("OT3: closes itself and clears the typed name if the active company changes while open", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<QuickCustomerDialog open onOpenChange={onOpenChange} onCreated={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Nome"), "Cliente da Empresa A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickCustomerDialog open onOpenChange={onOpenChange} onCreated={vi.fn()} />);
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    // The internal draft is reset even though the test harness keeps
+    // `open` truthy — no Company-A-typed value survives.
+    expect(screen.getByLabelText("Nome")).toHaveValue("");
+  });
+
+  it("OT4: a create response that resolves after a company switch never calls onCreated", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const createPromise = new Promise((resolve) => {
+      resolveCreate = resolve;
+    });
+    vi.mocked(createCustomer).mockReturnValue(createPromise as never);
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={onCreated} />);
+
+    await user.type(screen.getByLabelText("Nome"), "Cliente da Empresa A");
+    await user.click(screen.getByRole("button", { name: /criar cliente/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={onCreated} />);
+
+    resolveCreate({ id: "cust-old", name: "Cliente da Empresa A" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });

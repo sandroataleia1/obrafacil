@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
@@ -9,6 +9,7 @@ import {
   EMPTY_CATALOG_ITEM_FIELDS,
   type CatalogItemFieldsValue,
 } from "@/features/catalog/catalog-item-fields";
+import { useAuth } from "@/features/auth/auth-provider";
 import { createCatalogItem } from "@/features/catalog/catalog-client";
 import type { CatalogItem, CatalogItemType } from "@/features/catalog/types";
 import { ApiValidationError } from "@/lib/api-client";
@@ -20,6 +21,12 @@ import { brlInputToDecimalString } from "@/lib/currency";
  * canonical `/catalog-items` endpoint; `active` is always sent as
  * `true`. "Salvar e adicionar à O.S." both creates the item AND adds it
  * straight to the wizard's draft in one action.
+ *
+ * §Tenant safety: same self-sufficient rule as `QuickCustomerDialog` —
+ * a company switch while the create request is in flight means the
+ * created item is never added to any draft (no `onCreated`, no
+ * navigation, no success UI) — the item stays correctly created under
+ * the company that was active at submit time.
  */
 export function QuickCatalogDialog({
   open,
@@ -32,6 +39,13 @@ export function QuickCatalogDialog({
   presetType: CatalogItemType;
   onCreated: (item: CatalogItem) => void;
 }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
   const [fields, setFields] = useState<CatalogItemFieldsValue>({ ...EMPTY_CATALOG_ITEM_FIELDS, type: presetType });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -42,17 +56,34 @@ export function QuickCatalogDialog({
     if (open) setFields((current) => ({ ...current, type: presetType }));
   }, [open, presetType]);
 
+  function reset() {
+    setFields({ ...EMPTY_CATALOG_ITEM_FIELDS, type: presetType });
+    setSubmitError(null);
+    setFieldErrors({});
+  }
+
   function handleOpenChange(next: boolean) {
-    if (!next) {
-      setFields({ ...EMPTY_CATALOG_ITEM_FIELDS, type: presetType });
-      setSubmitError(null);
-      setFieldErrors({});
-    }
+    if (!next) reset();
     onOpenChange(next);
   }
 
+  const openedCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    if (open) openedCompanyIdRef.current = activeCompanyId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    if (openedCompanyIdRef.current !== activeCompanyId) {
+      reset();
+      onOpenChange(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCompanyId, open]);
+
   async function handleSubmit() {
     if (fields.name.trim() === "" || fields.unit.trim() === "") return;
+    const requestCompanyIdAtSubmit = activeCompanyId;
     setSubmitting(true);
     setSubmitError(null);
     setFieldErrors({});
@@ -69,6 +100,7 @@ export function QuickCatalogDialog({
         sale_price: brlInputToDecimalString(fields.salePriceInput),
         active: true,
       });
+      if (activeCompanyIdRef.current !== requestCompanyIdAtSubmit) return;
       onCreated(created);
       handleOpenChange(false);
     } catch (error) {

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
 import { AddressFields, EMPTY_ADDRESS_FIELDS, type AddressFieldsValue } from "@/features/customers/address-fields";
+import { useAuth } from "@/features/auth/auth-provider";
 import { createAddress } from "@/features/customers/customers-client";
 import type { CustomerAddress } from "@/features/customers/types";
 import { ApiValidationError } from "@/lib/api-client";
@@ -13,7 +14,13 @@ import { ApiValidationError } from "@/lib/api-client";
  * canonical `/customers/{customer}/addresses` endpoint. Never marks the
  * new address as primary automatically (that stays whatever the backend
  * defaults to) — the wizard auto-selects it as the execution address
- * regardless of `is_primary`. */
+ * regardless of `is_primary`.
+ *
+ * §Tenant safety: same self-sufficient rule as `QuickCustomerDialog` —
+ * the company is captured fresh at the "Criar endereço" click and
+ * re-checked against the live active company once `createAddress`
+ * resolves; a mismatch discards the result silently. The dialog also
+ * closes and resets itself if the active company changes while open. */
 export function QuickAddressDialog({
   open,
   onOpenChange,
@@ -25,22 +32,46 @@ export function QuickAddressDialog({
   customerId: string;
   onCreated: (address: CustomerAddress) => void;
 }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
   const [address, setAddress] = useState<AddressFieldsValue>(EMPTY_ADDRESS_FIELDS);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
 
+  function reset() {
+    setAddress(EMPTY_ADDRESS_FIELDS);
+    setSubmitError(null);
+    setFieldErrors({});
+  }
+
   function handleOpenChange(next: boolean) {
-    if (!next) {
-      setAddress(EMPTY_ADDRESS_FIELDS);
-      setSubmitError(null);
-      setFieldErrors({});
-    }
+    if (!next) reset();
     onOpenChange(next);
   }
 
+  const openedCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    if (open) openedCompanyIdRef.current = activeCompanyId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    if (openedCompanyIdRef.current !== activeCompanyId) {
+      reset();
+      onOpenChange(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCompanyId, open]);
+
   async function handleSubmit() {
     if (address.label.trim() === "") return;
+    const requestCompanyIdAtSubmit = activeCompanyId;
     setSubmitting(true);
     setSubmitError(null);
     setFieldErrors({});
@@ -57,6 +88,7 @@ export function QuickAddressDialog({
         state: address.state || null,
         reference_point: address.reference_point || null,
       });
+      if (activeCompanyIdRef.current !== requestCompanyIdAtSubmit) return;
       onCreated(created);
       handleOpenChange(false);
     } catch (error) {

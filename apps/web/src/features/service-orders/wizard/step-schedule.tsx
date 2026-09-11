@@ -192,7 +192,13 @@ export function StepSchedule({
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Deslocamento</span>
-            <span className="font-medium text-foreground">{decimalStringToBrlDisplay(travelFeeDecimal)}</span>
+            <span className="font-medium text-foreground">
+              {travelFeeSettingsStatus === "success"
+                ? decimalStringToBrlDisplay(travelFeeDecimal)
+                : travelFeeSettingsStatus === "loading"
+                  ? "Carregando..."
+                  : "Taxa padrão indisponível"}
+            </span>
           </div>
           <div className="flex items-center justify-between pt-1 text-base font-semibold text-foreground">
             <span>Total</span>

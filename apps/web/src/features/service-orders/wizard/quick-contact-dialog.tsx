@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
 import { ContactFields, EMPTY_CONTACT_FIELDS, type ContactFieldsValue } from "@/features/customers/contact-fields";
+import { useAuth } from "@/features/auth/auth-provider";
 import { createContact } from "@/features/customers/customers-client";
 import type { CustomerContact } from "@/features/customers/types";
 import { toE164BR } from "@/features/auth/phone-e164";
@@ -13,7 +14,9 @@ import { ApiValidationError } from "@/lib/api-client";
 /** Quick "+ Novo contato" dialog for wizard step 2 — POSTs to the
  * canonical `/customers/{customer}/contacts` endpoint. Always sends
  * `active: true` (no toggle shown here); sends `is_primary: true` only
- * when this is the customer's very first contact. */
+ * when this is the customer's very first contact.
+ *
+ * §Tenant safety: same self-sufficient rule as `QuickCustomerDialog`. */
 export function QuickContactDialog({
   open,
   onOpenChange,
@@ -27,22 +30,46 @@ export function QuickContactDialog({
   isFirstContact: boolean;
   onCreated: (contact: CustomerContact) => void;
 }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
   const [contact, setContact] = useState<ContactFieldsValue>(EMPTY_CONTACT_FIELDS);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
 
+  function reset() {
+    setContact(EMPTY_CONTACT_FIELDS);
+    setSubmitError(null);
+    setFieldErrors({});
+  }
+
   function handleOpenChange(next: boolean) {
-    if (!next) {
-      setContact(EMPTY_CONTACT_FIELDS);
-      setSubmitError(null);
-      setFieldErrors({});
-    }
+    if (!next) reset();
     onOpenChange(next);
   }
 
+  const openedCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    if (open) openedCompanyIdRef.current = activeCompanyId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    if (openedCompanyIdRef.current !== activeCompanyId) {
+      reset();
+      onOpenChange(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCompanyId, open]);
+
   async function handleSubmit() {
     if (contact.name.trim() === "") return;
+    const requestCompanyIdAtSubmit = activeCompanyId;
     setSubmitting(true);
     setSubmitError(null);
     setFieldErrors({});
@@ -58,6 +85,7 @@ export function QuickContactDialog({
         is_primary: isFirstContact,
         active: true,
       });
+      if (activeCompanyIdRef.current !== requestCompanyIdAtSubmit) return;
       onCreated(created);
       handleOpenChange(false);
     } catch (error) {

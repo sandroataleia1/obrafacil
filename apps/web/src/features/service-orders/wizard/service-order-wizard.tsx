@@ -13,14 +13,21 @@ import type { Customer, CustomerAddress, CustomerContact, CustomerListItem } fro
 import { ApiValidationError } from "@/lib/api-client";
 import { brlInputToDecimalString } from "@/lib/currency";
 import { quantityInputToDecimalString } from "@/lib/quantity";
-import { computeOrderPreview, isDiscountWithinSubtotal } from "../money-preview";
+import { computeLinePreview, computeOrderPreview, isDiscountWithinSubtotal } from "../money-preview";
 import { createServiceOrder, getServiceOrderSettings } from "../service-orders-client";
 import type { ServiceOrderCreatePayload } from "../types";
 import { StepCustomer } from "./step-customer";
 import { StepLocation } from "./step-location";
 import { allItemsValid, StepItems } from "./step-items";
 import { StepSchedule } from "./step-schedule";
-import { CONTACT_NONE, emptyWizardState, findAddress, findContact, type WizardState } from "./wizard-types";
+import {
+  CONTACT_NONE,
+  computeCustomerAutoSelection,
+  emptyWizardState,
+  findAddress,
+  findContact,
+  type WizardState,
+} from "./wizard-types";
 
 const STEP_TITLES = ["Cliente", "Local e contato", "Produtos e serviços", "Agendamento e resumo"];
 
@@ -161,17 +168,12 @@ export function ServiceOrderWizard() {
         if (isStaleRequest(requestCompanyId)) return;
         setState((current) => {
           if (current.selectedCustomer?.id !== selectedCustomerId) return current;
-          const primaryAddress = detail.addresses.find((address) => address.is_primary) ?? null;
-          const autoAddress =
-            current.selectedAddressId && detail.addresses.some((address) => address.id === current.selectedAddressId)
-              ? current.selectedAddressId
-              : primaryAddress?.id ?? (detail.addresses.length === 1 ? detail.addresses[0]!.id : null);
-          const primaryContact = detail.contacts.find((contact) => contact.is_primary && contact.active) ?? null;
+          const auto = computeCustomerAutoSelection(detail, current.selectedAddressId);
           return {
             ...current,
             customerDetail: detail,
-            selectedAddressId: autoAddress,
-            selectedContactId: primaryContact ? primaryContact.id : CONTACT_NONE,
+            selectedAddressId: auto.selectedAddressId,
+            selectedContactId: auto.selectedContactId,
           };
         });
         setCustomerDetailStatus("success");
@@ -223,7 +225,19 @@ export function ServiceOrderWizard() {
     getCustomer(selectedCustomerId)
       .then((detail) => {
         if (isStaleRequest(requestCompanyId)) return;
-        setState((current) => ({ ...current, customerDetail: detail }));
+        setState((current) => {
+          if (current.selectedCustomer?.id !== selectedCustomerId) return current;
+          // Same auto-selection rule as the initial load effect — a retry
+          // must never leave the wizard without the address/contact it
+          // would have auto-picked on a first successful load.
+          const auto = computeCustomerAutoSelection(detail, current.selectedAddressId);
+          return {
+            ...current,
+            customerDetail: detail,
+            selectedAddressId: auto.selectedAddressId,
+            selectedContactId: auto.selectedContactId,
+          };
+        });
         setCustomerDetailStatus("success");
       })
       .catch(() => {
@@ -286,13 +300,79 @@ export function ServiceOrderWizard() {
     return true;
   }
 
+  /**
+   * Full-scratch revalidation, independent of the stepper — reaching step
+   * 4 (or having previously reached it) never implies earlier steps are
+   * still valid: the user could have gone back and invalidated something
+   * (cleared an item's quantity, picked a different customer, etc.). This
+   * is the ONLY gate that decides whether a payload is ever built and
+   * sent — the stepper's own forward-jump guard (`handleStepperJump`) is
+   * a UX convenience on top of this, never a substitute for it.
+   */
   async function handleSubmit() {
-    if (!state.selectedCustomer || !state.selectedAddressId) return;
-    if (state.title.trim() === "") return;
-    if (!validateSchedule()) return;
+    if (!state.selectedCustomer) {
+      goToStep(1);
+      setSubmitErrors({ customer_id: ["Selecione um cliente."] });
+      return;
+    }
+    if (!state.selectedAddressId) {
+      goToStep(2);
+      setSubmitErrors({ customer_address_id: ["Selecione um endereço."] });
+      return;
+    }
+
+    // Every item is re-normalized from scratch here — never trust
+    // `state.items` as already-valid just because the UI let the user
+    // reach step 4. Quantity/unit price that fail to normalize block the
+    // submit outright; there is no fallback (never "1.000", never a
+    // silently-reused `sale_price`) for either field.
+    const normalizedItems: { catalogItemId: string; quantity: string; unitPrice: string; lineDiscount: string; notes: string | null }[] = [];
+    for (const item of state.items) {
+      const quantity = quantityInputToDecimalString(item.quantityInput);
+      const unitPrice = brlInputToDecimalString(item.unitPriceInput);
+      if (quantity === null || unitPrice === null) {
+        goToStep(3);
+        setSubmitErrors({ items: ["Informe uma quantidade e um preço unitário válidos para todos os itens."] });
+        return;
+      }
+      const lineDiscount = brlInputToDecimalString(item.lineDiscountInput) ?? "0.00";
+      const grossLine = computeLinePreview({ quantity, unitPrice }).grossLine;
+      if (!isDiscountWithinSubtotal(lineDiscount, grossLine)) {
+        goToStep(3);
+        setSubmitErrors({ items: ["O desconto de um item não pode ser maior que o valor da linha."] });
+        return;
+      }
+      normalizedItems.push({ catalogItemId: item.catalogItemId, quantity, unitPrice, lineDiscount, notes: item.notes.trim() || null });
+    }
+
+    // The order discount is checked against a subtotal computed ONLY
+    // from the just-validated lines above — never the display-only
+    // `preview`, which silently drops invalid lines and would let an
+    // invalid draft look "smaller" than it really is.
+    const revalidatedSubtotal = computeOrderPreview({
+      items: normalizedItems.map((item) => ({ quantity: item.quantity, unitPrice: item.unitPrice, lineDiscount: item.lineDiscount })),
+    }).subtotal;
     const orderDiscount = brlInputToDecimalString(state.orderDiscountInput) ?? "0.00";
-    if (!isDiscountWithinSubtotal(orderDiscount, preview.subtotal)) {
+    if (!isDiscountWithinSubtotal(orderDiscount, revalidatedSubtotal)) {
+      goToStep(4);
       setSubmitErrors({ order_discount: ["O desconto não pode ser maior que o subtotal."] });
+      return;
+    }
+
+    if (travelFeeSettingsStatus !== "success") {
+      goToStep(4);
+      setSubmitError("Carregue a taxa padrão de deslocamento antes de criar a O.S.");
+      return;
+    }
+
+    if (state.title.trim() === "") {
+      goToStep(4);
+      setSubmitErrors({ title: ["Informe um título."] });
+      return;
+    }
+
+    if (!validateSchedule()) {
+      goToStep(4);
       return;
     }
 
@@ -313,12 +393,14 @@ export function ServiceOrderWizard() {
       order_discount: orderDiscount,
       travel_fee: brlInputToDecimalString(state.travelFeeInput) ?? "0.00",
       notes: state.notes.trim() || null,
-      items: state.items.map((item) => ({
+      // Built exclusively from `normalizedItems` — already-validated,
+      // already-normalized values only. No `??` fallback anywhere here.
+      items: normalizedItems.map((item) => ({
         catalog_item_id: item.catalogItemId,
-        quantity: quantityInputToDecimalString(item.quantityInput) ?? "1.000",
-        unit_price: brlInputToDecimalString(item.unitPriceInput),
-        line_discount: brlInputToDecimalString(item.lineDiscountInput) ?? "0.00",
-        notes: item.notes.trim() || null,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        line_discount: item.lineDiscount,
+        notes: item.notes,
       })),
     };
 
@@ -356,9 +438,37 @@ export function ServiceOrderWizard() {
   const canAdvanceStep1 = state.selectedCustomer !== null;
   const canAdvanceStep2 = state.selectedAddressId !== null;
   const canAdvanceStep3 = allItemsValid(state.items);
-  const canSubmit = state.title.trim() !== "" && !submitting;
+  const canSubmit = state.title.trim() !== "" && !submitting && travelFeeSettingsStatus === "success";
 
   const errorMessages = Object.values(submitErrors).flat();
+
+  /**
+   * The stepper's forward-jump guard. Going backward is always allowed
+   * unchanged. Jumping forward to a step already visited (`maxReachedStep`)
+   * re-checks every intermediate step's own advance-guard — reusing the
+   * exact same guard variables the "Avançar" button already enforces —
+   * so going back, invalidating something, then jumping ahead via the
+   * stepper can never bypass it.
+   */
+  function handleStepperJump(target: 1 | 2 | 3 | 4) {
+    if (target <= state.step) {
+      goToStep(target);
+      return;
+    }
+    const guards: Record<number, boolean> = { 1: canAdvanceStep1, 2: canAdvanceStep2, 3: canAdvanceStep3 };
+    const messages: Record<number, string> = {
+      1: "Selecione um cliente antes de continuar.",
+      2: "Selecione um endereço antes de continuar.",
+      3: "Informe uma quantidade e um preço unitário válidos para todos os itens antes de continuar.",
+    };
+    for (let step = state.step; step < target; step++) {
+      if (!guards[step]) {
+        setSubmitErrors({ stepper: [messages[step]!] });
+        return;
+      }
+    }
+    goToStep(target);
+  }
 
   return (
     <div className="space-y-6 pb-24 sm:pb-6">
@@ -370,7 +480,7 @@ export function ServiceOrderWizard() {
         </p>
       ) : null}
 
-      <Stepper currentStep={state.step} maxReachedStep={maxReachedStep} onJump={(step) => goToStep(step as 1 | 2 | 3 | 4)} />
+      <Stepper currentStep={state.step} maxReachedStep={maxReachedStep} onJump={(step) => handleStepperJump(step as 1 | 2 | 3 | 4)} />
 
       {errorMessages.length > 0 ? (
         <div role="alert" className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
@@ -417,6 +527,8 @@ export function ServiceOrderWizard() {
             }))
           }
           onRemove={(clientId) => setState((current) => ({ ...current, items: current.items.filter((item) => item.clientId !== clientId) }))}
+          requestCompanyId={activeCompanyId}
+          isStaleRequest={isStaleRequest}
         />
       ) : null}
 
@@ -456,6 +568,12 @@ export function ServiceOrderWizard() {
       {submitError ? (
         <p role="alert" className="text-sm text-destructive">
           {submitError}
+        </p>
+      ) : null}
+
+      {state.step === 4 && travelFeeSettingsStatus !== "success" ? (
+        <p role="alert" className="text-xs text-muted-foreground">
+          Carregue a taxa padrão antes de criar a O.S.
         </p>
       ) : null}
 
