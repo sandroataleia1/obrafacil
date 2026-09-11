@@ -112,6 +112,11 @@ export function CustomerDetail({ id }: { id: string }) {
 
   const [status, setStatus] = useState<"loading" | "success" | "error" | "not_found">("loading");
   const [customer, setCustomer] = useState<Customer | null>(null);
+  // §6: the tenant `customer` actually belongs to — render must gate on
+  // this matching `activeCompanyId`, never trust `customer` alone, since
+  // `activeCompanyId` can already have moved on by the time a render
+  // happens (the frame between a context change and this effect running).
+  const [loadedCompanyId, setLoadedCompanyId] = useState<string | undefined>(undefined);
   const [budgets, setBudgets] = useState<Budget[] | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
 
@@ -138,20 +143,41 @@ export function CustomerDetail({ id }: { id: string }) {
   // after a faster later one (Company B) and re-populating this screen with
   // the wrong tenant's Customer.
   const requestSequence = useRef(0);
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
 
   const load = useCallback(async () => {
     const requestId = ++requestSequence.current;
-    // §9: never keep showing the previous tenant's Customer while the new
-    // GET is in flight — invalidate immediately, not just on success.
+    const requestCompanyId = activeCompanyId;
+    // §9: never keep showing the previous tenant's Customer, or a
+    // dialog/confirmation pointed at its Address/Contact/Customer, while
+    // the new GET is in flight — invalidate immediately, not just on
+    // success.
     setStatus("loading");
     setCustomer(null);
+    setAddressDialog(null);
+    setContactDialog(null);
+    setDeletingAddress(null);
+    setDeletingContact(null);
+    setDeletingCustomer(false);
+    setDeleteCustomerError(null);
+    setPrimaryActionError(null);
     try {
       const data = await getCustomer(id);
       if (requestSequence.current !== requestId) return;
+      // §8: read the *current* activeCompanyId at completion time, not the
+      // one captured in this closure — a stale closure alone can't tell
+      // the difference between "still the latest request" and "the tenant
+      // moved on while this request was in flight".
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       setCustomer(data);
+      setLoadedCompanyId(requestCompanyId);
       setStatus("success");
     } catch (error) {
       if (requestSequence.current !== requestId) return;
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       if (error instanceof ApiError && error.status === 404) {
         setStatus("not_found");
         return;
@@ -160,13 +186,17 @@ export function CustomerDetail({ id }: { id: string }) {
     }
     // §8: a company switch must always trigger a fresh GET, even though
     // `id` alone didn't change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, activeCompanyId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  // §6: the only Customer this render is allowed to show — one still
+  // tagged with a previous tenant is treated as absent, never as
+  // stale-but-displayable, even for a single frame.
+  const isCurrentTenant = customer !== null && loadedCompanyId === activeCompanyId;
 
   useEffect(() => {
     // §11 transitional: Budget/Project stay localStorage prototypes for now.
@@ -386,7 +416,13 @@ export function CustomerDetail({ id }: { id: string }) {
     }
   }
 
-  if (status === "loading") {
+  if (status === "not_found") {
+    return (
+      <EmptyState icon={Users} title="Cliente não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
+    );
+  }
+
+  if (status === "loading" || !isCurrentTenant) {
     return (
       <div className="space-y-4" role="status" aria-busy="true">
         <span className="sr-only">Carregando cliente</span>
@@ -394,12 +430,6 @@ export function CustomerDetail({ id }: { id: string }) {
         <Skeleton className="h-32 rounded-xl" />
         <Skeleton className="h-48 rounded-xl" />
       </div>
-    );
-  }
-
-  if (status === "not_found") {
-    return (
-      <EmptyState icon={Users} title="Cliente não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
     );
   }
 

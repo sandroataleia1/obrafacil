@@ -272,4 +272,49 @@ describe("CustomerDetail", () => {
       expect(screen.getByText("Defina outro endereço principal antes de excluir este endereço.")).toBeInTheDocument()
     );
   });
+
+  /** TF12: an open Address dialog pointed at Company A's data closes on tenant switch and is never actionable afterward. */
+  it("TF12: an open address edit dialog for Company A closes and stops being actionable on tenant switch", async () => {
+    vi.mocked(getCustomer)
+      .mockResolvedValueOnce(customerWithTwoAddressesAndContacts())
+      .mockResolvedValueOnce({ ...customerWithTwoAddressesAndContacts(), name: "Cliente da Empresa B" });
+
+    const user = userEvent.setup();
+    const { rerender } = render(<CustomerDetail id="cust-1" />);
+    await screen.findByText("Casa");
+
+    await user.click(screen.getByRole("button", { name: "Editar endereço Casa" }));
+    await screen.findByText("Editar endereço");
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<CustomerDetail id="cust-1" />);
+
+    // The dialog must be gone immediately — not just visually, but so its
+    // "Salvar" action can no longer be triggered against Company A's data.
+    expect(screen.queryByText("Editar endereço")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Salvar" })).not.toBeInTheDocument();
+
+    await screen.findByText("Cliente da Empresa B");
+  });
+
+  /** TF12: same guarantee for the delete-address confirmation. */
+  it("TF12: a pending delete-address confirmation for Company A is dropped on tenant switch", async () => {
+    vi.mocked(getCustomer)
+      .mockResolvedValueOnce(customerWithTwoAddressesAndContacts())
+      .mockResolvedValueOnce({ ...customerWithTwoAddressesAndContacts(), name: "Cliente da Empresa B" });
+
+    const user = userEvent.setup();
+    const { rerender } = render(<CustomerDetail id="cust-1" />);
+    await screen.findByText("Casa");
+
+    await user.click(screen.getByRole("button", { name: "Excluir endereço Casa" }));
+    await screen.findByText('Excluir o endereço "Casa"?');
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<CustomerDetail id="cust-1" />);
+
+    expect(screen.queryByText('Excluir o endereço "Casa"?')).not.toBeInTheDocument();
+    await screen.findByText("Cliente da Empresa B");
+  });
 });

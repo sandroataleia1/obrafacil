@@ -28,11 +28,20 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
 
   const [status, setStatus] = useState<"loading" | "success" | "error" | "not_found">("loading");
   const [original, setOriginal] = useState<Customer | null>(null);
+  // §7/§10: the tenant `original` actually belongs to — the form fields
+  // must never render as editable unless this matches activeCompanyId,
+  // not even for a single frame between a context change and this
+  // effect running.
+  const [loadedCompanyId, setLoadedCompanyId] = useState<string | undefined>(undefined);
 
   // §11: guards against a slower earlier tenant's GET resolving after a
   // faster later one and repopulating this form with the wrong tenant's
   // Customer.
   const requestSequence = useRef(0);
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
 
   const [kind, setKind] = useState<CustomerKind>("individual");
   const [name, setName] = useState("");
@@ -53,6 +62,7 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
 
   const load = useCallback(async () => {
     const requestId = ++requestSequence.current;
+    const requestCompanyId = activeCompanyId;
     // §10: never keep the previous tenant's form populated while the new
     // GET is in flight — invalidate immediately.
     setStatus("loading");
@@ -60,7 +70,11 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
     try {
       const customer = await getCustomer(customerId);
       if (requestSequence.current !== requestId) return;
+      // §7: read the *current* activeCompanyId at completion time, not the
+      // one captured in this closure.
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       setOriginal(customer);
+      setLoadedCompanyId(requestCompanyId);
       setKind(customer.kind);
       setName(customer.name);
       setLegalName(customer.legal_name ?? "");
@@ -73,6 +87,7 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
       setStatus("success");
     } catch (error) {
       if (requestSequence.current !== requestId) return;
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       if (error instanceof ApiError && error.status === 404) {
         setStatus("not_found");
         return;
@@ -81,13 +96,16 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
     }
     // §10: a company switch must always trigger a fresh GET, even though
     // `customerId` alone didn't change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, activeCompanyId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  // §7: the only loaded form this render is allowed to show as editable —
+  // data still tagged with a previous tenant is treated as absent.
+  const isCurrentTenant = original !== null && loadedCompanyId === activeCompanyId;
 
   async function handleLookupCnpj() {
     const digits = onlyDigits(document);
@@ -151,19 +169,19 @@ export function CustomerEditForm({ customerId }: { customerId: string }) {
     }
   }
 
-  if (status === "loading") {
+  if (status === "not_found") {
+    return (
+      <EmptyState icon={Users} title="Cliente não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
+    );
+  }
+
+  if (status === "loading" || !isCurrentTenant) {
     return (
       <div className="space-y-4" role="status" aria-busy="true">
         <span className="sr-only">Carregando cliente</span>
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-64 rounded-xl" />
       </div>
-    );
-  }
-
-  if (status === "not_found") {
-    return (
-      <EmptyState icon={Users} title="Cliente não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
     );
   }
 

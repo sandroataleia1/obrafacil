@@ -217,12 +217,20 @@ function ListSkeleton() {
   );
 }
 
+interface LoadedList {
+  /** §3/§6: the tenant this response actually belongs to — render must
+   * never trust `response` alone, since `activeCompanyId` can already have
+   * moved on to a different company by the time a render happens. */
+  companyId: string | undefined;
+  response: CustomerPaginationResponse;
+}
+
 export function CustomerList() {
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
 
   const [status, setStatus] = useState<LoadStatus>("loading");
-  const [response, setResponse] = useState<CustomerPaginationResponse | null>(null);
+  const [loaded, setLoaded] = useState<LoadedList | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -230,10 +238,18 @@ export function CustomerList() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // §64: guards against a slower earlier request ("jo") overwriting a
-  // faster later one ("joao") — only the most recently *issued* request's
-  // response is ever applied.
+  // §64/§5: guards against a slower earlier request (different search,
+  // page, or tenant) overwriting a faster later one — only the most
+  // recently *issued* request's response is ever applied.
   const requestSequence = useRef(0);
+  // §4/§8: read at request completion time, not from the request's own
+  // closure — a closure-captured activeCompanyId would still be the OLD
+  // tenant even after the user has already switched.
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+  const previousCompanyIdRef = useRef(activeCompanyId);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -244,15 +260,32 @@ export function CustomerList() {
   }, [searchInput]);
 
   const load = useCallback(async () => {
+    // §4: a tenant switch always wins over whatever page the previous
+    // tenant happened to be on, and closes any dialog pointed at the
+    // previous tenant's Customer — decided synchronously, before the
+    // request even goes out, so it never depends on the request winning a
+    // race to take effect.
+    const isCompanySwitch = previousCompanyIdRef.current !== activeCompanyId;
+    previousCompanyIdRef.current = activeCompanyId;
+    const effectivePage = isCompanySwitch ? 1 : page;
+    if (isCompanySwitch) {
+      setPage(1);
+      setDeletingCustomer(null);
+      setDeleteError(null);
+    }
+
     const requestId = ++requestSequence.current;
+    const requestCompanyId = activeCompanyId;
     setStatus("loading");
     try {
-      const result = await listCustomers({ search: search || undefined, page, perPage: PER_PAGE });
+      const result = await listCustomers({ search: search || undefined, page: effectivePage, perPage: PER_PAGE });
       if (requestSequence.current !== requestId) return;
-      setResponse(result);
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      setLoaded({ companyId: requestCompanyId, response: result });
       setStatus("success");
     } catch (error) {
       if (requestSequence.current !== requestId) return;
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       if (error instanceof ApiError && error.status === 401) {
         void auth.refresh();
         return;
@@ -266,6 +299,11 @@ export function CustomerList() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  // §3: the only response this render is allowed to show — a response
+  // still tagged with a previous tenant is treated as absent, never as
+  // stale-but-displayable.
+  const currentResponse = loaded && loaded.companyId === activeCompanyId ? loaded.response : null;
 
   function handleDeleteRequest(customer: CustomerListItem) {
     setDeleteError(null);
@@ -294,10 +332,13 @@ export function CustomerList() {
     }
   }
 
-  const items = response?.data ?? [];
-  const lastPage = response?.meta.last_page ?? 1;
-  const isEmptyOverall = status === "success" && items.length === 0 && search === "" && page === 1;
-  const isEmptySearch = status === "success" && items.length === 0 && !isEmptyOverall;
+  const items = currentResponse?.data ?? [];
+  const lastPage = currentResponse?.meta.last_page ?? 1;
+  // §3: a mismatched tenant is treated the same as "still loading" — never
+  // as an empty/error state that could flash before the correct data.
+  const isCurrentTenant = currentResponse !== null;
+  const isEmptyOverall = isCurrentTenant && status === "success" && items.length === 0 && search === "" && page === 1;
+  const isEmptySearch = isCurrentTenant && status === "success" && items.length === 0 && !isEmptyOverall;
 
   return (
     <div className="space-y-6">
@@ -312,7 +353,7 @@ export function CustomerList() {
           render={
             <Link href="/clientes/novo">
               <Plus className="size-4" aria-hidden="true" />
-              Novo
+              Novo cliente
             </Link>
           }
         />
@@ -333,9 +374,7 @@ export function CustomerList() {
         />
       </div>
 
-      {status === "loading" && !response ? (
-        <ListSkeleton />
-      ) : status === "error" ? (
+      {status === "error" ? (
         <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
           <p role="alert" className="text-sm text-muted-foreground">
             Não foi possível carregar os clientes agora.
@@ -344,6 +383,8 @@ export function CustomerList() {
             Tentar novamente
           </Button>
         </div>
+      ) : !isCurrentTenant || status === "loading" ? (
+        <ListSkeleton />
       ) : isEmptyOverall ? (
         <EmptyState
           icon={Users}
@@ -362,7 +403,7 @@ export function CustomerList() {
           <div className="hidden lg:block">
             <CustomerTable customers={items} onDelete={handleDeleteRequest} />
           </div>
-          <Pagination page={response?.meta.current_page ?? page} lastPage={lastPage} onChange={setPage} />
+          <Pagination page={currentResponse?.meta.current_page ?? page} lastPage={lastPage} onChange={setPage} />
         </>
       )}
 
