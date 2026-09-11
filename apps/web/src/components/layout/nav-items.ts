@@ -3,6 +3,7 @@ import {
   Boxes,
   BrickWall,
   Calculator,
+  ClipboardCheck,
   ClipboardList,
   DatabaseBackup,
   FileText,
@@ -26,10 +27,14 @@ export interface NavItem {
   comingSoon?: boolean;
 }
 
+// Orçamentos stays a first-class module (Gestão is where it always lived
+// on mobile before this) — it moves into `/mais` on the phone's bottom
+// bar only because there are 4 slots and Ordens de serviço now claims
+// one; it is never removed from mobile navigation altogether.
 export const MOBILE_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: House },
   { href: "/calcular", label: "Calcular", icon: Calculator },
-  { href: "/orcamentos", label: "Orçamentos", icon: FileText },
+  { href: "/ordens-servico", label: "O.S.", icon: ClipboardCheck },
   { href: "/mais", label: "Mais", icon: Menu },
 ];
 
@@ -38,6 +43,7 @@ export const DESKTOP_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: House },
   { href: "/calcular", label: "Calcular", icon: Calculator },
   { href: "/orcamentos", label: "Orçamentos", icon: FileText },
+  { href: "/ordens-servico", label: "Ordens de serviço", icon: ClipboardCheck },
   { href: "/obras", label: "Obras", icon: BrickWall },
   { href: "/clientes", label: "Clientes", icon: Users },
 ];

@@ -3,6 +3,7 @@ const FOCUSED_FLOW_PREFIXES = [
   "/calcular/forro",
   "/calcular/laje",
   "/calcular/piso",
+  "/ordens-servico/nova",
 ];
 
 /**

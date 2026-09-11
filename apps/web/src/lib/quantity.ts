@@ -39,3 +39,42 @@ export function normalizeQuantity(value: number): number {
 export function isPositiveQuantity(value: number): boolean {
   return toQuantityUnits(value) > 0;
 }
+
+/**
+ * Accepts Brazilian-typed quantity input ("1", "1,5", "12,750") and
+ * normalizes it to the decimal-string shape the API expects ("1.000",
+ * "1.500", "12.750" — always exactly 3 decimals, comma never sent raw).
+ * Mirrors `lib/currency.ts`'s `brlInputToDecimalString` intent for the
+ * quantity dimension (Service Orders `items[].quantity`). Returns `null`
+ * for empty input or anything that doesn't normalize to a strictly
+ * positive value — the API requires `quantity > 0`, so this never
+ * produces "0.000" or a negative string for the caller to send.
+ */
+export function quantityInputToDecimalString(raw: string): string | null {
+  const cleaned = raw.replace(/[^\d,.-]/g, "").trim();
+  if (cleaned === "") return null;
+
+  let normalized = cleaned;
+  if (normalized.includes(",") && normalized.includes(".")) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(",", ".");
+  }
+
+  if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
+
+  const [integerPartRaw, fractionPartRaw = ""] = normalized.split(".");
+  const fractionPart = `${fractionPartRaw}000`.slice(0, 3);
+  const integerPart = integerPartRaw.replace(/^0+(?=\d)/, "");
+
+  const result = `${integerPart}.${fractionPart}`;
+  return isPositiveQuantity(Number(result)) ? result : null;
+}
+
+/** Decimal string ("1.500") -> BR display value for an editable input ("1,5"). Trims trailing zeros/dot for a cleaner typing experience; `null`/invalid -> "". */
+export function decimalStringToQuantityInputValue(value: string | null): string {
+  if (value === null) return "";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  return numeric.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
+}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BrickWall, ChevronRight, Users } from "lucide-react";
+import { BrickWall, ChevronRight, FileText, Users } from "lucide-react";
 
 import {
   DESKTOP_NAV_EXTRA_ITEMS,
@@ -7,6 +7,12 @@ import {
   DESKTOP_NAV_SYSTEM_ITEMS,
   type NavItem,
 } from "@/components/layout/nav-items";
+
+// "Orçamentos" sits at the top level on desktop (`DESKTOP_NAV_ITEMS`) but
+// mobile's bottom bar only has 4 slots and Ordens de serviço now claims
+// one of them — it never disappears from mobile navigation, it just
+// moves here explicitly.
+const PRINCIPAL_LINKS: NavItem[] = [{ href: "/orcamentos", label: "Orçamentos", icon: FileText }];
 
 // "Obras" and "Clientes" already sit in the sidebar's always-visible
 // top group (`DESKTOP_NAV_ITEMS`), not `DESKTOP_NAV_EXTRA_ITEMS` — kept
@@ -62,6 +68,7 @@ export default function MaisPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">Mais</h1>
 
+      <LinkSection id="mais-principal" title="Principal" items={PRINCIPAL_LINKS} />
       <LinkSection id="mais-gestao" title="Gestão" items={GESTAO_LINKS} />
       <LinkSection id="mais-financeiro" title="Financeiro" items={DESKTOP_NAV_FINANCE_ITEMS} />
       <LinkSection id="mais-sistema" title="Sistema" items={DESKTOP_NAV_SYSTEM_ITEMS} />
