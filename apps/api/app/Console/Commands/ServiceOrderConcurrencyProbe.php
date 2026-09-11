@@ -52,6 +52,17 @@ class ServiceOrderConcurrencyProbe extends Command
         ServiceOrderService $orderService,
         ServiceOrderItemService $itemService,
     ): int {
+        // BACKEND-06A §48: this harness directly manipulates ServiceOrder
+        // rows by id/action, bypassing HTTP auth/validation entirely — it
+        // must never run anywhere real. The concurrency tests that depend
+        // on it only ever run against `testing`, and a developer only
+        // ever runs it against `local`.
+        if (! app()->environment(['local', 'testing'])) {
+            $this->error('ServiceOrderConcurrencyProbe is a test-only harness and refuses to run outside local/testing.');
+
+            return self::FAILURE;
+        }
+
         $companyId = (string) $this->argument('company');
         $orderId = (string) $this->argument('order');
         $action = (string) $this->argument('action');

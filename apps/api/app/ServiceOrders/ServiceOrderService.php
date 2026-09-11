@@ -9,7 +9,9 @@ use App\Models\CustomerContact;
 use App\Models\ServiceOrder;
 use App\Models\User;
 use App\ServiceOrders\Exceptions\ServiceOrderStatusConflictException;
+use App\ServiceOrders\Notifications\ServiceOrderNotificationBridge;
 use App\Support\CurrentCompanyContext;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -41,6 +43,7 @@ class ServiceOrderService
         private readonly ServiceOrderSettingsService $settingsService,
         private readonly ServiceOrderItemService $itemService,
         private readonly ServiceOrderLocker $locker,
+        private readonly ServiceOrderNotificationBridge $notifications,
     ) {}
 
     /**
@@ -76,8 +79,8 @@ class ServiceOrderService
                     'responsible_user_id' => $validated['responsible_user_id'] ?? null,
                     'title' => $validated['title'],
                     'description' => $validated['description'] ?? null,
-                    'scheduled_start_at' => $validated['scheduled_start_at'] ?? null,
-                    'scheduled_end_at' => $validated['scheduled_end_at'] ?? null,
+                    'scheduled_start_at' => $this->normalizeSchedule($validated['scheduled_start_at'] ?? null),
+                    'scheduled_end_at' => $this->normalizeSchedule($validated['scheduled_end_at'] ?? null),
                     'subtotal' => '0.00',
                     'order_discount' => '0.00',
                     'travel_fee' => $travelFee,
@@ -104,6 +107,15 @@ class ServiceOrderService
             $order->order_discount = $orderDiscount;
             $order->total = ServiceOrderCalculator::total((string) $order->subtotal, $orderDiscount, $travelFee);
             $order->save();
+
+            // BACKEND-06A §7/§8: exactly one `created`, plus `scheduled`
+            // when the O.S. was born with a scheduled_start_at — both are
+            // only actually dispatched after this whole transaction
+            // commits (ServiceOrderNotificationBridge::queue() registers
+            // a DB::afterCommit() callback, it never calls the dispatcher
+            // synchronously here).
+            $this->notifications->created($order);
+            $this->notifications->scheduled($order);
 
             return $order->fresh(['items']);
         });
@@ -137,13 +149,19 @@ class ServiceOrderService
 
             $this->assertOrderDiscountWithinSubtotal($orderDiscount, (string) $lockedOrder->subtotal);
 
+            // BACKEND-06A §8: captured BEFORE fill() overwrites it, so we
+            // can tell a genuine change (§8-B) apart from a PUT that just
+            // resubmits the same scheduled_start_at (§8: "Não emitir se
+            // PUT mantém exatamente o mesmo scheduled_start_at").
+            $previousScheduledStartAt = $lockedOrder->scheduled_start_at;
+
             $lockedOrder->fill(array_merge(
                 [
                     'responsible_user_id' => $validated['responsible_user_id'] ?? null,
                     'title' => $validated['title'],
                     'description' => $validated['description'] ?? null,
-                    'scheduled_start_at' => $validated['scheduled_start_at'] ?? null,
-                    'scheduled_end_at' => $validated['scheduled_end_at'] ?? null,
+                    'scheduled_start_at' => $this->normalizeSchedule($validated['scheduled_start_at'] ?? null),
+                    'scheduled_end_at' => $this->normalizeSchedule($validated['scheduled_end_at'] ?? null),
                     'order_discount' => $orderDiscount,
                     'travel_fee' => $travelFee,
                     'total' => ServiceOrderCalculator::total((string) $lockedOrder->subtotal, $orderDiscount, $travelFee),
@@ -159,6 +177,13 @@ class ServiceOrderService
                 ]
             ));
             $lockedOrder->save();
+
+            $scheduleChanged = $lockedOrder->scheduled_start_at !== null && (
+                $previousScheduledStartAt === null || ! $previousScheduledStartAt->eq($lockedOrder->scheduled_start_at)
+            );
+            if ($scheduleChanged) {
+                $this->notifications->scheduled($lockedOrder);
+            }
 
             return $lockedOrder;
         });
@@ -188,6 +213,8 @@ class ServiceOrderService
             $lockedOrder->started_at = now();
             $lockedOrder->save();
 
+            $this->notifications->started($lockedOrder);
+
             return $lockedOrder;
         });
     }
@@ -213,6 +240,8 @@ class ServiceOrderService
             $lockedOrder->completed_at = now();
             $lockedOrder->save();
 
+            $this->notifications->completed($lockedOrder);
+
             return $lockedOrder;
         });
     }
@@ -234,8 +263,32 @@ class ServiceOrderService
             $lockedOrder->cancellation_reason = $reason;
             $lockedOrder->save();
 
+            $this->notifications->cancelled($lockedOrder);
+
             return $lockedOrder;
         });
+    }
+
+    /**
+     * BACKEND-06A: `Illuminate\Database\Eloquent\Concerns\HasAttributes::
+     * fromDateTime()` formats a Carbon value for storage using its OWN
+     * current timezone (`Y-m-d H:i:s`, no offset in the output) — it never
+     * converts to UTC first. A `scheduled_start_at` string carrying a
+     * non-UTC offset (e.g. "...-03:00", the literal shape a real client
+     * timezone produces) would otherwise have its offset silently dropped
+     * on the way into a naive-looking string, which PostgreSQL then
+     * reinterprets using the session's own timezone (UTC) — corrupting
+     * the stored instant by the input's UTC offset. Parsing here and
+     * converting to UTC *before* the value ever reaches the model
+     * guarantees `fromDateTime()` formats the already-UTC wall-clock
+     * numbers, which PostgreSQL then interprets correctly. Discovered via
+     * this gate's own timezone tests (a company timezone other than UTC
+     * combined with a client-shaped offset string) — every prior
+     * ServiceOrder test happened to only ever pass already-UTC instants.
+     */
+    private function normalizeSchedule(?string $value): ?Carbon
+    {
+        return $value === null ? null : Carbon::parse($value)->utc();
     }
 
     private function resolveContact(Customer $customer, ?string $contactId): ?CustomerContact
