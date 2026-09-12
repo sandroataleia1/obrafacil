@@ -134,6 +134,53 @@ const emptyCustomerPage = {
   links: { first: null, last: null, prev: null, next: null },
 };
 
+function deferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function customerListItem(overrides: { id: string; name: string }) {
+  return {
+    id: overrides.id,
+    kind: "individual" as const,
+    name: overrides.name,
+    legal_name: null,
+    trade_name: null,
+    document: null,
+    phone: null,
+    email: null,
+    active: true,
+    primary_address: null,
+    primary_contact: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+function customerAddress(overrides: { id: string; label: string }) {
+  return {
+    id: overrides.id,
+    label: overrides.label,
+    type: "work_site" as const,
+    postal_code: null,
+    street: null,
+    number: null,
+    complement: null,
+    neighborhood: null,
+    city: null,
+    state: null,
+    reference_point: null,
+    is_primary: true,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+}
+
 describe("ServiceOrderEdit", () => {
   beforeEach(() => {
     vi.mocked(getServiceOrder).mockReset();
@@ -401,6 +448,231 @@ describe("ServiceOrderEdit", () => {
 
       resolveA(order({ number: "OS-000001" }));
       await waitFor(() => expect(screen.queryByText(/OS-000001/i)).not.toBeInTheDocument());
+    });
+  });
+
+  describe("Customer-detail ordering guarantees (bug #3 hardening)", () => {
+    it("CDO1: a slow initial customer-detail fetch resolving late never overwrites an already-selected different customer", async () => {
+      const initial = deferredPromise<Customer>();
+      const customerB = customer({ id: "cust-2", name: "Cliente B", document: null, addresses: [customerAddress({ id: "addr-b", label: "Endereço B" })] });
+      vi.mocked(getServiceOrder).mockResolvedValue(order());
+      vi.mocked(getCustomer).mockImplementation((customerId: string) => {
+        if (customerId === "cust-1") return initial.promise;
+        if (customerId === "cust-2") return Promise.resolve(customerB);
+        return Promise.reject(new Error("unexpected customer id"));
+      });
+      vi.mocked(listCustomers).mockResolvedValue({ ...emptyCustomerPage, data: [customerListItem({ id: "cust-2", name: "Cliente B" })] });
+      const user = userEvent.setup();
+      render(<ServiceOrderEdit id="os-1" />);
+      await screen.findByText(/cliente atual: cliente teste/i);
+
+      await user.type(screen.getByLabelText(/buscar cliente/i), "Cliente B");
+      await screen.findByText("Cliente B");
+      await user.click(screen.getByText("Cliente B"));
+
+      await screen.findByRole("radio", { name: /endereço b/i });
+      await waitFor(() => expect(screen.getByRole("radio", { name: /endereço b/i })).toBeChecked());
+
+      // The initial (cust-1) fetch, fired before B was ever selected, resolves late.
+      initial.resolve(customer());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByRole("radio", { name: /endereço b/i })).toBeChecked();
+      expect(screen.queryByRole("radio", { name: /endereço centro/i })).not.toBeInTheDocument();
+    });
+
+    it("CDO2: selecting C right after B (before B resolves) applies only C — B resolving after is discarded", async () => {
+      const bDeferred = deferredPromise<Customer>();
+      const customerB = customer({ id: "cust-2", name: "Cliente B", document: null, addresses: [customerAddress({ id: "addr-b", label: "Endereço B" })] });
+      const customerC = customer({ id: "cust-3", name: "Cliente C", document: null, addresses: [customerAddress({ id: "addr-c", label: "Endereço C" })] });
+      vi.mocked(getServiceOrder).mockResolvedValue(order());
+      vi.mocked(getCustomer).mockImplementation((customerId: string) => {
+        if (customerId === "cust-1") return Promise.resolve(customer());
+        if (customerId === "cust-2") return bDeferred.promise;
+        if (customerId === "cust-3") return Promise.resolve(customerC);
+        return Promise.reject(new Error("unexpected customer id"));
+      });
+      vi.mocked(listCustomers).mockResolvedValue({
+        ...emptyCustomerPage,
+        data: [customerListItem({ id: "cust-2", name: "Cliente B" }), customerListItem({ id: "cust-3", name: "Cliente C" })],
+      });
+      const user = userEvent.setup();
+      render(<ServiceOrderEdit id="os-1" />);
+      await screen.findByRole("radio", { name: /endereço centro/i });
+
+      await user.type(screen.getByLabelText(/buscar cliente/i), "Cliente");
+      await screen.findByText("Cliente B");
+      await user.click(screen.getByText("Cliente B"));
+      await user.click(screen.getByText("Cliente C"));
+
+      await screen.findByRole("radio", { name: /endereço c/i });
+      await waitFor(() => expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked());
+
+      // B (superseded before it ever resolved) now resolves.
+      bDeferred.resolve(customerB);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked();
+      expect(screen.queryByRole("radio", { name: /endereço b/i })).not.toBeInTheDocument();
+    });
+
+    it("CDO3: a stale error for a superseded customer-detail fetch never flips status to error once a newer customer is already displayed successfully", async () => {
+      const bDeferred = deferredPromise<Customer>();
+      const customerC = customer({ id: "cust-3", name: "Cliente C", document: null, addresses: [customerAddress({ id: "addr-c", label: "Endereço C" })] });
+      vi.mocked(getServiceOrder).mockResolvedValue(order());
+      vi.mocked(getCustomer).mockImplementation((customerId: string) => {
+        if (customerId === "cust-1") return Promise.resolve(customer());
+        if (customerId === "cust-2") return bDeferred.promise;
+        if (customerId === "cust-3") return Promise.resolve(customerC);
+        return Promise.reject(new Error("unexpected customer id"));
+      });
+      vi.mocked(listCustomers).mockResolvedValue({
+        ...emptyCustomerPage,
+        data: [customerListItem({ id: "cust-2", name: "Cliente B" }), customerListItem({ id: "cust-3", name: "Cliente C" })],
+      });
+      const user = userEvent.setup();
+      render(<ServiceOrderEdit id="os-1" />);
+      await screen.findByRole("radio", { name: /endereço centro/i });
+
+      await user.type(screen.getByLabelText(/buscar cliente/i), "Cliente");
+      await screen.findByText("Cliente B");
+      await user.click(screen.getByText("Cliente B"));
+      await user.click(screen.getByText("Cliente C"));
+
+      await screen.findByRole("radio", { name: /endereço c/i });
+      await waitFor(() => expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked());
+
+      // B's fetch — superseded before it settled — now rejects.
+      bDeferred.reject(new Error("network"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.queryByText(/não foi possível carregar os dados deste cliente agora/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked();
+    });
+
+    it("CDO4: retryCustomerDetail's own late response is discarded exactly like any other stale customer-detail fetch, never a separate weaker check", async () => {
+      let cust2CallCount = 0;
+      const retryDeferred = deferredPromise<Customer>();
+      const customerC = customer({ id: "cust-3", name: "Cliente C", document: null, addresses: [customerAddress({ id: "addr-c", label: "Endereço C" })] });
+      vi.mocked(getServiceOrder).mockResolvedValue(order());
+      vi.mocked(getCustomer).mockImplementation((customerId: string) => {
+        if (customerId === "cust-1") return Promise.resolve(customer());
+        if (customerId === "cust-2") {
+          cust2CallCount += 1;
+          if (cust2CallCount === 1) return Promise.reject(new Error("network"));
+          return retryDeferred.promise;
+        }
+        if (customerId === "cust-3") return Promise.resolve(customerC);
+        return Promise.reject(new Error("unexpected customer id"));
+      });
+      vi.mocked(listCustomers).mockResolvedValue({
+        ...emptyCustomerPage,
+        data: [customerListItem({ id: "cust-2", name: "Cliente B" }), customerListItem({ id: "cust-3", name: "Cliente C" })],
+      });
+      const user = userEvent.setup();
+      render(<ServiceOrderEdit id="os-1" />);
+      await screen.findByRole("radio", { name: /endereço centro/i });
+
+      // Selecting B fails — selectedCustomer is set synchronously on
+      // selection, so the retry affordance renders even though B's own
+      // detail fetch rejected.
+      await user.type(screen.getByLabelText(/buscar cliente/i), "Cliente");
+      await screen.findByText("Cliente B");
+      await user.click(screen.getByText("Cliente B"));
+      await screen.findByText(/não foi possível carregar os dados deste cliente agora/i);
+
+      await user.click(screen.getByRole("button", { name: /tentar novamente/i }));
+      await waitFor(() => expect(cust2CallCount).toBe(2));
+
+      // While B's retry is still in flight, the user picks a different customer, C.
+      await user.click(screen.getByText("Cliente C"));
+
+      await screen.findByRole("radio", { name: /endereço c/i });
+      await waitFor(() => expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked());
+
+      // The retry's own response (for B) now resolves — it must not overwrite C's selection.
+      retryDeferred.resolve(customer({ id: "cust-2", name: "Cliente B" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked();
+      expect(screen.queryByText(/não foi possível carregar os dados deste cliente agora/i)).not.toBeInTheDocument();
+    });
+
+    it("CDO5: after an in-flight race settles, the displayed address/contact always corresponds to the CURRENTLY selected customer, never a stale one", async () => {
+      const initial = deferredPromise<Customer>();
+      const bDeferred = deferredPromise<Customer>();
+      const customerC = customer({ id: "cust-3", name: "Cliente C", document: null, addresses: [customerAddress({ id: "addr-c", label: "Endereço C" })] });
+      vi.mocked(getServiceOrder).mockResolvedValue(order());
+      vi.mocked(getCustomer).mockImplementation((customerId: string) => {
+        if (customerId === "cust-1") return initial.promise;
+        if (customerId === "cust-2") return bDeferred.promise;
+        if (customerId === "cust-3") return Promise.resolve(customerC);
+        return Promise.reject(new Error("unexpected customer id"));
+      });
+      vi.mocked(listCustomers).mockResolvedValue({
+        ...emptyCustomerPage,
+        data: [customerListItem({ id: "cust-2", name: "Cliente B" }), customerListItem({ id: "cust-3", name: "Cliente C" })],
+      });
+      const user = userEvent.setup();
+      render(<ServiceOrderEdit id="os-1" />);
+      await screen.findByText(/cliente atual: cliente teste/i);
+
+      await user.type(screen.getByLabelText(/buscar cliente/i), "Cliente");
+      await screen.findByText("Cliente B");
+      await user.click(screen.getByText("Cliente B"));
+      await user.click(screen.getByText("Cliente C"));
+
+      await screen.findByRole("radio", { name: /endereço c/i });
+      await waitFor(() => expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked());
+
+      // Both superseded reads (the original load, and B) now settle out of order.
+      bDeferred.resolve(customer({ id: "cust-2", name: "Cliente B", addresses: [customerAddress({ id: "addr-b", label: "Endereço B" })] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      initial.resolve(customer());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getAllByText("Cliente C").length).toBeGreaterThan(0);
+      expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked();
+      expect(screen.queryByRole("radio", { name: /endereço b/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("radio", { name: /endereço centro/i })).not.toBeInTheDocument();
+    });
+
+    it("CDO6: the PUT payload uses the FINAL selected customer/address/contact, never one left over from a superseded selection", async () => {
+      const bDeferred = deferredPromise<Customer>();
+      const customerC = customer({ id: "cust-3", name: "Cliente C", document: null, addresses: [customerAddress({ id: "addr-c", label: "Endereço C" })] });
+      vi.mocked(getServiceOrder).mockResolvedValue(order());
+      vi.mocked(updateServiceOrder).mockResolvedValue(order());
+      vi.mocked(getCustomer).mockImplementation((customerId: string) => {
+        if (customerId === "cust-1") return Promise.resolve(customer());
+        if (customerId === "cust-2") return bDeferred.promise;
+        if (customerId === "cust-3") return Promise.resolve(customerC);
+        return Promise.reject(new Error("unexpected customer id"));
+      });
+      vi.mocked(listCustomers).mockResolvedValue({
+        ...emptyCustomerPage,
+        data: [customerListItem({ id: "cust-2", name: "Cliente B" }), customerListItem({ id: "cust-3", name: "Cliente C" })],
+      });
+      const user = userEvent.setup();
+      render(<ServiceOrderEdit id="os-1" />);
+      await screen.findByRole("radio", { name: /endereço centro/i });
+
+      await user.type(screen.getByLabelText(/buscar cliente/i), "Cliente");
+      await screen.findByText("Cliente B");
+      await user.click(screen.getByText("Cliente B"));
+      await user.click(screen.getByText("Cliente C"));
+
+      await screen.findByRole("radio", { name: /endereço c/i });
+      await waitFor(() => expect(screen.getByRole("radio", { name: /endereço c/i })).toBeChecked());
+
+      bDeferred.resolve(customer({ id: "cust-2", name: "Cliente B" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await user.click(screen.getByRole("button", { name: /salvar alterações/i }));
+
+      await waitFor(() => expect(updateServiceOrder).toHaveBeenCalled());
+      const [, payload] = vi.mocked(updateServiceOrder).mock.calls[0]!;
+      expect(payload.customer_id).toBe("cust-3");
+      expect(payload.customer_address_id).toBe("addr-c");
     });
   });
 });

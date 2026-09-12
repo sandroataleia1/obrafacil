@@ -67,6 +67,39 @@ export function ServiceOrderEdit({ id }: { id: string }) {
     []
   );
 
+  // Ordering primitive for customer-detail fetches — the same "started
+  // AFTER wins, regardless of resolution order" discipline as the
+  // service-orders-detail page's `orderReadSequenceRef`, scoped to
+  // `getCustomer` reads instead of `getServiceOrder` reads.
+  // `selectedCustomerIdRef` is updated synchronously the moment a new
+  // customer is selected (never waits for a render), so a late fetch for
+  // a superseded customer id is rejected even if it happens to still be
+  // the "latest sequence" (it never is, in practice, since selecting a
+  // new customer always fires a new fetch — but both guards are kept, one
+  // for each half of the race described in bug #3).
+  const customerDetailSequenceRef = useRef(0);
+  const selectedCustomerIdRef = useRef<string | null>(null);
+
+  function nextCustomerDetailContext() {
+    return ++customerDetailSequenceRef.current;
+  }
+
+  /** True when a customer-detail read fired for (`myReadId`, `requestCompanyId`,
+   * `customerId`) is still allowed to apply its result: no newer
+   * customer-detail read has since started, the active company hasn't
+   * changed, and the customer currently selected is still the one this
+   * read was FOR. Every place that fetches a customer's detail must pass
+   * this same check before calling `setCustomerDetail`/`setSelectedAddressId`/
+   * `setSelectedContactId`/`setCustomerDetailStatus` — never a separate,
+   * weaker one. */
+  function isCurrentCustomerDetailRead(myReadId: number, requestCompanyId: string | undefined, customerId: string) {
+    return (
+      customerDetailSequenceRef.current === myReadId &&
+      activeCompanyIdRef.current === requestCompanyId &&
+      selectedCustomerIdRef.current === customerId
+    );
+  }
+
   // The customer/address/contact this O.S. was loaded with — used to
   // decide whether the loaded customer's LIVE address/contact lists
   // still contain the O.S.'s original selection (§ prefill rule), never
@@ -112,10 +145,11 @@ export function ServiceOrderEdit({ id }: { id: string }) {
   const fetchCustomerDetail = useCallback(
     async (customerId: string, isOriginalCustomer: boolean) => {
       const requestCompanyId = activeCompanyId;
+      const myReadId = nextCustomerDetailContext();
       setCustomerDetailStatus("loading");
       try {
         const detail = await getCustomer(customerId);
-        if (isStaleRequest(requestCompanyId)) return;
+        if (!isCurrentCustomerDetailRead(myReadId, requestCompanyId, customerId)) return;
         setSelectedCustomer(detail);
         setCustomerDetail(detail);
         if (isOriginalCustomer) {
@@ -136,11 +170,11 @@ export function ServiceOrderEdit({ id }: { id: string }) {
         }
         setCustomerDetailStatus("success");
       } catch {
-        if (isStaleRequest(requestCompanyId)) return;
+        if (!isCurrentCustomerDetailRead(myReadId, requestCompanyId, customerId)) return;
         setCustomerDetailStatus("error");
       }
     },
-    [activeCompanyId, isStaleRequest]
+    [activeCompanyId]
   );
 
   const load = useCallback(async () => {
@@ -154,6 +188,7 @@ export function ServiceOrderEdit({ id }: { id: string }) {
     setSelectedAddressId(null);
     setSelectedContactId(CONTACT_NONE);
     setAddressMissingWarning(false);
+    selectedCustomerIdRef.current = null;
     setSubmitErrors({});
     setSubmitError(null);
     setScheduleError(null);
@@ -178,6 +213,7 @@ export function ServiceOrderEdit({ id }: { id: string }) {
       originalCustomerIdRef.current = data.customer_id;
       originalAddressIdRef.current = data.customer_address_id;
       originalContactIdRef.current = data.customer_contact_id;
+      selectedCustomerIdRef.current = data.customer_id;
       void fetchCustomerDetail(data.customer_id, true);
     } catch (error) {
       if (requestSequence.current !== requestId || isStaleRequest(requestCompanyId)) return;
@@ -200,6 +236,11 @@ export function ServiceOrderEdit({ id }: { id: string }) {
   const isResolvedForCurrentTenant = resolvedCompanyId !== undefined && resolvedCompanyId === activeCompanyId;
 
   function handleSelectCustomer(customer: CustomerListItem | Customer) {
+    // Updated synchronously, before the fetch fires — this is what lets a
+    // still-in-flight fetch for a previously-selected customer recognize
+    // itself as superseded the instant a newer selection happens, even
+    // before that newer fetch's own promise resolves.
+    selectedCustomerIdRef.current = customer.id;
     setSelectedCustomer(customer);
     setCustomerDetail(null);
     setSelectedAddressId(null);
@@ -208,6 +249,9 @@ export function ServiceOrderEdit({ id }: { id: string }) {
     void fetchCustomerDetail(customer.id, customer.id === originalCustomerIdRef.current);
   }
 
+  /** Goes through the exact same guarded `fetchCustomerDetail` path as
+   * every other customer-detail fetch — never a separately-written retry
+   * with a different (weaker) staleness check. */
   function retryCustomerDetail() {
     if (!selectedCustomer) return;
     void fetchCustomerDetail(selectedCustomer.id, selectedCustomer.id === originalCustomerIdRef.current);

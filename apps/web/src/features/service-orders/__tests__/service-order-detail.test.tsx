@@ -638,4 +638,358 @@ describe("ServiceOrderDetail", () => {
       expect(deleteServiceOrderItem).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("Ordering guarantees (async-race hardening)", () => {
+    it("O1: a late `start` response for Company A, resolving after a switch to Company B, is discarded", async () => {
+      let resolveStart!: (value: ServiceOrder) => void;
+      const startPromise = new Promise<ServiceOrder>((resolve) => {
+        resolveStart = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000001" }))
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000002" }));
+      vi.mocked(startServiceOrder).mockReturnValue(startPromise);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getByRole("button", { name: "Iniciar" }));
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000002");
+      expect(screen.getByRole("button", { name: "Iniciar" })).not.toBeDisabled();
+
+      resolveStart(order({ status: "in_progress", number: "OS-000001", started_at: "2026-09-10T09:00:00Z" }));
+      await waitFor(() => expect(screen.queryByText("Em andamento")).not.toBeInTheDocument());
+      expect(screen.getAllByText("OS-000002")[0]!).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Iniciar" })).not.toBeDisabled();
+    });
+
+    it("O2: a late `complete` response for Company A, resolving after a switch to Company B, is discarded", async () => {
+      let resolveComplete!: (value: ServiceOrder) => void;
+      const completePromise = new Promise<ServiceOrder>((resolve) => {
+        resolveComplete = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000001" }))
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000002" }));
+      vi.mocked(completeServiceOrder).mockReturnValue(completePromise);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getAllByRole("button", { name: "Concluir" })[0]!);
+      await screen.findByText("Concluir esta O.S.?");
+      const confirmButtons = screen.getAllByRole("button", { name: "Concluir" });
+      await user.click(confirmButtons[confirmButtons.length - 1]!);
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000002");
+      expect(screen.getAllByRole("button", { name: "Concluir" })[0]!).not.toBeDisabled();
+
+      resolveComplete(order({ status: "completed", number: "OS-000001", completed_at: "2026-09-10T09:00:00Z" }));
+      await waitFor(() => expect(screen.queryByText("Concluída")).not.toBeInTheDocument());
+      expect(screen.getAllByText("OS-000002")[0]!).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("O3: a late `cancel` response for Company A, resolving after a switch to Company B, is discarded", async () => {
+      let resolveCancel!: (value: ServiceOrder) => void;
+      const cancelPromise = new Promise<ServiceOrder>((resolve) => {
+        resolveCancel = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000001" }))
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000002" }));
+      vi.mocked(cancelServiceOrder).mockReturnValue(cancelPromise);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getByRole("button", { name: "Cancelar" }));
+      await user.type(screen.getByLabelText("Motivo"), "Cliente desistiu");
+      await user.click(screen.getByRole("button", { name: "Cancelar O.S." }));
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000002");
+
+      resolveCancel(
+        order({ status: "cancelled", number: "OS-000001", cancellation_reason: "Cliente desistiu" })
+      );
+      await waitFor(() => expect(screen.queryByText("Cancelada")).not.toBeInTheDocument());
+      expect(screen.getAllByText("OS-000002")[0]!).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("O4: a late non-409 action error for Company A does not surface under Company B", async () => {
+      let rejectStart!: (error: unknown) => void;
+      const startPromise = new Promise<ServiceOrder>((_resolve, reject) => {
+        rejectStart = reject;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000001" }))
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000002" }));
+      vi.mocked(startServiceOrder).mockReturnValue(startPromise);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getByRole("button", { name: "Iniciar" }));
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000002");
+
+      rejectStart(new Error("network"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getAllByText("OS-000002")[0]!).toBeInTheDocument();
+    });
+
+    it("O5: a late action's `finally` for Company A never clears/alters Company B's own independent loading state", async () => {
+      let resolveStart!: (value: ServiceOrder) => void;
+      const startPromise = new Promise<ServiceOrder>((resolve) => {
+        resolveStart = resolve;
+      });
+      let resolveComplete!: (value: ServiceOrder) => void;
+      const completePromise = new Promise<ServiceOrder>((resolve) => {
+        resolveComplete = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000001" }))
+        .mockResolvedValueOnce(order({ status: "open", number: "OS-000002" }));
+      vi.mocked(startServiceOrder).mockReturnValue(startPromise);
+      vi.mocked(completeServiceOrder).mockReturnValue(completePromise);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      // Company A's own start action is left in flight.
+      await user.click(screen.getByRole("button", { name: "Iniciar" }));
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000002");
+
+      // Company B fires its own, independent action (Concluir) — still in flight.
+      await user.click(screen.getAllByRole("button", { name: "Concluir" })[0]!);
+      await screen.findByText("Concluir esta O.S.?");
+      const confirmButtons = screen.getAllByRole("button", { name: "Concluir" });
+      await user.click(confirmButtons[confirmButtons.length - 1]!);
+      expect(screen.getAllByRole("button", { name: "Concluir" })[0]!).toBeDisabled();
+
+      // The stale Company-A start resolves now — its `finally` must not
+      // touch B's `actionLoading`, which is still legitimately true.
+      resolveStart(order({ status: "in_progress", number: "OS-000001" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getAllByRole("button", { name: "Concluir" })[0]!).toBeDisabled();
+
+      resolveComplete(order({ status: "completed", number: "OS-000002", completed_at: "2026-09-10T09:00:00Z" }));
+      await waitFor(() => expect(screen.getByText("Concluída")).toBeInTheDocument());
+    });
+
+    it("O6: a refresh that started SECOND but resolves FIRST wins; the one that started first resolving second is discarded", async () => {
+      let resolveR1!: (value: ServiceOrder) => void;
+      const r1Promise = new Promise<ServiceOrder>((resolve) => {
+        resolveR1 = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(
+          order({
+            status: "open",
+            items: [serviceOrderItem({ id: "item-1", name: "Cimento CP-II" }), serviceOrderItem({ id: "item-2", name: "Areia Média" })],
+          })
+        ) // initial load
+        .mockReturnValueOnce(r1Promise) // R1 — started first (from removing item-1), resolves last
+        .mockResolvedValueOnce(order({ status: "open", subtotal: "300.00", total: "300.00", items: [] })); // R2 — started second, resolves first
+      vi.mocked(deleteServiceOrderItem).mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getByRole("button", { name: /remover cimento cp-ii/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalledWith("os-1", "item-1"));
+
+      await user.click(screen.getByRole("button", { name: /remover areia média/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalledWith("os-1", "item-2"));
+
+      // R2 (started second) has already resolved via mockResolvedValueOnce
+      // by the time its promise microtask settles.
+      await waitFor(() => expect(screen.getAllByText((text) => text.includes("300,00")).length).toBeGreaterThan(0));
+
+      // R1 (started first) now resolves — carrying an older, smaller subtotal — and must be discarded.
+      resolveR1(order({ status: "open", subtotal: "100.00", total: "100.00", items: [serviceOrderItem({ id: "item-2", name: "Areia Média" })] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getAllByText((text) => text.includes("300,00")).length).toBeGreaterThan(0);
+      expect(screen.queryByText((text) => text.includes("100,00"))).not.toBeInTheDocument();
+    });
+
+    it("O7: a terminal snapshot that resolves first wins over an older, still-open in-flight refresh that resolves after it", async () => {
+      let resolveOldRefresh!: (value: ServiceOrder) => void;
+      const oldRefreshPromise = new Promise<ServiceOrder>((resolve) => {
+        resolveOldRefresh = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(order({ status: "open", items: [serviceOrderItem()] })) // initial load
+        .mockReturnValueOnce(oldRefreshPromise); // the older item-mutation refresh, started before completion, resolves last
+      vi.mocked(deleteServiceOrderItem).mockResolvedValue(undefined);
+      vi.mocked(completeServiceOrder).mockResolvedValue(
+        order({ status: "completed", completed_at: "2026-09-10T09:00:00Z", items: [serviceOrderItem()] })
+      );
+      const user = userEvent.setup();
+      render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      // The older refresh (from a remove-item mutation) is fired and left pending.
+      await user.click(screen.getByRole("button", { name: /remover cimento cp-ii/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalled());
+
+      // A newer action (Concluir) starts AFTER the refresh above and resolves before it.
+      await user.click(screen.getAllByRole("button", { name: "Concluir" })[0]!);
+      await screen.findByText("Concluir esta O.S.?");
+      const confirmButtons = screen.getAllByRole("button", { name: "Concluir" });
+      await user.click(confirmButtons[confirmButtons.length - 1]!);
+
+      await waitFor(() => expect(screen.getByText("Concluída")).toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: "Concluir" })).not.toBeInTheDocument();
+
+      // The older, still-open snapshot now resolves — it must not reopen the terminal UI.
+      resolveOldRefresh(order({ status: "open", items: [serviceOrderItem()] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getByText("Concluída")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Concluir" })).not.toBeInTheDocument();
+    });
+
+    it("O8: the latest totals/status persist on screen with no flicker back to a stale value", async () => {
+      let resolveR1!: (value: ServiceOrder) => void;
+      const r1Promise = new Promise<ServiceOrder>((resolve) => {
+        resolveR1 = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(
+          order({
+            status: "open",
+            items: [serviceOrderItem({ id: "item-1", name: "Cimento CP-II" }), serviceOrderItem({ id: "item-2", name: "Areia Média" })],
+          })
+        )
+        .mockReturnValueOnce(r1Promise)
+        .mockResolvedValueOnce(order({ status: "open", subtotal: "300.00", total: "300.00", items: [] }));
+      vi.mocked(deleteServiceOrderItem).mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getByRole("button", { name: /remover cimento cp-ii/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalledWith("os-1", "item-1"));
+
+      await user.click(screen.getByRole("button", { name: /remover areia média/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalledWith("os-1", "item-2"));
+
+      await waitFor(() => expect(screen.getAllByText((text) => text.includes("300,00")).length).toBeGreaterThan(0));
+
+      resolveR1(order({ status: "open", subtotal: "100.00", total: "100.00", items: [serviceOrderItem({ id: "item-2", name: "Areia Média" })] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Re-render (e.g. a parent-triggered re-render) must not resurrect the stale value either.
+      rerender(<ServiceOrderDetail id="os-1" />);
+      expect(screen.getAllByText((text) => text.includes("300,00")).length).toBeGreaterThan(0);
+      expect(screen.queryByText((text) => text.includes("100,00"))).not.toBeInTheDocument();
+    });
+
+    it("O9: a refresh for order X, resolving after navigating to order Y, never paints onto Y's view", async () => {
+      let resolveXRefresh!: (value: ServiceOrder) => void;
+      const xRefreshPromise = new Promise<ServiceOrder>((resolve) => {
+        resolveXRefresh = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(order({ id: "os-1", number: "OS-000001", status: "open", items: [serviceOrderItem()] })) // load X
+        .mockReturnValueOnce(xRefreshPromise) // X's item-mutation refresh — resolves late
+        .mockResolvedValueOnce(order({ id: "os-2", number: "OS-000002", status: "open", items: [] })); // load Y
+      vi.mocked(deleteServiceOrderItem).mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getByRole("button", { name: /remover cimento cp-ii/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalled());
+
+      // The user navigates from X to a different order, Y, within the same company.
+      rerender(<ServiceOrderDetail id="os-2" />);
+      await screen.findAllByText("OS-000002");
+
+      resolveXRefresh(order({ id: "os-1", number: "OS-000001", status: "open", items: [serviceOrderItem()] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getAllByText("OS-000002")[0]!).toBeInTheDocument();
+      expect(screen.queryByText("OS-000001")).not.toBeInTheDocument();
+      expect(screen.queryByText("Cimento CP-II")).not.toBeInTheDocument();
+    });
+
+    it("O10: under an arbitrary interleaving of multiple in-flight reads, only the response for the latest-started read is ever applied", async () => {
+      let resolveR1!: (value: ServiceOrder) => void;
+      const r1Promise = new Promise<ServiceOrder>((resolve) => {
+        resolveR1 = resolve;
+      });
+      let resolveR2!: (value: ServiceOrder) => void;
+      const r2Promise = new Promise<ServiceOrder>((resolve) => {
+        resolveR2 = resolve;
+      });
+      let resolveR3!: (value: ServiceOrder) => void;
+      const r3Promise = new Promise<ServiceOrder>((resolve) => {
+        resolveR3 = resolve;
+      });
+      vi.mocked(getServiceOrder)
+        .mockResolvedValueOnce(
+          order({
+            status: "open",
+            items: [
+              serviceOrderItem({ id: "item-1", name: "Cimento CP-II" }),
+              serviceOrderItem({ id: "item-2", name: "Areia Média" }),
+              serviceOrderItem({ id: "item-3", name: "Tijolo Comum" }),
+            ],
+          })
+        ) // initial load
+        .mockReturnValueOnce(r1Promise) // R1 — fired first (from removing item-1)
+        .mockReturnValueOnce(r2Promise) // R2 — fired second (from removing item-2)
+        .mockReturnValueOnce(r3Promise); // R3 — fired third (from removing item-3) — the latest-started
+      vi.mocked(deleteServiceOrderItem).mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      render(<ServiceOrderDetail id="os-1" />);
+      await screen.findAllByText("OS-000001");
+
+      await user.click(screen.getByRole("button", { name: /remover cimento cp-ii/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalledWith("os-1", "item-1"));
+
+      await user.click(screen.getByRole("button", { name: /remover areia média/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalledWith("os-1", "item-2"));
+
+      await user.click(screen.getByRole("button", { name: /remover tijolo comum/i }));
+      await user.click(screen.getByRole("button", { name: "Remover" }));
+      await waitFor(() => expect(deleteServiceOrderItem).toHaveBeenCalledWith("os-1", "item-3"));
+
+      // Resolve deliberately out of fire order: R2, then R3, then R1 — only
+      // R3 (the latest-started read) may ever be applied.
+      resolveR2(order({ status: "open", subtotal: "200.00", total: "200.00", items: [] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      resolveR3(order({ status: "open", subtotal: "300.00", total: "300.00", items: [] }));
+      await waitFor(() => expect(screen.getAllByText((text) => text.includes("300,00")).length).toBeGreaterThan(0));
+      resolveR1(order({ status: "open", subtotal: "100.00", total: "100.00", items: [] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getAllByText((text) => text.includes("300,00")).length).toBeGreaterThan(0);
+      expect(screen.queryByText((text) => text.includes("200,00"))).not.toBeInTheDocument();
+      expect(screen.queryByText((text) => text.includes("100,00"))).not.toBeInTheDocument();
+    });
+  });
 });

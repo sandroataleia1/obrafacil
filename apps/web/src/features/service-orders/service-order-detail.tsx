@@ -110,13 +110,49 @@ export function ServiceOrderDetail({ id }: { id: string }) {
     []
   );
 
+  // Ordering primitive shared by EVERY `ServiceOrder` GET that can reach
+  // the screen (initial load, retry, and every post-mutation/status-action
+  // refresh) — see module docs on `refreshOrderAfterMutation` below.
+  // `orderReadSequenceRef` is incremented at FIRE time, so a read started
+  // AFTER this one always carries a higher id; checking the ref's CURRENT
+  // value against the id captured at fire time correctly rejects an
+  // older read even if it resolves after a newer one. `currentOrderIdRef`
+  // additionally guards against navigating from order X to order Y within
+  // the same company — a late X response must never paint onto Y's view.
+  const orderReadSequenceRef = useRef(0);
+  const currentOrderIdRef = useRef(id);
+  useEffect(() => {
+    currentOrderIdRef.current = id;
+  }, [id]);
+
+  function nextOrderReadContext() {
+    return ++orderReadSequenceRef.current;
+  }
+
+  /** True when a `ServiceOrder` read fired for (`myReadId`, `requestCompanyId`,
+   * `requestOrderId`) is still allowed to paint the screen: no newer read
+   * has since started, the active company hasn't changed, and the order
+   * being viewed hasn't changed. This is the ONE check every GET on this
+   * page must pass before calling `setOrder`/related state — never a
+   * separate, weaker check. */
+  function isCurrentOrderRead(myReadId: number, requestCompanyId: string | undefined, requestOrderId: string) {
+    return (
+      orderReadSequenceRef.current === myReadId &&
+      activeCompanyIdRef.current === requestCompanyId &&
+      currentOrderIdRef.current === requestOrderId
+    );
+  }
+
   const load = useCallback(async () => {
     const requestId = ++requestSequence.current;
     const requestCompanyId = activeCompanyId;
+    const requestOrderId = id;
+    const myReadId = nextOrderReadContext();
     setStatus("loading");
     setOrder(null);
     setPendingAction(null);
     setActionError(null);
+    setActionLoading(false);
     setCancelReason("");
     setAddItemOpen(false);
     setEditingItem(null);
@@ -126,14 +162,14 @@ export function ServiceOrderDetail({ id }: { id: string }) {
     try {
       const data = await getServiceOrder(id);
       if (requestSequence.current !== requestId) return;
-      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      if (!isCurrentOrderRead(myReadId, requestCompanyId, requestOrderId)) return;
       setOrder(data);
       setLoadedCompanyId(requestCompanyId);
       setResolvedCompanyId(requestCompanyId);
       setStatus("success");
     } catch (error) {
       if (requestSequence.current !== requestId) return;
-      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      if (!isCurrentOrderRead(myReadId, requestCompanyId, requestOrderId)) return;
       setResolvedCompanyId(requestCompanyId);
       if (error instanceof ApiError && error.status === 404) {
         setStatus("not_found");
@@ -153,18 +189,23 @@ export function ServiceOrderDetail({ id }: { id: string }) {
    * the caller already set (unlike `load()`, which resets `actionError`
    * as part of its own full-reload contract). This is the ONE shared
    * refresh path for every post-mutation re-GET on this page — status
-   * actions (start/complete/cancel 409s) AND every item mutation
-   * (add/edit/remove success, or a 409 on any of them) — so there is
-   * never a second, slightly-different tenant-guard implementation.
-   * Item mutations never return the parent's totals themselves, so this
-   * is the ONLY way the Detail page's subtotal/total/updated_at ever
-   * reflect a just-added/edited/removed line.
+   * actions (start/complete/cancel, success AND 409) AND every item
+   * mutation (add/edit/remove success, or a 409 on any of them) — so
+   * there is never a second, slightly-different tenant-guard or
+   * ordering implementation. Item mutations never return the parent's
+   * totals themselves, so this is the ONLY way the Detail page's
+   * subtotal/total/updated_at ever reflect a just-added/edited/removed
+   * line. Participates in the same `orderReadSequenceRef` ordering as
+   * `load()` — an older refresh can never overwrite a newer one, no
+   * matter which HTTP response comes back first.
    */
   async function refreshOrderAfterMutation() {
     const requestCompanyId = activeCompanyId;
+    const requestOrderId = id;
+    const myReadId = nextOrderReadContext();
     try {
       const data = await getServiceOrder(id);
-      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      if (!isCurrentOrderRead(myReadId, requestCompanyId, requestOrderId)) return;
       setOrder(data);
     } catch {
       // The conflict/error message already surfaced; a failed refresh
@@ -176,65 +217,91 @@ export function ServiceOrderDetail({ id }: { id: string }) {
   const isCurrentTenant = order !== null && loadedCompanyId === activeCompanyId;
   const isResolvedForCurrentTenant = resolvedCompanyId !== undefined && resolvedCompanyId === activeCompanyId;
 
-  async function handleStart() {
+  /** True when a status action fired for (`requestCompanyId`, `requestOrderId`)
+   * — captured at the moment the button was clicked — is stale: either the
+   * active company or the order currently being viewed has since changed.
+   * Every state update inside `handleStart`/`handleComplete`/`handleCancel`
+   * (success, 409, other error, AND `finally`) must be gated on this, so a
+   * stale response never paints onto whatever is now on screen. */
+  function isActionStale(requestCompanyId: string | undefined, requestOrderId: string) {
+    return activeCompanyIdRef.current !== requestCompanyId || currentOrderIdRef.current !== requestOrderId;
+  }
+
+  /**
+   * Status actions keep trusting the Resource returned directly by their
+   * own POST (kept intentionally — several existing tests, e.g. D6/D7/D10,
+   * assert the O.S. updates immediately from that response without a
+   * second network round-trip, and forcing an always-refetch architecture
+   * here would add a network hop for no behavioral benefit). To still get
+   * the exact same ordering safety as every GET-driven paint on this page
+   * (bug #2's requirement), the direct response is gated through the SAME
+   * `orderReadSequenceRef`/`isCurrentOrderRead` primitive — a `nextOrderReadContext()`
+   * id is captured the moment the action fires, so if a competing refresh
+   * (e.g. an item-mutation refresh already in flight) resolves in between
+   * and paints a newer snapshot, this action's own response is correctly
+   * treated as stale and never overwrites it — never a separate, weaker check.
+   * Company/order-switch staleness (bug #1) is checked independently via
+   * `isActionStale` since it must also gate `actionError`/`actionLoading`/
+   * `pendingAction`, which never touch `order` and so don't need the
+   * read-sequence check.
+   */
+  async function runStatusAction(action: () => Promise<ServiceOrder>, kind: ActionKind, conflictMessage: string, otherErrorMessage: string) {
     if (!order) return;
+    const requestCompanyId = activeCompanyId;
+    const requestOrderId = order.id;
+    const myReadId = nextOrderReadContext();
     setActionLoading(true);
     setActionError(null);
     try {
-      const updated = await startServiceOrder(order.id);
-      setOrder(updated);
+      const updated = await action();
+      if (isActionStale(requestCompanyId, requestOrderId)) return;
+      if (isCurrentOrderRead(myReadId, requestCompanyId, requestOrderId)) {
+        setOrder(updated);
+      }
       setPendingAction(null);
+      if (kind === "cancel") setCancelReason("");
     } catch (error) {
+      if (isActionStale(requestCompanyId, requestOrderId)) return;
       if (error instanceof ApiError && error.status === 409) {
-        setActionError("Esta O.S. não pode mais ser iniciada. Os dados foram atualizados.");
+        setActionError(conflictMessage);
         void refreshOrderAfterMutation();
       } else {
-        setActionError("Não foi possível iniciar esta O.S. agora.");
+        setActionError(otherErrorMessage);
       }
     } finally {
-      setActionLoading(false);
+      if (!isActionStale(requestCompanyId, requestOrderId)) setActionLoading(false);
     }
+  }
+
+  async function handleStart() {
+    if (!order) return;
+    await runStatusAction(
+      () => startServiceOrder(order.id),
+      "start",
+      "Esta O.S. não pode mais ser iniciada. Os dados foram atualizados.",
+      "Não foi possível iniciar esta O.S. agora."
+    );
   }
 
   async function handleComplete() {
     if (!order) return;
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      const updated = await completeServiceOrder(order.id);
-      setOrder(updated);
-      setPendingAction(null);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        setActionError("Esta O.S. não pode mais ser concluída. Os dados foram atualizados.");
-        void refreshOrderAfterMutation();
-      } else {
-        setActionError("Não foi possível concluir esta O.S. agora.");
-      }
-    } finally {
-      setActionLoading(false);
-    }
+    await runStatusAction(
+      () => completeServiceOrder(order.id),
+      "complete",
+      "Esta O.S. não pode mais ser concluída. Os dados foram atualizados.",
+      "Não foi possível concluir esta O.S. agora."
+    );
   }
 
   async function handleCancel() {
     if (!order || cancelReason.trim() === "") return;
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      const updated = await cancelServiceOrder(order.id, cancelReason.trim());
-      setOrder(updated);
-      setPendingAction(null);
-      setCancelReason("");
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        setActionError("Esta O.S. não pode mais ser cancelada. Os dados foram atualizados.");
-        void refreshOrderAfterMutation();
-      } else {
-        setActionError("Não foi possível cancelar esta O.S. agora.");
-      }
-    } finally {
-      setActionLoading(false);
-    }
+    const reason = cancelReason.trim();
+    await runStatusAction(
+      () => cancelServiceOrder(order.id, reason),
+      "cancel",
+      "Esta O.S. não pode mais ser cancelada. Os dados foram atualizados.",
+      "Não foi possível cancelar esta O.S. agora."
+    );
   }
 
   /** Shared success path for Add/Edit item dialogs — neither response
