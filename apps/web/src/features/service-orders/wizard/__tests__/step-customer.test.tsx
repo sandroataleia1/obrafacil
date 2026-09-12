@@ -385,3 +385,84 @@ describe("StepCustomer — autocomplete gating", () => {
     expect(onSelect).toHaveBeenCalledWith(customerListItem({ id: "cust-search-2", name: "Beatriz Souza" }));
   });
 });
+
+describe("StepCustomer — RAW input invalidation (closes the final autocomplete race)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // §The bug these tests specifically target: invalidation used to only
+  // happen in the effect keyed on the DEBOUNCED `search` state, leaving a
+  // ~300ms window (between a keystroke and the debounce firing) where a
+  // request for the PREVIOUS raw input value was still "current" as far
+  // as `searchSequence` was concerned — unlike SC11/SC12 (which wait past
+  // the debounce window before resolving), these resolve the stale
+  // request IMMEDIATELY, inside that exact window, to prove the fix (raw
+  // `onChange` invalidates before the debounce timer is even set) closes
+  // it — not just the already-covered post-debounce case.
+  it("RAW1: a request for 'ful' resolving immediately after backspacing to 'fu' (well before the next debounce fires) never populates results", async () => {
+    const deferred = deferredPromise<CustomerPaginationResponse>();
+    vi.mocked(listCustomers).mockReturnValueOnce(deferred.promise);
+    const user = userEvent.setup();
+    renderStepCustomer();
+
+    const input = screen.getByLabelText("Buscar cliente");
+    await user.type(input, "ful");
+    await waitFor(() => expect(listCustomers).toHaveBeenCalledTimes(1));
+
+    // Backspace immediately — well under the 300ms debounce window for
+    // whatever comes next.
+    await user.type(input, "{Backspace}");
+    expect(input).toHaveValue("fu");
+    // The hint must already be showing — synchronously, not after
+    // waiting out any debounce.
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+
+    // Resolve the stale "ful" request RIGHT NOW, inside the window where
+    // the old code would not yet have invalidated it.
+    deferred.resolve(page([customerListItem({ name: "Fulano Pereira" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Fulano Pereira")).not.toBeInTheDocument();
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+  });
+
+  it("RAW2: a request for 'ful' resolving immediately after switching to a different valid query 'bea' never paints 'Fulano' while the input shows 'bea'", async () => {
+    const deferred = deferredPromise<CustomerPaginationResponse>();
+    vi.mocked(listCustomers).mockReturnValueOnce(deferred.promise);
+    vi.mocked(listCustomers).mockResolvedValueOnce(page([customerListItem({ id: "cust-bea", name: "Beatriz Souza" })]));
+    const user = userEvent.setup();
+    renderStepCustomer();
+
+    const input = screen.getByLabelText("Buscar cliente");
+    await user.type(input, "ful");
+    await waitFor(() => expect(listCustomers).toHaveBeenCalledTimes(1));
+
+    // Clear and retype a different, still-valid query immediately —
+    // before 300ms has passed, i.e. before "ful"'s own debounce-driven
+    // invalidation (if any) would have had a chance to run.
+    await user.clear(input);
+    await user.type(input, "bea");
+    expect(input).toHaveValue("bea");
+
+    // Resolve the stale "ful" request right now.
+    deferred.resolve(page([customerListItem({ name: "Fulano Pereira" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // "Fulano" must never appear — the input already moved on to "bea".
+    expect(screen.queryByText("Fulano Pereira")).not.toBeInTheDocument();
+
+    // The real, current search for "bea" still resolves normally.
+    await screen.findByText("Beatriz Souza");
+  });
+
+  it("RAW6 (customer half): a fresh, valid query after the raw-invalidation dance still fires and paints its own results normally", async () => {
+    vi.mocked(listCustomers).mockResolvedValueOnce(page([customerListItem({ name: "Fulano Pereira" })]));
+    const user = userEvent.setup();
+    renderStepCustomer();
+
+    await user.type(screen.getByLabelText("Buscar cliente"), "ful");
+    await screen.findByText("Fulano Pereira");
+    expect(listCustomers).toHaveBeenCalledTimes(1);
+  });
+});

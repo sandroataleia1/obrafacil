@@ -419,3 +419,91 @@ describe("StepItems — catalog autocomplete gating", () => {
     expect(listCatalogItems).not.toHaveBeenCalled();
   });
 });
+
+describe("StepItems — RAW input invalidation (closes the final autocomplete race)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // §Same bug class as StepCustomer's own RAW1/RAW2 — invalidation used to
+  // only happen in the effect keyed on the DEBOUNCED `search` state,
+  // leaving a window where a request for the PREVIOUS raw input/filter
+  // was still "current". These resolve the stale request IMMEDIATELY,
+  // inside that window, rather than waiting past the debounce like
+  // CI10/CI11 already do.
+  it("RAW3: a request for 'pin' resolving immediately after backspacing to 'pi' (well before the next debounce fires) never populates results", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    const user = userEvent.setup();
+    renderStepItems();
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalledTimes(1));
+
+    await user.type(input, "{Backspace}");
+    expect(input).toHaveValue("pi");
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+
+    deferred.resolve(page([catalogItem({ name: "Pintura de parede" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+  });
+
+  it("RAW4: a request for 'pin' resolving immediately after switching to a different valid query 'massa' never paints the old result while the input shows 'massa'", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    vi.mocked(listCatalogItems).mockResolvedValueOnce(page([catalogItem({ id: "item-massa", name: "Massa corrida" })]));
+    const user = userEvent.setup();
+    renderStepItems();
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalledTimes(1));
+
+    await user.clear(input);
+    await user.type(input, "massa");
+    expect(input).toHaveValue("massa");
+
+    deferred.resolve(page([catalogItem({ name: "Pintura de parede" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+    await screen.findByText("Massa corrida");
+  });
+
+  it("RAW5: switching the type filter from 'Todos' to 'Produtos' invalidates the 'Todos' request immediately — it never applies even if it resolves right away", async () => {
+    const deferredAll = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferredAll.promise);
+    vi.mocked(listCatalogItems).mockResolvedValueOnce(
+      page([catalogItem({ id: "item-2", type: "product", name: "Tinta acrílica" })])
+    );
+    const user = userEvent.setup();
+    renderStepItems();
+
+    await user.type(screen.getByLabelText("Buscar produto ou serviço"), "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("button", { name: "Produtos" }));
+
+    // The stale "Todos" request resolves immediately, right after the
+    // filter click — it must never apply.
+    deferredAll.resolve(page([catalogItem({ name: "Pintura de parede" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+    await screen.findByText("Tinta acrílica");
+  });
+
+  it("RAW6 (catalog half): a fresh, valid query after the raw-invalidation dance still fires and paints its own results normally", async () => {
+    vi.mocked(listCatalogItems).mockResolvedValueOnce(page([catalogItem({ name: "Pintura de parede" })]));
+    const user = userEvent.setup();
+    renderStepItems();
+
+    await user.type(screen.getByLabelText("Buscar produto ou serviço"), "pin");
+    await screen.findByText("Pintura de parede");
+    expect(listCatalogItems).toHaveBeenCalledTimes(1);
+  });
+});

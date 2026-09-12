@@ -94,11 +94,14 @@ function ServiceOrderCompactRow({ order }: { order: ServiceOrderListItem }) {
   return (
     <div className={cn("grid items-center px-4 py-3.5", COMPACT_GRID_COLS)}>
       <span className="text-sm font-medium text-foreground">{order.number}</span>
+      {/* §"Atendimento" hierarchy: Cliente is the emphasized top line,
+       * Título the secondary line, Local the muted detail line — matches
+       * the exact hierarchy requested, never burying the customer's name
+       * under the service title. */}
       <span className="min-w-0">
-        <span className="block truncate text-sm text-foreground">{order.title}</span>
-        <span className="block truncate text-xs text-muted-foreground">
-          {order.customer.name} · {addressSummary(order.execution_address)}
-        </span>
+        <span className="block truncate text-sm font-medium text-foreground">{order.customer.name}</span>
+        <span className="block truncate text-sm text-muted-foreground">{order.title}</span>
+        <span className="block truncate text-xs text-muted-foreground">{addressSummary(order.execution_address)}</span>
       </span>
       <span className="truncate text-sm text-muted-foreground">{scheduleDisplay(order.scheduled_start_at)}</span>
       <span className="truncate text-sm font-medium text-foreground">{decimalStringToBrlDisplay(order.total)}</span>

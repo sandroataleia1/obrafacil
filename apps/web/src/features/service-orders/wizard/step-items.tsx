@@ -94,6 +94,50 @@ export function StepItems({
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  /**
+   * §Final autocomplete hardening: same reasoning as `StepCustomer`'s own
+   * `handleSearchInputChange` — invalidation used to happen only in the
+   * effect keyed on the DEBOUNCED `search` state, leaving a ~300ms window
+   * where a request for the PREVIOUS raw input value was still "current"
+   * as far as `searchSequence` was concerned. Every raw keystroke now
+   * invalidates immediately, before the debounce timer is even set; the
+   * debounce still decides WHEN the next real search fires. If the raw
+   * value has already dropped below the minimum, clear results/loading/
+   * error synchronously too — no waiting out the debounce window.
+   */
+  function handleSearchInputChange(nextValue: string) {
+    invalidateSearch();
+    setSearchInput(nextValue);
+    if (nextValue.trim().length < MIN_SEARCH_LENGTH) {
+      setResults([]);
+      setError(false);
+      setLoading(false);
+      // Same reasoning as `StepCustomer`'s own handler: the hint-vs-
+      // "nenhum encontrado" decision below reads the DEBOUNCED `search`
+      // state, not this raw input — sync it immediately so the UI never
+      // shows a stale "no results for <longer query>" flash while the
+      // input has already dropped below the minimum. Never triggers a
+      // network call: the search-firing effect gates on length < 3
+      // before ever calling `listCatalogItems`.
+      setSearch(nextValue.trim());
+    }
+  }
+
+  /**
+   * Changing the type filter while a 3+ char query is active must make
+   * the CURRENTLY in-flight request (for the old filter) stale
+   * immediately — never wait for the effect below to notice `typeFilter`
+   * changed, since that effect's own `++searchSequence` increment for
+   * the NEW request happens in the same tick anyway; the explicit call
+   * here is what protects the window before that new request's own
+   * `.then`/`.catch` even run, matching the same "invalidate first"
+   * discipline as every other invalidation site in this file.
+   */
+  function handleTypeFilterChange(nextValue: TypeFilter) {
+    invalidateSearch();
+    setTypeFilter(nextValue);
+  }
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setHighlightedIndex(0);
@@ -208,7 +252,7 @@ export function StepItems({
               ref={searchInputRef}
               type="text"
               value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
+              onChange={(event) => handleSearchInputChange(event.target.value)}
               onKeyDown={handleSearchKeyDown}
               placeholder="Buscar produto ou serviço"
               aria-label="Buscar produto ou serviço"
@@ -226,7 +270,7 @@ export function StepItems({
             <button
               key={value || "all"}
               type="button"
-              onClick={() => setTypeFilter(value)}
+              onClick={() => handleTypeFilterChange(value)}
               aria-pressed={typeFilter === value}
               className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                 typeFilter === value ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground"

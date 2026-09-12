@@ -106,6 +106,44 @@ export function StepCustomer({
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  /**
+   * §Final autocomplete hardening: invalidation used to happen only in
+   * the effect keyed on the DEBOUNCED `search` state — so for the ~300ms
+   * between a keystroke and the debounce firing, a request for the
+   * PREVIOUS input value was still "current" as far as `searchSequence`
+   * was concerned. If that request resolved inside that window (e.g. the
+   * user typed "ful", a request went out, then quickly typed "fu" or
+   * "bea" before 300ms passed), it could still pass the sequence guard
+   * and paint stale results, because nothing had bumped the sequence yet
+   * — the debounced effect hadn't even re-run.
+   *
+   * Fix: every RAW keystroke invalidates the in-flight request
+   * immediately, before the debounce timer is even set. The debounce
+   * still decides WHEN the next real search fires; this only ensures
+   * the PREVIOUS request can never be mistaken for current in the
+   * meantime. If the raw value has already dropped below the minimum,
+   * also clear results/loading/error synchronously here — the UI must
+   * not wait out the debounce window to stop looking like a search is
+   * still running for a query that's already too short.
+   */
+  function handleSearchInputChange(nextValue: string) {
+    invalidateSearch();
+    setSearchInput(nextValue);
+    if (nextValue.trim().length < MIN_SEARCH_LENGTH) {
+      setResults([]);
+      setError(false);
+      setLoading(false);
+      // The hint-vs-"nenhum encontrado" decision below is driven by the
+      // DEBOUNCED `search` state, not this raw input — so also sync it
+      // immediately here (never wait out the debounce for this specific
+      // case). This never fires a network call: the search-firing effect
+      // itself independently gates on length < MIN_SEARCH_LENGTH before
+      // ever touching `listCustomers`, so setting `search` early only
+      // updates what's DISPLAYED, not what's fetched.
+      setSearch(nextValue.trim());
+    }
+  }
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setHighlightedIndex(0);
@@ -250,7 +288,7 @@ export function StepCustomer({
               ref={searchInputRef}
               type="text"
               value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
+              onChange={(event) => handleSearchInputChange(event.target.value)}
               onKeyDown={handleSearchKeyDown}
               placeholder="Buscar cliente por nome, documento ou telefone"
               aria-label="Buscar cliente"
