@@ -11,7 +11,8 @@ import { toE164BR } from "@/features/auth/phone-e164";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { formatCnpj, formatCpf, formatE164PhoneForDisplay, onlyDigits } from "@/lib/document";
 import { formatPhoneInput } from "@/lib/phone";
-import { AddressFields, EMPTY_ADDRESS_FIELDS, type AddressFieldsValue } from "./address-fields";
+import { EMPTY_ADDRESS_FIELDS, AddressFields, type AddressFieldsValue } from "./address-fields";
+import { normalizeAddressDrafts, resolveAddressFieldErrors, type AddressDraft } from "./address-normalization";
 import { ContactFields, EMPTY_CONTACT_FIELDS, type ContactFieldsValue } from "./contact-fields";
 import { createCustomer, lookupCnpj } from "./customers-client";
 import { ADDRESS_TYPE_LABELS } from "./labels";
@@ -22,18 +23,6 @@ type WizardStep = 1 | 2 | 3 | 4;
 const STEP_TITLES = ["Dados básicos", "Endereços", "Contatos", "Revisão"];
 
 const STEP1_ERROR_KEYS = new Set(["kind", "name", "legal_name", "trade_name", "document", "phone", "email", "notes"]);
-
-interface AddressDraft extends AddressFieldsValue {
-  clientId: string;
-  is_primary: boolean;
-  /**
-   * The label this draft STARTED with. An untouched draft whose label
-   * still equals this value contributes no signal of user intent by
-   * itself — see `hasMeaningfulAddressData`. The primary draft starts
-   * with "Endereço principal"; any other draft starts with "".
-   */
-  defaultLabel: string;
-}
 
 interface ContactDraft extends ContactFieldsValue {
   clientId: string;
@@ -58,36 +47,6 @@ function newPrimaryAddressDraft(): AddressDraft {
 
 function newSecondaryAddressDraft(): AddressDraft {
   return { ...EMPTY_ADDRESS_FIELDS, clientId: newClientId(), is_primary: false, defaultLabel: EMPTY_ADDRESS_FIELDS.label };
-}
-
-/**
- * An address draft only counts as "the user actually provided this
- * address" — and therefore ever enters the final payload — if it carries
- * real data beyond its untouched defaults. The primary draft auto-starts
- * with the label "Endereço principal" and the default `type`; neither of
- * those alone signals intent, so the label is compared against whatever
- * THIS draft itself started with (`defaultLabel`), never against a blank
- * string. Any postal/street/number/complement/neighborhood/city/state/
- * reference_point value, a CNPJ-lookup autofill (which writes exactly
- * those same fields), or a label/type the user deliberately changed all
- * count as meaningful. An untouched draft — all defaults, unedited label,
- * unedited type — must never silently become a real address row.
- */
-function hasMeaningfulAddressData(draft: AddressDraft): boolean {
-  const textFields = [
-    draft.postal_code,
-    draft.street,
-    draft.number,
-    draft.complement,
-    draft.neighborhood,
-    draft.city,
-    draft.state,
-    draft.reference_point,
-  ];
-  if (textFields.some((value) => value.trim() !== "")) return true;
-  if (draft.label.trim() !== draft.defaultLabel) return true;
-  if (draft.type !== EMPTY_ADDRESS_FIELDS.type) return true;
-  return false;
 }
 
 function firstError(errors: Record<string, string[]>, ...keys: string[]): string | null {
@@ -267,6 +226,28 @@ export function CustomerCreateWizard({
     setContacts((previous) => previous.map((draft) => ({ ...draft, is_primary: draft.clientId === clientId })));
   }
 
+  /**
+   * Editing the document field invalidates whatever CNPJ lookup is in
+   * flight — a response for a document the user has since changed away
+   * from must never apply. This is stronger than the generation bump
+   * inside `handleLookupCnpj` itself: that one only protects a NEWER
+   * lookup against an OLDER one resolving later; this one protects
+   * against an old lookup resolving after the document was edited with
+   * no new lookup started at all.
+   *
+   * Resetting `cnpjStatus`/`cnpjMessage` here too (not just the
+   * generation ref) matters just as much: without it, editing away from
+   * a document whose lookup never resolves would leave "Buscar CNPJ"
+   * permanently disabled (stuck on the old, now-irrelevant "loading"
+   * state) for the NEW document the user actually wants to search.
+   */
+  function handleDocumentChange(nextDigits: string) {
+    cnpjLookupGenerationRef.current += 1;
+    setCnpjStatus("idle");
+    setCnpjMessage(null);
+    setDocument(nextDigits);
+  }
+
   function goToStep(target: WizardStep) {
     setFieldErrors({});
     setSubmitError(null);
@@ -401,26 +382,12 @@ export function CustomerCreateWizard({
       return;
     }
 
-    // Re-derive the meaningful-address list fresh — never trust a flag
-    // set earlier by a step's own UI state.
-    const meaningfulAddresses = addresses.filter(hasMeaningfulAddressData);
-    const addressPayloads: AddressCreatePayload[] = meaningfulAddresses.map((draft) => ({
-      label: draft.label || "Endereço principal",
-      type: draft.type,
-      postal_code: draft.postal_code || null,
-      street: draft.street || null,
-      number: draft.number || null,
-      complement: draft.complement || null,
-      neighborhood: draft.neighborhood || null,
-      city: draft.city || null,
-      state: draft.state || null,
-      reference_point: draft.reference_point || null,
-      is_primary: false,
-    }));
-    if (addressPayloads.length > 0) {
-      const primaryIndex = meaningfulAddresses.findIndex((draft) => draft.is_primary);
-      addressPayloads[primaryIndex >= 0 ? primaryIndex : 0]!.is_primary = true;
-    }
+    // Re-derive the normalized address list fresh — never trust a flag
+    // set earlier by a step's own UI state. This is the SAME helper the
+    // review step and the backend error mapping both read, so payload,
+    // review and errors can never disagree with each other.
+    const normalizedAddresses = normalizeAddressDrafts(addresses);
+    const addressPayloads: AddressCreatePayload[] = normalizedAddresses.map((item) => item.payload);
 
     // Same discipline for contacts: any draft that will be sent must have
     // a non-empty name, re-checked here rather than trusted from the
@@ -508,9 +475,13 @@ export function CustomerCreateWizard({
   const nameError = firstError(fieldErrors, "name");
   const addressesError = firstError(fieldErrors, "addresses");
   const contactsError = firstError(fieldErrors, "contacts");
-  const primaryAddressIndex = addresses.findIndex((draft) => draft.clientId === primaryAddress.clientId);
 
-  const reviewAddresses = addresses.filter(hasMeaningfulAddressData);
+  // Single source of truth: the exact same normalized list feeds the
+  // Step 2 per-card error mapping, the Step 4 review, and (in
+  // `handleSubmit`) the final payload — never recomputed independently.
+  const normalizedAddresses = normalizeAddressDrafts(addresses);
+  const addressErrorsByClientId = resolveAddressFieldErrors(fieldErrors, normalizedAddresses);
+
   const reviewContacts = contacts.filter((draft) => draft.name.trim() !== "");
 
   return (
@@ -583,7 +554,7 @@ export function CustomerCreateWizard({
                         type="text"
                         inputMode="numeric"
                         value={formatCnpj(document)}
-                        onChange={(event) => setDocument(onlyDigits(event.target.value).slice(0, 14))}
+                        onChange={(event) => handleDocumentChange(onlyDigits(event.target.value).slice(0, 14))}
                         placeholder="00.000.000/0000-00"
                         className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
                       />
@@ -731,9 +702,9 @@ export function CustomerCreateWizard({
                 onChange={(patch) => updateAddress(primaryAddress.clientId, patch)}
                 idPrefix="address-primary"
               />
-              {addressesError || draftErrors(fieldErrors, "addresses", primaryAddressIndex) ? (
+              {addressesError || addressErrorsByClientId[primaryAddress.clientId] ? (
                 <p role="alert" className="text-xs text-destructive">
-                  {addressesError ?? draftErrors(fieldErrors, "addresses", primaryAddressIndex)}
+                  {addressesError ?? addressErrorsByClientId[primaryAddress.clientId]}
                 </p>
               ) : null}
             </CardContent>
@@ -748,7 +719,6 @@ export function CustomerCreateWizard({
               </Button>
             </div>
             {otherAddresses.map((draft) => {
-              const index = addresses.findIndex((item) => item.clientId === draft.clientId);
               const expanded = expandedAddressIds.has(draft.clientId);
               return (
                 <Card key={draft.clientId}>
@@ -792,9 +762,9 @@ export function CustomerCreateWizard({
                         onChange={(patch) => updateAddress(draft.clientId, patch)}
                         idPrefix={`address-${draft.clientId}`}
                       />
-                      {draftErrors(fieldErrors, "addresses", index) ? (
+                      {addressErrorsByClientId[draft.clientId] ? (
                         <p role="alert" className="text-xs text-destructive">
-                          {draftErrors(fieldErrors, "addresses", index)}
+                          {addressErrorsByClientId[draft.clientId]}
                         </p>
                       ) : null}
                     </CardContent>
@@ -927,22 +897,22 @@ export function CustomerCreateWizard({
               </Button>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              {reviewAddresses.length === 0 ? (
+              {normalizedAddresses.length === 0 ? (
                 <p className="text-muted-foreground">Nenhum endereço informado.</p>
               ) : (
-                reviewAddresses.map((draft) => (
-                  <div key={draft.clientId} className="space-y-0.5 rounded-lg border border-border p-3">
+                normalizedAddresses.map((item) => (
+                  <div key={item.clientId} className="space-y-0.5 rounded-lg border border-border p-3">
                     <p className="flex items-center gap-1.5 font-medium text-foreground">
-                      {draft.label || "Endereço"}
-                      {draft.is_primary ? (
+                      {item.payload.label}
+                      {item.payload.is_primary ? (
                         <span className="flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                           <Star className="size-3 fill-primary text-primary" aria-hidden="true" />
                           Principal
                         </span>
                       ) : null}
                     </p>
-                    <p className="text-muted-foreground">{ADDRESS_TYPE_LABELS[draft.type]}</p>
-                    <p className="text-muted-foreground">{addressSummaryLine(draft)}</p>
+                    <p className="text-muted-foreground">{ADDRESS_TYPE_LABELS[item.draft.type]}</p>
+                    <p className="text-muted-foreground">{addressSummaryLine(item.draft)}</p>
                   </div>
                 ))
               )}

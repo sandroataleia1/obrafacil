@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 import { useAuth } from "@/features/auth/auth-provider";
 import { CustomerCreateWizard } from "./customer-create-wizard";
@@ -24,12 +24,23 @@ import { CustomerCreateWizard } from "./customer-create-wizard";
  * switch, so a stale continuation reading `.current` at resolution time
  * always sees the truth, never a value frozen at a dead instance's last
  * render.
+ *
+ * The assignment happens in a `useLayoutEffect`, not a `useEffect`. Both
+ * fire after render, but `useEffect` (a "passive" effect) is scheduled
+ * for AFTER the browser paints — a separate task, with a real window
+ * after commit where a dangling `createCustomer` promise from the OLD
+ * instance could resolve and still see the stale company id. A layout
+ * effect runs synchronously right after commit (unmounting the OLD
+ * wizard, mounting the NEW one under the new `key`), in the very same
+ * synchronous block — no microtask (a resolved promise's `.then`) can
+ * run in between. That closes the window completely, without mutating a
+ * ref during render itself (react-hooks/refs forbids that).
  */
 export function CustomerCreateForm() {
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
   const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeCompanyIdRef.current = activeCompanyId;
   }, [activeCompanyId]);
 

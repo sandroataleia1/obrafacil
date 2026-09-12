@@ -353,6 +353,83 @@ describe("CustomerCreateForm (4-step wizard)", () => {
 
       expect(screen.getByLabelText(/Razão social/)).toHaveValue("Segunda Empresa");
     });
+
+    it("CFINAL1: editing the document field while a lookup is pending invalidates it — no data from that stale response is ever applied", async () => {
+      let resolveLookup!: (value: unknown) => void;
+      vi.mocked(lookupCnpj).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        }) as never
+      );
+
+      const user = userEvent.setup();
+      render(<CustomerCreateForm />);
+      await user.click(screen.getByRole("button", { name: "Pessoa jurídica" }));
+      await user.type(screen.getByLabelText(/^CNPJ/), "19131243000197");
+      await user.click(screen.getByRole("button", { name: /Buscar CNPJ/ }));
+      await waitFor(() => expect(lookupCnpj).toHaveBeenCalledTimes(1));
+
+      // Edit the document field to a DIFFERENT CNPJ while A's lookup is
+      // still pending — this alone (no new lookup started yet) must
+      // invalidate A's eventual response.
+      await user.clear(screen.getByLabelText(/^CNPJ/));
+      await user.type(screen.getByLabelText(/^CNPJ/), "11222333000181");
+
+      resolveLookup({
+        document: "19131243000197",
+        legal_name: "Empresa A (obsoleta)",
+        trade_name: null,
+        phone: null,
+        email: null,
+        address: { postal_code: null, street: null, number: null, complement: null, neighborhood: null, city: null, state: null },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.queryByText("Empresa A (obsoleta)")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/Razão social/)).not.toHaveValue("Empresa A (obsoleta)");
+    });
+
+    it("CFINAL2: after CFINAL1's edit, a fresh 'Buscar CNPJ' for the new document applies normally", async () => {
+      let resolveLookupA!: (value: unknown) => void;
+      vi.mocked(lookupCnpj).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveLookupA = resolve;
+        }) as never
+      );
+
+      const user = userEvent.setup();
+      render(<CustomerCreateForm />);
+      await user.click(screen.getByRole("button", { name: "Pessoa jurídica" }));
+      await user.type(screen.getByLabelText(/^CNPJ/), "19131243000197");
+      await user.click(screen.getByRole("button", { name: /Buscar CNPJ/ }));
+      await waitFor(() => expect(lookupCnpj).toHaveBeenCalledTimes(1));
+
+      await user.clear(screen.getByLabelText(/^CNPJ/));
+      await user.type(screen.getByLabelText(/^CNPJ/), "11222333000181");
+
+      vi.mocked(lookupCnpj).mockResolvedValueOnce({
+        document: "11222333000181",
+        legal_name: "Empresa B (nova)",
+        trade_name: null,
+        phone: null,
+        email: null,
+        address: { postal_code: null, street: null, number: null, complement: null, neighborhood: null, city: null, state: null },
+      });
+      await user.click(screen.getByRole("button", { name: /Buscar CNPJ/ }));
+      await waitFor(() => expect(screen.getByLabelText(/Razão social/)).toHaveValue("Empresa B (nova)"));
+
+      // The old lookup resolving even later still must never overwrite it.
+      resolveLookupA({
+        document: "19131243000197",
+        legal_name: "Empresa A (obsoleta)",
+        trade_name: null,
+        phone: null,
+        email: null,
+        address: { postal_code: null, street: null, number: null, complement: null, neighborhood: null, city: null, state: null },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getByLabelText(/Razão social/)).toHaveValue("Empresa B (nova)");
+    });
   });
 
   describe("address", () => {
@@ -483,9 +560,13 @@ describe("CustomerCreateForm (4-step wizard)", () => {
     });
 
     it("a 422 on a specific address card surfaces on that card, not just a generic banner", async () => {
+      // The primary draft stays untouched (empty) and gets filtered out of
+      // the payload, so the ONLY address actually sent is the secondary —
+      // at payload index 0, never index 1. The backend error is keyed to
+      // the SENT array, not the original drafts array.
       vi.mocked(createCustomer).mockRejectedValueOnce(
         new ApiValidationError({
-          "addresses.1.city": ["Cidade inválida."],
+          "addresses.0.city": ["Cidade inválida."],
         })
       );
 
@@ -499,7 +580,46 @@ describe("CustomerCreateForm (4-step wizard)", () => {
       await advanceToStep4(user);
       await user.click(screen.getByRole("button", { name: "Criar cliente" }));
 
-      await waitFor(() => expect(screen.getByText("Cidade inválida.")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText(/etapa 2 de 4/i)[0]!).toBeInTheDocument());
+      expect(screen.getByText("Cidade inválida.")).toBeInTheDocument();
+      // The primary card's own city field stays empty and shows no
+      // error — only the secondary (Cidade X) card does.
+      const cityFields = screen.getAllByLabelText("Cidade") as HTMLInputElement[];
+      expect(cityFields[0]!.value).toBe("");
+      expect(cityFields[cityFields.length - 1]!.value).toBe("Cidade X");
+    });
+
+    it("a secondary address left with no custom label is never persisted with the same label text as the real primary", async () => {
+      const user = userEvent.setup();
+      render(<CustomerCreateForm />);
+      await fillNameAndAdvanceToStep2(user);
+      // The primary draft is filled (real, still primary) — its label
+      // stays the default "Endereço principal". Add a genuine secondary
+      // and leave ITS label untouched too.
+      await user.type(screen.getByLabelText("Cidade"), "Belo Horizonte");
+      await user.click(screen.getByRole("button", { name: "Adicionar endereço" }));
+      const cityInputs = screen.getAllByLabelText("Cidade");
+      await user.type(cityInputs[cityInputs.length - 1]!, "Vitória");
+      await advanceToStep3(user);
+      await advanceToStep4(user);
+
+      // Review must show exactly one "Endereço principal" (the real
+      // primary) and the secondary under a DIFFERENT wording — never
+      // both addresses sharing the same misleading label text.
+      expect(screen.getByText("Endereço principal")).toBeInTheDocument();
+      expect(screen.getByText("Outro endereço")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Criar cliente" }));
+      await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
+      const payload = vi.mocked(createCustomer).mock.calls[0]![0];
+      expect(payload.addresses).toHaveLength(2);
+      const primary = payload.addresses!.find((address) => address.is_primary)!;
+      const secondary = payload.addresses!.find((address) => !address.is_primary)!;
+      expect(primary.city).toBe("Belo Horizonte");
+      expect(primary.label).toBe("Endereço principal");
+      expect(secondary.city).toBe("Vitória");
+      expect(secondary.label).toBe("Outro endereço");
+      expect(secondary.label).not.toBe(primary.label);
     });
   });
 
@@ -816,6 +936,36 @@ describe("CustomerCreateForm (4-step wizard)", () => {
 
       await waitFor(() => expect(screen.getByLabelText(/^CPF/)).toBeInTheDocument());
       expect(screen.getByLabelText("Nome")).toHaveValue("");
+    });
+
+    it("TFINAL1: resolving the OLD company's create Promise in the exact same tick as a company switch never navigates under the old tenant", async () => {
+      let resolveCreate!: (value: Customer) => void;
+      vi.mocked(createCustomer).mockReturnValue(
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        })
+      );
+
+      const user = userEvent.setup();
+      const { rerender } = render(<CustomerCreateForm />);
+      await fillNameAndAdvanceToStep2(user);
+      await advanceToStep3(user);
+      await advanceToStep4(user);
+      await user.click(screen.getByRole("button", { name: "Criar cliente" }));
+
+      // Switch company, then resolve company A's in-flight Promise
+      // immediately after — in the SAME synchronous block, with no
+      // `await`/`waitFor` in between. This is exactly the window a
+      // `useEffect`-based ref update leaves open (the effect hasn't run
+      // yet at this point); a layout-effect-based (or render-time)
+      // update must already have closed it by the time `rerender`
+      // returns.
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<CustomerCreateForm />);
+      resolveCreate(CREATED_CUSTOMER);
+
+      await waitFor(() => expect(screen.getAllByText(/etapa 1 de 4/i)[0]!).toBeInTheDocument());
+      expect(push).not.toHaveBeenCalled();
     });
   });
 });
