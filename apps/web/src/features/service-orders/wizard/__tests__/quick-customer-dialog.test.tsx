@@ -22,9 +22,10 @@ vi.mock("@/features/auth/auth-provider", () => ({
 vi.mock("@/features/customers/customers-client", () => ({
   createCustomer: vi.fn(),
   lookupCnpj: vi.fn(),
+  lookupCep: vi.fn(),
 }));
 
-import { createCustomer, lookupCnpj } from "@/features/customers/customers-client";
+import { createCustomer, lookupCnpj, lookupCep } from "@/features/customers/customers-client";
 import { QuickCustomerDialog } from "../quick-customer-dialog";
 
 describe("QuickCustomerDialog", () => {
@@ -224,5 +225,213 @@ describe("QuickCustomerDialog", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  describe("Async isolation (bug #2 hardening)", () => {
+    it("AQ1: a CNPJ lookup success resolving after a company switch does not populate a freshly mounted dialog", async () => {
+      let resolveLookup!: (value: unknown) => void;
+      vi.mocked(lookupCnpj).mockReturnValue(
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        }) as never
+      );
+      const user = userEvent.setup();
+      const { unmount } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: "Pessoa jurídica" }));
+      await user.type(screen.getByLabelText(/cnpj/i), "12345678000199");
+      await user.click(screen.getByRole("button", { name: /buscar cnpj/i }));
+      await waitFor(() => expect(lookupCnpj).toHaveBeenCalled());
+
+      // Simulates the parent (StepCustomer) unmounting this instance on a
+      // tenant switch (`quickCreateOpen` forced to false, per the fix).
+      unmount();
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+
+      // A brand-new dialog instance opens under the new tenant.
+      render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      resolveLookup({
+        document: "12345678000199",
+        legal_name: "Empresa Antiga LTDA",
+        trade_name: "Empresa Antiga",
+        phone: null,
+        email: null,
+        address: { postal_code: null, street: null, number: null, complement: null, neighborhood: null, city: null, state: null },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByLabelText("Nome")).toHaveValue("");
+    });
+
+    it("AQ2: a CNPJ lookup error resolving late does not leak an error message into a fresh dialog session", async () => {
+      let rejectLookup!: (error: unknown) => void;
+      vi.mocked(lookupCnpj).mockReturnValue(
+        new Promise((_resolve, reject) => {
+          rejectLookup = reject;
+        }) as never
+      );
+      const user = userEvent.setup();
+      const { unmount } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: "Pessoa jurídica" }));
+      await user.type(screen.getByLabelText(/cnpj/i), "12345678000199");
+      await user.click(screen.getByRole("button", { name: /buscar cnpj/i }));
+      await waitFor(() => expect(lookupCnpj).toHaveBeenCalled());
+
+      unmount();
+      render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      rejectLookup(new Error("boom"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.queryByText(/não foi possível consultar o cnpj/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("CNPJ não encontrado.")).not.toBeInTheDocument();
+    });
+
+    it("AQ3: closing the dialog before a CNPJ response arrives, then reopening it, never lets the late response populate the reopened (fresh) instance", async () => {
+      let resolveLookup!: (value: unknown) => void;
+      vi.mocked(lookupCnpj).mockReturnValue(
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        }) as never
+      );
+      const user = userEvent.setup();
+      const { unmount } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: "Pessoa jurídica" }));
+      await user.type(screen.getByLabelText(/cnpj/i), "12345678000199");
+      await user.click(screen.getByRole("button", { name: /buscar cnpj/i }));
+      await waitFor(() => expect(lookupCnpj).toHaveBeenCalled());
+
+      // Dialog closed (per the fix, `StepCustomer` unmounts it entirely).
+      unmount();
+      // Reopened: a brand-new instance, same tenant.
+      render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      resolveLookup({
+        document: "12345678000199",
+        legal_name: "Empresa Antiga LTDA",
+        trade_name: "Empresa Antiga",
+        phone: null,
+        email: null,
+        address: { postal_code: null, street: null, number: null, complement: null, neighborhood: null, city: null, state: null },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByLabelText("Nome")).toHaveValue("");
+    });
+
+    it("AQ4: closing the dialog before a CEP response arrives, then reopening it, never lets the late response populate the reopened (fresh) instance", async () => {
+      let resolveLookup!: (value: unknown) => void;
+      vi.mocked(lookupCep).mockReturnValue(
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        }) as never
+      );
+      const user = userEvent.setup();
+      const { unmount } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.type(screen.getByLabelText(/^cep/i), "30140110");
+      await user.click(screen.getByRole("button", { name: /buscar cep/i }));
+      await waitFor(() => expect(lookupCep).toHaveBeenCalled());
+
+      unmount();
+      render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      resolveLookup({
+        postal_code: "30140110",
+        street: "Rua Antiga",
+        neighborhood: "Bairro Antigo",
+        city: "Belo Horizonte",
+        state: "MG",
+        provider_complement: null,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByLabelText(/cidade/i)).toHaveValue("");
+    });
+
+    it("AQ5: a late CEP response after a company switch does not populate the new tenant's fresh dialog", async () => {
+      let resolveLookup!: (value: unknown) => void;
+      vi.mocked(lookupCep).mockReturnValue(
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        }) as never
+      );
+      const user = userEvent.setup();
+      const { unmount } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.type(screen.getByLabelText(/^cep/i), "30140110");
+      await user.click(screen.getByRole("button", { name: /buscar cep/i }));
+      await waitFor(() => expect(lookupCep).toHaveBeenCalled());
+
+      unmount();
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      resolveLookup({
+        postal_code: "30140110",
+        street: "Rua Antiga",
+        neighborhood: "Bairro Antigo",
+        city: "Belo Horizonte",
+        state: "MG",
+        provider_complement: null,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByLabelText(/cidade/i)).toHaveValue("");
+    });
+
+    it("AQ6: a late createCustomer validation-error response for a request superseded by a tenant switch never surfaces field errors", async () => {
+      let rejectCreate!: (error: unknown) => void;
+      const { ApiValidationError } = await import("@/lib/api-client");
+      vi.mocked(createCustomer).mockReturnValue(
+        new Promise((_resolve, reject) => {
+          rejectCreate = reject;
+        }) as never
+      );
+      const user = userEvent.setup();
+      const { rerender } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("Nome"), "Cliente da Empresa A");
+      await user.click(screen.getByRole("button", { name: /criar cliente/i }));
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      rejectCreate(new ApiValidationError({ document: ["Documento inválido."] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.queryByText("Documento inválido.")).not.toBeInTheDocument();
+    });
+
+    it("AQ7: a normal, non-stale submit that fails still re-enables the submit button once its own request settles", async () => {
+      vi.mocked(createCustomer).mockRejectedValue(new Error("boom"));
+      const user = userEvent.setup();
+      render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("Nome"), "Cliente Válido");
+      await user.click(screen.getByRole("button", { name: /criar cliente/i }));
+
+      await waitFor(() => expect(screen.getByRole("button", { name: /criar cliente/i })).not.toBeDisabled());
+    });
+
+    it("AQ8: every fresh dialog mount starts with all fields at their documented defaults", async () => {
+      const user = userEvent.setup();
+      const { unmount } = render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: "Pessoa jurídica" }));
+      await user.type(screen.getByLabelText("Nome"), "Rascunho Antigo");
+      await user.type(screen.getByLabelText(/cnpj/i), "12345678000199");
+
+      unmount();
+      render(<QuickCustomerDialog open onOpenChange={() => {}} onCreated={vi.fn()} />);
+
+      expect(screen.getByRole("button", { name: "Pessoa física" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByLabelText("Nome")).toHaveValue("");
+      expect(screen.queryByLabelText(/cnpj/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /criar cliente/i })).toBeDisabled();
+    });
   });
 });

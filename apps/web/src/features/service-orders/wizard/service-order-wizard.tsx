@@ -80,7 +80,15 @@ export function ServiceOrderWizard() {
   const [confirmZeroItemsOpen, setConfirmZeroItemsOpen] = useState(false);
 
   const [travelFeeSettingsStatus, setTravelFeeSettingsStatus] = useState<"loading" | "success" | "error">("loading");
-  const [travelFeeTouched, setTravelFeeTouched] = useState(false);
+  // §Tenant safety: which tenant the user last manually edited the travel
+  // fee input under (or `undefined` if never touched under the current
+  // tenant). A settings response for tenant X only skips applying its
+  // default when this ref's value is X itself — a touch recorded under a
+  // DIFFERENT (old) tenant must never block applying a new tenant's
+  // default. Deliberately a ref, not state: the value read at response
+  // time must always be the latest one, never a value captured by an
+  // effect closure from an earlier render.
+  const travelFeeTouchedCompanyIdRef = useRef<string | undefined>(undefined);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitErrors, setSubmitErrors] = useState<Record<string, string[]>>({});
@@ -108,7 +116,10 @@ export function ServiceOrderWizard() {
     setSubmitErrors({});
     setSubmitError(null);
     setScheduleError(null);
-    setTravelFeeTouched(false);
+    // Belt-and-suspenders: the real protection is comparing the ref's
+    // value against `requestCompanyId` at settings-response time below,
+    // not this reset happening at exactly the right moment.
+    travelFeeTouchedCompanyIdRef.current = undefined;
   }, [activeCompanyId]);
 
   const isStaleRequest = useCallback(
@@ -128,15 +139,24 @@ export function ServiceOrderWizard() {
       .then((settings) => {
         if (isStaleRequest(requestCompanyId)) return;
         setTravelFeeSettingsStatus("success");
-        setState((current) => (travelFeeTouched ? current : { ...current, travelFeeInput: settings.default_travel_fee.replace(".", ",") }));
+        // Only skip applying this tenant's default if the user touched
+        // the input specifically under THIS tenant — a touch recorded
+        // under a different (old) tenant must never block it. Read from
+        // the ref (always current), never from a closed-over boolean.
+        setState((current) =>
+          travelFeeTouchedCompanyIdRef.current === requestCompanyId
+            ? current
+            : { ...current, travelFeeInput: settings.default_travel_fee.replace(".", ",") }
+        );
       })
       .catch(() => {
         if (isStaleRequest(requestCompanyId)) return;
         setTravelFeeSettingsStatus("error");
       });
     // Intentionally re-runs only when the tenant changes, mirroring the
-    // reset effect above — `travelFeeTouched`/`isStaleRequest` are stable
-    // enough not to need re-triggering the network call itself.
+    // reset effect above — `isStaleRequest` is stable enough not to need
+    // re-triggering the network call itself, and `travelFeeTouchedCompanyIdRef`
+    // is a ref (read at response time, never a dependency).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCompanyId]);
 
@@ -147,7 +167,11 @@ export function ServiceOrderWizard() {
       .then((settings) => {
         if (isStaleRequest(requestCompanyId)) return;
         setTravelFeeSettingsStatus("success");
-        setState((current) => (travelFeeTouched ? current : { ...current, travelFeeInput: settings.default_travel_fee.replace(".", ",") }));
+        setState((current) =>
+          travelFeeTouchedCompanyIdRef.current === requestCompanyId
+            ? current
+            : { ...current, travelFeeInput: settings.default_travel_fee.replace(".", ",") }
+        );
       })
       .catch(() => {
         if (isStaleRequest(requestCompanyId)) return;
@@ -545,7 +569,9 @@ export function ServiceOrderWizard() {
           scheduleError={scheduleError}
           travelFeeInput={state.travelFeeInput}
           onTravelFeeChange={(value) => {
-            setTravelFeeTouched(true);
+            // Record the CURRENT tenant at edit time — not whichever
+            // tenant a stale closure might otherwise imply.
+            travelFeeTouchedCompanyIdRef.current = activeCompanyId;
             setState((current) => ({ ...current, travelFeeInput: value }));
           }}
           travelFeeSettingsStatus={travelFeeSettingsStatus}

@@ -58,6 +58,15 @@ export function QuickCustomerDialog({
     label: "Endereço principal",
   });
 
+  // §Tenant safety / staleness: incremented every time a CNPJ lookup is
+  // started. A lookup only applies its result if this ref's value still
+  // matches the generation it captured before its `await` AND the active
+  // company hasn't changed — guards a NEWER lookup superseding an older
+  // in-flight one within this SAME still-open dialog instance (the
+  // unmount-on-close fix below covers the close/reopen and tenant-switch
+  // cases, but not two lookups racing inside one open instance).
+  const cnpjLookupGenerationRef = useRef(0);
+
   const [cnpjStatus, setCnpjStatus] = useState<"idle" | "loading" | "error">("idle");
   const [cnpjMessage, setCnpjMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -108,10 +117,17 @@ export function QuickCustomerDialog({
       setCnpjMessage("Informe um CNPJ com 14 dígitos.");
       return;
     }
+    const myGeneration = ++cnpjLookupGenerationRef.current;
+    const requestCompanyIdAtLookup = activeCompanyId;
     setCnpjStatus("loading");
     setCnpjMessage(null);
     try {
       const result = await lookupCnpj(digits);
+      if (cnpjLookupGenerationRef.current !== myGeneration || activeCompanyIdRef.current !== requestCompanyIdAtLookup) {
+        // Superseded by a newer lookup, or the tenant changed while this
+        // one was in flight — never apply a stale CNPJ result.
+        return;
+      }
       setName((current) => current || result.trade_name || result.legal_name);
       setPhone((current) => current || (result.phone ? formatE164PhoneForDisplay(result.phone) : ""));
       setEmail((current) => current || result.email || "");
@@ -127,6 +143,9 @@ export function QuickCustomerDialog({
       }));
       setCnpjStatus("idle");
     } catch (error) {
+      if (cnpjLookupGenerationRef.current !== myGeneration || activeCompanyIdRef.current !== requestCompanyIdAtLookup) {
+        return;
+      }
       setCnpjStatus("error");
       if (error instanceof ApiError && error.status === 404) {
         setCnpjMessage("CNPJ não encontrado.");
@@ -180,13 +199,25 @@ export function QuickCustomerDialog({
       onCreated(created);
       handleOpenChange(false);
     } catch (error) {
+      // Same staleness check as the success path above — a request that
+      // was superseded by a tenant switch must not mutate this (likely
+      // about-to-unmount) dialog's local state either.
+      if (activeCompanyIdRef.current !== requestCompanyIdAtSubmit) {
+        return;
+      }
       if (error instanceof ApiValidationError) {
         setFieldErrors(error.errors);
       } else {
         setSubmitError("Não foi possível criar o cliente agora.");
       }
     } finally {
-      setSubmitting(false);
+      // Only skip re-enabling the button for a STALE request (the dialog
+      // is likely unmounting anyway per the tenant-switch close, so a
+      // skipped update there is harmless). A live, non-stale request must
+      // always re-enable the button here, success or failure.
+      if (activeCompanyIdRef.current === requestCompanyIdAtSubmit) {
+        setSubmitting(false);
+      }
     }
   }
 

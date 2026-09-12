@@ -202,7 +202,13 @@ export function StepSchedule({
           </div>
           <div className="flex items-center justify-between pt-1 text-base font-semibold text-foreground">
             <span>Total</span>
-            <span>{decimalStringToBrlDisplay(preview.total)}</span>
+            <span>
+              {travelFeeSettingsStatus === "success"
+                ? decimalStringToBrlDisplay(preview.total)
+                : travelFeeSettingsStatus === "loading"
+                  ? "Calculando..."
+                  : "Total indisponível"}
+            </span>
           </div>
         </div>
       </section>

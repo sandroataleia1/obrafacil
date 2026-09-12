@@ -154,7 +154,9 @@ export function StepCustomer({
         </ul>
       ) : null}
 
-      <QuickCustomerDialog open={quickCreateOpen} onOpenChange={setQuickCreateOpen} onCreated={handleCreated} />
+      {quickCreateOpen ? (
+        <QuickCustomerDialog open={quickCreateOpen} onOpenChange={setQuickCreateOpen} onCreated={handleCreated} />
+      ) : null}
     </div>
   );
 }

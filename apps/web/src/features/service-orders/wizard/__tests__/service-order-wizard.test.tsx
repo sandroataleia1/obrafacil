@@ -563,6 +563,138 @@ describe("ServiceOrderWizard", () => {
     });
   });
 
+  describe("Travel fee tenant-scoped touched state (bug #1)", () => {
+    it("TF1: Company A's default loads normally into the input", async () => {
+      vi.mocked(getServiceOrderSettings).mockResolvedValue({ default_travel_fee: "80.00" });
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+
+      await waitFor(() => expect(screen.getByLabelText("Deslocamento")).toHaveValue("80,00"));
+    });
+
+    it("TF2: manually typing a value while Company A's GET is still pending is never overwritten once it resolves (same-tenant protection preserved)", async () => {
+      let resolveSettings!: (value: { default_travel_fee: string }) => void;
+      vi.mocked(getServiceOrderSettings).mockReturnValue(
+        new Promise((resolve) => {
+          resolveSettings = resolve;
+        })
+      );
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+
+      const travelFeeInput = screen.getByLabelText("Deslocamento");
+      await user.clear(travelFeeInput);
+      await user.type(travelFeeInput, "50,00");
+
+      resolveSettings({ default_travel_fee: "80.00" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.getByLabelText("Deslocamento")).toHaveValue("50,00");
+    });
+
+    it("TF3: touching the fee under Company A, then switching to Company B, does not block B's default from being applied", async () => {
+      let resolveSettingsA!: (value: { default_travel_fee: string }) => void;
+      vi.mocked(getServiceOrderSettings).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSettingsA = resolve;
+        })
+      );
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderWizard />);
+      await reachStep4(user);
+
+      const travelFeeInput = screen.getByLabelText("Deslocamento");
+      await user.clear(travelFeeInput);
+      await user.type(travelFeeInput, "999,00");
+      resolveSettingsA({ default_travel_fee: "80.00" });
+      await waitFor(() => expect(screen.getByLabelText("Deslocamento")).toHaveValue("999,00"));
+
+      vi.mocked(getServiceOrderSettings).mockResolvedValue({ default_travel_fee: "150.00" });
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderWizard />);
+      await waitFor(() => expect(screen.getAllByText(/etapa 1 de 4/i)[0]).toBeInTheDocument());
+      await reachStep4(user);
+
+      await waitFor(() => expect(screen.getByLabelText("Deslocamento")).toHaveValue("150,00"));
+    });
+
+    it("TF4: a late GET response for Company A that resolves after the switch to B is discarded (isStaleRequest)", async () => {
+      let resolveSettingsA!: (value: { default_travel_fee: string }) => void;
+      vi.mocked(getServiceOrderSettings).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSettingsA = resolve;
+        })
+      );
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderWizard />);
+      await reachStep4(user);
+
+      vi.mocked(getServiceOrderSettings).mockResolvedValue({ default_travel_fee: "150.00" });
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderWizard />);
+      await waitFor(() => expect(screen.getAllByText(/etapa 1 de 4/i)[0]).toBeInTheDocument());
+
+      resolveSettingsA({ default_travel_fee: "80.00" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await reachStep4(user);
+      await waitFor(() => expect(screen.getByLabelText("Deslocamento")).toHaveValue("150,00"));
+    });
+
+    it("TF5: after switching to Company B, reaching a 'success' status never leaves the travel fee input empty due to an inherited touched flag from A", async () => {
+      vi.mocked(getServiceOrderSettings).mockResolvedValueOnce({ default_travel_fee: "80.00" });
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderWizard />);
+      await reachStep4(user);
+
+      const travelFeeInput = screen.getByLabelText("Deslocamento");
+      await user.clear(travelFeeInput);
+      await user.type(travelFeeInput, "999,00");
+
+      vi.mocked(getServiceOrderSettings).mockResolvedValue({ default_travel_fee: "150.00" });
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderWizard />);
+      await waitFor(() => expect(screen.getAllByText(/etapa 1 de 4/i)[0]).toBeInTheDocument());
+      await reachStep4(user);
+
+      await waitFor(() => expect(screen.getByLabelText("Deslocamento")).not.toHaveValue(""));
+      expect(screen.getByLabelText("Deslocamento")).toHaveValue("150,00");
+    });
+
+    it("TF6: the final submit payload for an O.S. created under Company B uses exactly B's default, never '0.00' and never A's previously-touched value", async () => {
+      vi.mocked(getServiceOrderSettings).mockResolvedValueOnce({ default_travel_fee: "80.00" });
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      vi.mocked(createServiceOrder).mockResolvedValue({ id: "os-1", number: "OS-000001" } as never);
+      const user = userEvent.setup();
+      const { rerender } = render(<ServiceOrderWizard />);
+      await reachStep4(user);
+
+      const travelFeeInput = screen.getByLabelText("Deslocamento");
+      await user.clear(travelFeeInput);
+      await user.type(travelFeeInput, "999,00");
+
+      vi.mocked(getServiceOrderSettings).mockResolvedValue({ default_travel_fee: "150.00" });
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<ServiceOrderWizard />);
+      await waitFor(() => expect(screen.getAllByText(/etapa 1 de 4/i)[0]).toBeInTheDocument());
+      await reachStep4(user);
+      await waitFor(() => expect(screen.getByLabelText("Deslocamento")).toHaveValue("150,00"));
+
+      await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
+
+      await waitFor(() => expect(createServiceOrder).toHaveBeenCalled());
+      const payload = vi.mocked(createServiceOrder).mock.calls[0]![0];
+      expect(payload.travel_fee).toBe("150.00");
+    });
+  });
+
   describe("Stepper forward-jump guard", () => {
     it("WI5: clearing an item's quantity then jumping to step 4 via the stepper is blocked", async () => {
       vi.mocked(getCustomer).mockResolvedValue(customerDetail());
