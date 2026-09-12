@@ -450,7 +450,13 @@ export function ServiceOrderEdit({ id }: { id: string }) {
           Cliente atual: {order.customer.name}
           {order.customer.document ? ` · ${formatCpfCnpj(order.customer.document)}` : ""}
         </p>
-        <StepCustomer selected={selectedCustomer} onSelect={handleSelectCustomer} requestCompanyId={activeCompanyId} isStaleRequest={isStaleRequest} />
+        <StepCustomer
+          selected={selectedCustomer}
+          onSelect={handleSelectCustomer}
+          requestCompanyId={activeCompanyId}
+          isStaleRequest={isStaleRequest}
+          variant="inline"
+        />
       </section>
 
       {selectedCustomer ? (

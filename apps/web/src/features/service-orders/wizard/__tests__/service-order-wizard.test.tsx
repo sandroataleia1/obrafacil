@@ -49,7 +49,7 @@ import type { Customer, CustomerListItem, CustomerPaginationResponse } from "@/f
 import { listCatalogItems } from "@/features/catalog/catalog-client";
 import type { CatalogItem, CatalogItemPaginationResponse } from "@/features/catalog/types";
 import { createServiceOrder, getServiceOrderSettings } from "../../service-orders-client";
-import { ApiValidationError } from "@/lib/api-client";
+import { ApiError, ApiNetworkError, ApiValidationError } from "@/lib/api-client";
 import { ServiceOrderWizard } from "../service-order-wizard";
 import { StepItems } from "../step-items";
 
@@ -953,6 +953,133 @@ describe("ServiceOrderWizard", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(screen.queryByText("Cliente Teste")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Create-failure handling (root-caused 500 regression + error classification)", () => {
+    it("CF1: a 500 with the real captured bcmath-shaped body shows a clear message, preserves the draft, and 'Tentar novamente' retries with an identical payload", async () => {
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      vi.mocked(listCatalogItems).mockResolvedValue(catalogPage([catalogItem({ sale_price: "150.00" })]));
+      vi.mocked(createServiceOrder)
+        .mockRejectedValueOnce(
+          new ApiError(
+            500,
+            JSON.stringify({
+              message: "Call to undefined function App\\ServiceOrders\\bcadd()",
+              exception: "Error",
+              file: "/app/app/ServiceOrders/Money.php",
+              line: 26,
+            })
+          )
+        )
+        .mockResolvedValueOnce({ id: "os-1", number: "OS-000001" } as never);
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await selectCustomerAndAdvance(user);
+      await screen.findAllByText("Endereço principal");
+      await user.click(screen.getByRole("button", { name: "Avançar" }));
+
+      await user.type(screen.getByLabelText("Buscar produto ou serviço"), "Pintura");
+      await screen.findByText("Pintura");
+      await user.click(screen.getByRole("button", { name: "Adicionar" }));
+      await user.click(screen.getByRole("button", { name: "Avançar" }));
+      await waitFor(() => expect(screen.getAllByText(/etapa 4 de 4/i)[0]).toBeInTheDocument());
+
+      const titleBefore = (screen.getByLabelText("Título") as HTMLInputElement).value;
+
+      await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
+
+      await screen.findByText("Não foi possível criar a O.S. agora. Tente novamente.");
+      // The draft (title, item) must survive the failed submit untouched.
+      expect((screen.getByLabelText("Título") as HTMLInputElement).value).toBe(titleBefore);
+      expect(screen.getByText("Pintura")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /tentar novamente/i }));
+
+      await waitFor(() => expect(createServiceOrder).toHaveBeenCalledTimes(2));
+      const [firstPayload] = vi.mocked(createServiceOrder).mock.calls[0]!;
+      const [secondPayload] = vi.mocked(createServiceOrder).mock.calls[1]!;
+      expect(secondPayload).toEqual(firstPayload);
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/ordens-servico/os-1"));
+    });
+
+    it("CF2: a 422 still routes to the correct step/field (regression)", async () => {
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      vi.mocked(createServiceOrder).mockRejectedValue(
+        new ApiValidationError({ customer_address_id: ["O endereço selecionado é inválido."] })
+      );
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+      await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
+
+      await waitFor(() => expect(screen.getAllByText(/etapa 2 de 4/i)[0]).toBeInTheDocument());
+      expect(screen.getByText("O endereço selecionado é inválido.")).toBeInTheDocument();
+    });
+
+    it("CF3: a 401-shaped error shows the session-expired message instead of the generic one", async () => {
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      vi.mocked(createServiceOrder).mockRejectedValue(new ApiError(401, "Unauthenticated."));
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+      await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
+
+      await screen.findByText("Sua sessão expirou. Faça login novamente.");
+      expect(screen.queryByText("Não foi possível criar a O.S. agora. Tente novamente.")).not.toBeInTheDocument();
+    });
+
+    it("CF4: a 419-shaped error (expired CSRF token) shows the same session-expired message as 401", async () => {
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      vi.mocked(createServiceOrder).mockRejectedValue(new ApiError(419, "CSRF token mismatch."));
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+      await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
+
+      await screen.findByText("Sua sessão expirou. Faça login novamente.");
+    });
+
+    it("CF5: a 403-shaped error shows a permission-specific message", async () => {
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      vi.mocked(createServiceOrder).mockRejectedValue(new ApiError(403, "Forbidden."));
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+      await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
+
+      await screen.findByText("Você não tem permissão para criar esta O.S.");
+    });
+
+    it("CF6: a network-failure-shaped rejection (no status on the error) falls into the same 'tente novamente' bucket as 5xx", async () => {
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      vi.mocked(createServiceOrder).mockRejectedValue(new ApiNetworkError());
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+      await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
+
+      await screen.findByText("Não foi possível criar a O.S. agora. Tente novamente.");
+    });
+
+    it("CF7: a double-click on 'Criar O.S.' during an in-flight request still results in exactly one createServiceOrder call (regression)", async () => {
+      vi.mocked(getCustomer).mockResolvedValue(customerDetail());
+      let resolveSubmit!: (value: unknown) => void;
+      vi.mocked(createServiceOrder).mockReturnValue(
+        new Promise((resolve) => {
+          resolveSubmit = resolve;
+        }) as never
+      );
+      const user = userEvent.setup();
+      render(<ServiceOrderWizard />);
+      await reachStep4(user);
+
+      const submitButton = screen.getByRole("button", { name: /criar o\.s\./i });
+      await user.click(submitButton);
+      await user.click(screen.getByRole("button", { name: /criando/i }));
+
+      expect(createServiceOrder).toHaveBeenCalledTimes(1);
+      resolveSubmit({ id: "os-1", number: "OS-000001" });
     });
   });
 });

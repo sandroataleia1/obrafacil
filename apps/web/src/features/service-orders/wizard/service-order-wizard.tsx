@@ -10,7 +10,7 @@ import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { useAuth } from "@/features/auth/auth-provider";
 import { getCustomer } from "@/features/customers/customers-client";
 import type { Customer, CustomerAddress, CustomerContact, CustomerListItem } from "@/features/customers/types";
-import { ApiValidationError } from "@/lib/api-client";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { brlInputToDecimalString } from "@/lib/currency";
 import { quantityInputToDecimalString } from "@/lib/quantity";
 import { computeLinePreview, computeOrderPreview, isDiscountWithinSubtotal } from "../money-preview";
@@ -19,7 +19,7 @@ import type { ServiceOrderCreatePayload } from "../types";
 import { StepCustomer } from "./step-customer";
 import { StepLocation } from "./step-location";
 import { allItemsValid, StepItems } from "./step-items";
-import { StepSchedule } from "./step-schedule";
+import { StepSchedule, type ItemSummary } from "./step-schedule";
 import {
   CONTACT_NONE,
   computeCustomerAutoSelection,
@@ -93,6 +93,10 @@ export function ServiceOrderWizard() {
   const [submitting, setSubmitting] = useState(false);
   const [submitErrors, setSubmitErrors] = useState<Record<string, string[]>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Only true for the classified 401/419/403/5xx/network branches below —
+  // never for the travel-fee-not-loaded gate message, which already has
+  // its own dedicated retry affordance in the "Valores" section.
+  const [submitErrorRetryable, setSubmitErrorRetryable] = useState(false);
   const [companySwitchNotice, setCompanySwitchNotice] = useState<string | null>(null);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
 
@@ -115,6 +119,7 @@ export function ServiceOrderWizard() {
     setConfirmZeroItemsOpen(false);
     setSubmitErrors({});
     setSubmitError(null);
+    setSubmitErrorRetryable(false);
     setScheduleError(null);
     // Belt-and-suspenders: the real protection is comparing the ref's
     // value against `requestCompanyId` at settings-response time below,
@@ -225,9 +230,27 @@ export function ServiceOrderWizard() {
     });
   }, [state.items, state.orderDiscountInput, state.travelFeeInput]);
 
+  // For the Resumo's itemized list only — mirrors `preview`'s own
+  // filter-out-invalid-lines behavior (an item missing a valid
+  // quantity/unit price is silently excluded here too), just paired with
+  // the item's display name for the summary to show.
+  const itemSummaries: ItemSummary[] = useMemo(() => {
+    return state.items
+      .map((item) => {
+        const quantity = quantityInputToDecimalString(item.quantityInput);
+        const unitPrice = brlInputToDecimalString(item.unitPriceInput);
+        if (quantity === null || unitPrice === null) return null;
+        const lineDiscount = brlInputToDecimalString(item.lineDiscountInput) ?? "0.00";
+        const { lineTotal } = computeLinePreview({ quantity, unitPrice, lineDiscount });
+        return { name: item.name, quantity, unitPrice, lineTotal };
+      })
+      .filter((item): item is ItemSummary => item !== null);
+  }, [state.items]);
+
   function goToStep(step: 1 | 2 | 3 | 4) {
     setSubmitErrors({});
     setSubmitError(null);
+    setSubmitErrorRetryable(false);
     setState((current) => ({ ...current, step }));
     setMaxReachedStep((current) => Math.max(current, step));
   }
@@ -403,6 +426,7 @@ export function ServiceOrderWizard() {
     const requestCompanyId = activeCompanyId;
     setSubmitting(true);
     setSubmitError(null);
+    setSubmitErrorRetryable(false);
     setSubmitErrors({});
 
     const payload: ServiceOrderCreatePayload = {
@@ -449,7 +473,9 @@ export function ServiceOrderWizard() {
         if (target !== state.step) goToStep(target);
         setSubmitErrors(error.errors);
       } else {
-        setSubmitError("Não foi possível criar a O.S. agora.");
+        const classified = classifyCreateError(error);
+        setSubmitError(classified.message);
+        setSubmitErrorRetryable(classified.retryable);
       }
     } finally {
       setSubmitting(false);
@@ -585,16 +611,14 @@ export function ServiceOrderWizard() {
           addressLabel={selectedAddress?.label ?? "—"}
           contactName={selectedContact?.name ?? null}
           preview={preview}
+          itemSummaries={itemSummaries}
           titleError={submitErrors.title?.[0]}
           orderDiscountDecimal={brlInputToDecimalString(state.orderDiscountInput) ?? "0.00"}
           travelFeeDecimal={brlInputToDecimalString(state.travelFeeInput) ?? "0.00"}
+          submitError={submitError}
+          submitErrorRetryable={submitErrorRetryable}
+          onRetrySubmit={() => void handleSubmit()}
         />
-      ) : null}
-
-      {submitError ? (
-        <p role="alert" className="text-sm text-destructive">
-          {submitError}
-        </p>
       ) : null}
 
       {state.step === 4 && travelFeeSettingsStatus !== "success" ? (
@@ -648,6 +672,40 @@ export function ServiceOrderWizard() {
       />
     </div>
   );
+}
+
+/**
+ * Turns a non-validation `createServiceOrder` failure into a message the
+ * user can act on, plus whether "Tentar novamente" should re-fire the
+ * exact same submit. Root cause of the original "Não foi possível criar a
+ * O.S. agora." report: a genuine 500 (stale `bcmath`-less API container)
+ * that this generic branch correctly identified as a server failure — the
+ * bug was never the message being wrong, only that every non-422 failure
+ * (401/403/419/5xx/network) fell into the same undifferentiated bucket
+ * with no retry. This function is the fix: each class gets its own
+ * message, and every one of them stays retryable without losing the
+ * draft (the draft is never touched here or anywhere in this catch path).
+ */
+function classifyCreateError(error: unknown): { message: string; retryable: boolean } {
+  if (error instanceof ApiError) {
+    // Mirrors `AuthProvider.refresh()`'s own 401 convention (session no
+    // longer valid) — 419 is Laravel's "CSRF token expired", which reads
+    // the same way to the user: sign in again.
+    if (error.status === 401 || error.status === 419) {
+      return { message: "Sua sessão expirou. Faça login novamente.", retryable: true };
+    }
+    if (error.status === 403) {
+      return { message: "Você não tem permissão para criar esta O.S.", retryable: true };
+    }
+    // 5xx (the real captured case — a bcmath-less API returning a 500)
+    // and any other unclassified ApiError status share the same honest,
+    // already-correct copy — it was never the wrong message, only too
+    // easy to miss and impossible to retry without renavigating.
+    return { message: "Não foi possível criar a O.S. agora. Tente novamente.", retryable: true };
+  }
+  // ApiNetworkError (fetch never reached the server) or any other
+  // unexpected thrown value with no status at all — same bucket as 5xx.
+  return { message: "Não foi possível criar a O.S. agora. Tente novamente.", retryable: true };
 }
 
 function targetStepForErrors(errors: Record<string, string[]>): 1 | 2 | 3 | 4 {

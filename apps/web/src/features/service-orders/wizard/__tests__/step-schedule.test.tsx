@@ -1,5 +1,14 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+// jsdom doesn't implement `scrollIntoView` at all — `StepSchedule`'s
+// submit-error-focus effect calls it on the alert element whenever a
+// submit error appears; polyfill it here the same way a per-file browser-
+// API mock (e.g. `matchMedia`) is already done elsewhere in this suite.
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 import { computeOrderPreview } from "../../money-preview";
 import { StepSchedule } from "../step-schedule";
@@ -36,6 +45,7 @@ function renderStepSchedule(overrides: Partial<Parameters<typeof StepSchedule>[0
       addressLabel="Endereço principal"
       contactName={null}
       preview={preview}
+      itemSummaries={[]}
       titleError={null}
       orderDiscountDecimal="0.00"
       travelFeeDecimal="20.00"
@@ -100,6 +110,7 @@ describe("StepSchedule — Total line reflects travel-fee-settings status (bug #
         addressLabel="Endereço principal"
         contactName={null}
         preview={preview}
+        itemSummaries={[]}
         titleError={null}
         orderDiscountDecimal="0.00"
         travelFeeDecimal="20.00"
@@ -113,5 +124,102 @@ describe("StepSchedule — Total line reflects travel-fee-settings status (bug #
   it("Subtotal is unaffected by travel-fee-settings status — it keeps showing its real value regardless", () => {
     renderStepSchedule({ travelFeeSettingsStatus: "loading" });
     expect(screen.getByText("R$ 100,00")).toBeInTheDocument();
+  });
+});
+
+describe("StepSchedule — Resumo itemization and discount sign", () => {
+  it("SU1: shows each item's name, quantity × unit price and line total — not just a count", () => {
+    renderStepSchedule({
+      itemSummaries: [{ name: "Pintura de parede", quantity: "1.000", unitPrice: "100.00", lineTotal: "100.00" }],
+    });
+
+    expect(screen.getByText("Pintura de parede")).toBeInTheDocument();
+    expect(screen.getByText("1 × R$ 100,00")).toBeInTheDocument();
+  });
+
+  it("SU2: caps the visible item list and shows a '+ N mais' indicator for many items", () => {
+    const itemSummaries = Array.from({ length: 6 }, (_, index) => ({
+      name: `Item ${index + 1}`,
+      quantity: "1.000",
+      unitPrice: "10.00",
+      lineTotal: "10.00",
+    }));
+    renderStepSchedule({ itemSummaries });
+
+    expect(screen.getByText("Item 1")).toBeInTheDocument();
+    expect(screen.queryByText("Item 6")).not.toBeInTheDocument();
+    expect(screen.getByText("+ 2 mais")).toBeInTheDocument();
+  });
+
+  it("SU3: a zero order discount renders as 'R$ 0,00', never '-R$ 0,00'", () => {
+    renderStepSchedule({ orderDiscountDecimal: "0.00" });
+
+    expect(screen.getByText("R$ 0,00")).toBeInTheDocument();
+    expect(screen.queryByText(/-\s*R\$ 0,00/)).not.toBeInTheDocument();
+  });
+
+  it("SU4: a genuine positive discount renders with a leading minus", () => {
+    renderStepSchedule({ orderDiscountDecimal: "20.00" });
+
+    expect(screen.getByText("- R$ 20,00")).toBeInTheDocument();
+  });
+
+  it("SU5: shows the selected customer, address label, and 'Sem contato' when no contact is selected", () => {
+    renderStepSchedule({ customerName: "Sandro Pereira", addressLabel: "Endereço principal", contactName: null });
+
+    expect(screen.getByText("Sandro Pereira")).toBeInTheDocument();
+    expect(screen.getByText("Endereço principal")).toBeInTheDocument();
+    expect(screen.getByText("Sem contato")).toBeInTheDocument();
+  });
+
+  it("SU6: shows the selected contact's name when one is selected", () => {
+    renderStepSchedule({ contactName: "João da Obra" });
+
+    expect(screen.getByText("João da Obra")).toBeInTheDocument();
+  });
+
+  it("SU7: changing the travel fee input calls the change handler (Total updates via the parent-recomputed preview)", async () => {
+    const onTravelFeeChange = vi.fn();
+    const user = userEvent.setup();
+    renderStepSchedule({ onTravelFeeChange });
+
+    const travelFeeInput = screen.getByLabelText("Deslocamento");
+    await user.clear(travelFeeInput);
+    await user.type(travelFeeInput, "5");
+
+    expect(onTravelFeeChange).toHaveBeenCalled();
+  });
+});
+
+describe("StepSchedule — non-field submit error banner", () => {
+  it("SE1: renders the submit error with a retry button when retryable, and calls onRetrySubmit when clicked", async () => {
+    const onRetrySubmit = vi.fn();
+    const user = userEvent.setup();
+    renderStepSchedule({
+      submitError: "Não foi possível criar a O.S. agora. Tente novamente.",
+      submitErrorRetryable: true,
+      onRetrySubmit,
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/não foi possível criar a o\.s\. agora/i);
+    await user.click(screen.getByRole("button", { name: /tentar novamente/i }));
+    expect(onRetrySubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("SE2: renders no retry button when the error is not retryable", () => {
+    renderStepSchedule({
+      submitError: "Carregue a taxa padrão de deslocamento antes de criar a O.S.",
+      submitErrorRetryable: false,
+      onRetrySubmit: vi.fn(),
+    });
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /tentar novamente/i })).not.toBeInTheDocument();
+  });
+
+  it("SE3: renders no alert at all when there is no submit error", () => {
+    renderStepSchedule({ submitError: null });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Plus, Search, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,9 @@ import { newClientId, type DraftItem } from "./wizard-types";
 import { QuickCatalogDialog } from "./quick-catalog-dialog";
 
 const SEARCH_DEBOUNCE_MS = 300;
+/** Matches the customer search's own minimum (`step-customer.tsx`) —
+ * both autocompletes in this wizard behave the same way. */
+const MIN_SEARCH_LENGTH = 3;
 
 type TypeFilter = "" | CatalogItemType;
 
@@ -56,8 +59,10 @@ export function StepItems({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [quickDialog, setQuickDialog] = useState<CatalogItemType | null>(null);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
 
   const searchSequence = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // §Tenant safety: this component can stay mounted across a company
   // switch (the user sitting on step 3) — a late Company-A search result
@@ -80,10 +85,16 @@ export function StepItems({
   }, [searchInput]);
 
   useEffect(() => {
-    if (search === "") {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHighlightedIndex(0);
+  }, [results]);
+
+  useEffect(() => {
+    if (search.length < MIN_SEARCH_LENGTH) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setResults([]);
       setError(false);
+      setLoading(false);
       return;
     }
     const requestId = ++searchSequence.current;
@@ -110,6 +121,10 @@ export function StepItems({
       });
   }, [search, typeFilter, requestCompanyId, isStaleRequest]);
 
+  /** Adds the item to the draft AND closes/clears the search UI — the
+   * result list and "Itens adicionados" must never visually compete for
+   * the same item. `typeFilter` is intentionally left untouched so a new
+   * search starts from the same filter the user had picked. */
   function addCatalogItem(item: CatalogItem) {
     onAdd({
       clientId: newClientId(),
@@ -123,6 +138,12 @@ export function StepItems({
       lineDiscountInput: "0,00",
       notes: "",
     });
+    setSearchInput("");
+    setSearch("");
+    setResults([]);
+    setLoading(false);
+    setError(false);
+    requestAnimationFrame(() => searchInputRef.current?.focus());
   }
 
   function handleQuickCreated(item: CatalogItem) {
@@ -132,6 +153,34 @@ export function StepItems({
     addCatalogItem(item);
   }
 
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const candidate = results[highlightedIndex] ?? results[0];
+      if (candidate) addCatalogItem(candidate);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setSearchInput("");
+      setSearch("");
+      setResults([]);
+      setError(false);
+      return;
+    }
+    if (event.key === "ArrowDown" && results.length > 0) {
+      event.preventDefault();
+      setHighlightedIndex((current) => Math.min(current + 1, results.length - 1));
+      return;
+    }
+    if (event.key === "ArrowUp" && results.length > 0) {
+      event.preventDefault();
+      setHighlightedIndex((current) => Math.max(current - 1, 0));
+    }
+  }
+
+  const trimmedSearch = search;
+
   return (
     <div className="space-y-6">
       <section className="space-y-3">
@@ -139,14 +188,17 @@ export function StepItems({
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <input
+              ref={searchInputRef}
               type="text"
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && results.length > 0) addCatalogItem(results[0]!);
-              }}
+              onKeyDown={handleSearchKeyDown}
               placeholder="Buscar produto ou serviço"
               aria-label="Buscar produto ou serviço"
+              role="combobox"
+              aria-expanded={results.length > 0}
+              aria-controls="catalog-search-listbox"
+              aria-activedescendant={results.length > 0 ? `catalog-option-${highlightedIndex}` : undefined}
               className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
             />
           </div>
@@ -186,9 +238,16 @@ export function StepItems({
         ) : loading ? (
           <p className="text-sm text-muted-foreground">Buscando...</p>
         ) : results.length > 0 ? (
-          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
-            {results.map((item) => (
-              <li key={item.id} className="flex items-center justify-between gap-3 p-3.5">
+          <ul id="catalog-search-listbox" role="listbox" className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+            {results.map((item, index) => (
+              <li
+                key={item.id}
+                id={`catalog-option-${index}`}
+                role="option"
+                aria-selected={index === highlightedIndex}
+                className={`flex items-center justify-between gap-3 p-3.5 ${index === highlightedIndex ? "bg-muted/50" : ""}`}
+                onMouseEnter={() => setHighlightedIndex(index)}
+              >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-foreground">{item.name}</span>
@@ -206,8 +265,10 @@ export function StepItems({
               </li>
             ))}
           </ul>
-        ) : search !== "" ? (
-          <p className="text-sm text-muted-foreground">Nenhum item encontrado para &quot;{search}&quot;.</p>
+        ) : trimmedSearch.length >= MIN_SEARCH_LENGTH ? (
+          <p className="text-sm text-muted-foreground">Nenhum item encontrado para &quot;{trimmedSearch}&quot;.</p>
+        ) : trimmedSearch.length > 0 ? (
+          <p className="text-sm text-muted-foreground">Digite pelo menos 3 caracteres para buscar.</p>
         ) : null}
       </section>
 
@@ -224,24 +285,29 @@ export function StepItems({
               const valid = lineIsValid(item);
               return (
                 <div key={item.clientId} className="space-y-3 rounded-xl border border-border bg-card p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">{item.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {[item.code, item.unit, CATALOG_ITEM_TYPE_LABELS[item.type]].filter(Boolean).join(" · ")}
-                      </p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="truncate text-sm font-semibold text-foreground">{item.name}</span>
+                      <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                        {CATALOG_ITEM_TYPE_LABELS[item.type]}
+                      </span>
+                      {item.code ? <span className="shrink-0 text-xs text-muted-foreground">{item.code}</span> : null}
+                      <button
+                        type="button"
+                        onClick={() => onRemove(item.clientId)}
+                        className="ml-1 shrink-0 text-xs font-medium text-muted-foreground transition-colors hover:text-destructive"
+                      >
+                        <Trash2 className="mr-1 inline size-3 align-[-1px]" aria-hidden="true" />
+                        Remover
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onRemove(item.clientId)}
-                      aria-label={`Remover ${item.name}`}
-                      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                    >
-                      <Trash2 className="size-3.5" aria-hidden="true" />
-                    </button>
+                    <div className="shrink-0 text-right">
+                      <p className="text-[11px] text-muted-foreground">Total</p>
+                      <p className="text-base font-semibold text-foreground">{decimalStringToBrlDisplay(lineTotal) ?? "—"}</p>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-3 sm:grid-cols-3">
                     <div className="space-y-1.5">
                       <label htmlFor={`qty-${item.clientId}`} className="text-sm font-medium text-foreground">
                         Quantidade
@@ -261,38 +327,32 @@ export function StepItems({
                       value={item.unitPriceInput}
                       onChange={(next) => onUpdate(item.clientId, { unitPriceInput: next })}
                     />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
                     <MoneyField
                       id={`discount-${item.clientId}`}
                       label="Desconto"
                       value={item.lineDiscountInput}
                       onChange={(next) => onUpdate(item.clientId, { lineDiscountInput: next })}
                     />
-                    <div className="space-y-1.5">
-                      <label htmlFor={`notes-${item.clientId}`} className="text-sm font-medium text-foreground">
-                        Observação
-                      </label>
-                      <input
-                        id={`notes-${item.clientId}`}
-                        type="text"
-                        value={item.notes}
-                        onChange={(event) => onUpdate(item.clientId, { notes: event.target.value })}
-                        className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-                      />
-                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label htmlFor={`notes-${item.clientId}`} className="text-sm font-medium text-foreground">
+                      Observação
+                    </label>
+                    <input
+                      id={`notes-${item.clientId}`}
+                      type="text"
+                      value={item.notes}
+                      onChange={(event) => onUpdate(item.clientId, { notes: event.target.value })}
+                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+                    />
                   </div>
 
                   {!valid ? (
                     <p role="alert" className="text-xs text-destructive">
                       Informe uma quantidade e um preço unitário válidos.
                     </p>
-                  ) : (
-                    <p className="text-right text-sm font-medium text-foreground">
-                      Total da linha: {decimalStringToBrlDisplay(lineTotal)}
-                    </p>
-                  )}
+                  ) : null}
                 </div>
               );
             })}
