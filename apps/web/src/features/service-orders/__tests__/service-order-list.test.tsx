@@ -324,4 +324,20 @@ describe("ServiceOrderList", () => {
     // the new tenant.
     expect(screen.queryByText(/preenchida automaticamente/i)).not.toBeInTheDocument();
   });
+
+  it("L16: the table renders both the compact (lg-xl) and full (xl+) column header sets — CSS breakpoints, not jsdom, decide which is actually visible; asserting both exist in the DOM guards against either tier's markup silently disappearing", async () => {
+    vi.mocked(listServiceOrders).mockResolvedValue(page(["OS-000001"]));
+    render(<ServiceOrderList />);
+    await screen.findAllByText("OS-000001");
+
+    // Compact tier: Cliente/Título/Local merged into one "Atendimento" column.
+    expect(screen.getByText("Atendimento")).toBeInTheDocument();
+    // Full tier: the original 8 discrete columns.
+    expect(screen.getByText("Serviço/Título")).toBeInTheDocument();
+    expect(screen.getByText("Cliente")).toBeInTheDocument();
+    expect(screen.getByText("Local")).toBeInTheDocument();
+    // Shared across both tiers.
+    expect(screen.getAllByText("Agendamento").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Total").length).toBeGreaterThan(0);
+  });
 });

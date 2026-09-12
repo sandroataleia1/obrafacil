@@ -74,18 +74,51 @@ function ServiceOrderCard({ order }: { order: ServiceOrderListItem }) {
   );
 }
 
-const TABLE_ROW_GRID =
-  "lg:grid lg:grid-cols-[100px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,160px)_140px_120px_120px_56px] lg:items-center lg:gap-4";
+// §Responsive table: two distinct desktop grids, never one grid squeezed
+// to fit. `ServiceOrderTable` is only ever rendered at `lg:` (1024px) and
+// up (the caller keeps cards below that, unchanged) — but the sidebar
+// (w-64 = 256px, visible from `md:`) plus content padding leaves far less
+// usable width than the raw viewport suggests, so the full 8-column
+// layout only turns on at `xl:` (1280px), where there's genuinely enough
+// room. From `lg:` up to just under `xl:`, a compact 6-column grid merges
+// Cliente/Título/Local into one "Atendimento" column instead — never
+// truncating so hard that headers or values overlap. Each tier is its own
+// explicit `block`/`hidden` wrapper (not a single grid squeezed via
+// competing breakpoint utilities) so there's no cascade-order ambiguity
+// between the two grids at the `xl:` boundary.
+const COMPACT_GRID_COLS = "grid-cols-[88px_minmax(0,1fr)_108px_88px_108px_48px] items-center gap-3";
+const FULL_GRID_COLS =
+  "grid-cols-[88px_minmax(0,1fr)_minmax(0,1fr)_130px_108px_88px_108px_48px] items-center gap-3";
 
-function ServiceOrderTableRow({ order }: { order: ServiceOrderListItem }) {
+function ServiceOrderCompactRow({ order }: { order: ServiceOrderListItem }) {
   return (
-    <div className={cn("flex items-center px-4 py-3.5", TABLE_ROW_GRID)}>
+    <div className={cn("grid items-center px-4 py-3.5", COMPACT_GRID_COLS)}>
+      <span className="text-sm font-medium text-foreground">{order.number}</span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm text-foreground">{order.title}</span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {order.customer.name} · {addressSummary(order.execution_address)}
+        </span>
+      </span>
+      <span className="truncate text-sm text-muted-foreground">{scheduleDisplay(order.scheduled_start_at)}</span>
+      <span className="truncate text-sm font-medium text-foreground">{decimalStringToBrlDisplay(order.total)}</span>
+      <ServiceOrderStatusBadge status={order.status} />
+      <div className="justify-self-end">
+        <RowActions order={order} />
+      </div>
+    </div>
+  );
+}
+
+function ServiceOrderFullRow({ order }: { order: ServiceOrderListItem }) {
+  return (
+    <div className={cn("grid items-center px-4 py-3.5", FULL_GRID_COLS)}>
       <span className="text-sm font-medium text-foreground">{order.number}</span>
       <span className="truncate text-sm text-muted-foreground">{order.customer.name}</span>
       <span className="truncate text-sm text-muted-foreground">{order.title}</span>
       <span className="truncate text-sm text-muted-foreground">{addressSummary(order.execution_address)}</span>
-      <span className="text-sm text-muted-foreground">{scheduleDisplay(order.scheduled_start_at)}</span>
-      <span className="text-sm font-medium text-foreground">{decimalStringToBrlDisplay(order.total)}</span>
+      <span className="truncate text-sm text-muted-foreground">{scheduleDisplay(order.scheduled_start_at)}</span>
+      <span className="truncate text-sm font-medium text-foreground">{decimalStringToBrlDisplay(order.total)}</span>
       <ServiceOrderStatusBadge status={order.status} />
       <div className="justify-self-end">
         <RowActions order={order} />
@@ -97,25 +130,47 @@ function ServiceOrderTableRow({ order }: { order: ServiceOrderListItem }) {
 function ServiceOrderTable({ orders }: { orders: ServiceOrderListItem[] }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <div
-        className={cn(
-          "border-b border-border px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase",
-          TABLE_ROW_GRID
-        )}
-      >
-        <span>O.S.</span>
-        <span>Cliente</span>
-        <span>Serviço/Título</span>
-        <span>Local</span>
-        <span>Agendamento</span>
-        <span>Total</span>
-        <span>Status</span>
-        <span className="justify-self-end">Ações</span>
+      <div className="block xl:hidden">
+        <div
+          className={cn(
+            "grid border-b border-border px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase",
+            COMPACT_GRID_COLS
+          )}
+        >
+          <span>O.S.</span>
+          <span>Atendimento</span>
+          <span>Agendamento</span>
+          <span>Total</span>
+          <span>Status</span>
+          <span className="justify-self-end">Ações</span>
+        </div>
+        <div className="divide-y divide-border">
+          {orders.map((order) => (
+            <ServiceOrderCompactRow key={order.id} order={order} />
+          ))}
+        </div>
       </div>
-      <div className="divide-y divide-border">
-        {orders.map((order) => (
-          <ServiceOrderTableRow key={order.id} order={order} />
-        ))}
+      <div className="hidden xl:block">
+        <div
+          className={cn(
+            "grid border-b border-border px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase",
+            FULL_GRID_COLS
+          )}
+        >
+          <span>O.S.</span>
+          <span>Cliente</span>
+          <span>Serviço/Título</span>
+          <span>Local</span>
+          <span>Agendamento</span>
+          <span>Total</span>
+          <span>Status</span>
+          <span className="justify-self-end">Ações</span>
+        </div>
+        <div className="divide-y divide-border">
+          {orders.map((order) => (
+            <ServiceOrderFullRow key={order.id} order={order} />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -274,8 +329,11 @@ export function ServiceOrderList() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative flex-1">
+      <div className="space-y-3">
+        {/* §Toolbar: search always gets its own full-width row — it's the
+         * priority action here, never squeezed to share a row with the
+         * filter pills. */}
+        <div className="relative">
           <Search
             className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden="true"
@@ -289,7 +347,10 @@ export function ServiceOrderList() {
             className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
           />
         </div>
-        <div className="flex gap-1.5 overflow-x-auto">
+        {/* Filter pills wrap to as many lines as needed — never a
+         * horizontal scroller, which would hide options rather than just
+         * take more vertical space. */}
+        <div className="flex flex-wrap gap-1.5">
           {SERVICE_ORDER_STATUS_FILTER_OPTIONS.map((option) => (
             <button
               key={option.value || "all"}
