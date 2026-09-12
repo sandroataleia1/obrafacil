@@ -691,11 +691,21 @@ function classifyCreateError(error: unknown): { message: string; retryable: bool
     // Mirrors `AuthProvider.refresh()`'s own 401 convention (session no
     // longer valid) — 419 is Laravel's "CSRF token expired", which reads
     // the same way to the user: sign in again.
-    if (error.status === 401 || error.status === 419) {
+    if (error.status === 401) {
+      // Not retryable: the session itself is gone, so re-firing the same
+      // create is not a meaningful action — the user must log in again.
+      return { message: "Sua sessão expirou. Faça login novamente.", retryable: false };
+    }
+    if (error.status === 419) {
+      // IS retryable, unlike 401: `apiRequest`'s own `ensureCsrfCookie()`
+      // re-runs on every request and fetches a fresh token before the
+      // retry, so simply trying again is a legitimate fix.
       return { message: "Sua sessão expirou. Faça login novamente.", retryable: true };
     }
     if (error.status === 403) {
-      return { message: "Você não tem permissão para criar esta O.S.", retryable: true };
+      // Not retryable: a permission problem doesn't resolve itself by
+      // clicking retry.
+      return { message: "Você não tem permissão para criar esta O.S.", retryable: false };
     }
     // 5xx (the real captured case — a bcmath-less API returning a 500)
     // and any other unclassified ApiError status share the same honest,

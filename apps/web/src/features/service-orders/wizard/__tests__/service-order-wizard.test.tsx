@@ -1017,49 +1017,71 @@ describe("ServiceOrderWizard", () => {
       expect(screen.getByText("O endereço selecionado é inválido.")).toBeInTheDocument();
     });
 
-    it("CF3: a 401-shaped error shows the session-expired message instead of the generic one", async () => {
+    it("CF3: a 401-shaped error shows the session-expired message and is NOT retryable — no 'Tentar novamente' button, draft stays intact, and no second create ever fires", async () => {
       vi.mocked(getCustomer).mockResolvedValue(customerDetail());
       vi.mocked(createServiceOrder).mockRejectedValue(new ApiError(401, "Unauthenticated."));
       const user = userEvent.setup();
       render(<ServiceOrderWizard />);
       await reachStep4(user);
+      const titleBefore = (screen.getByLabelText("Título") as HTMLInputElement).value;
       await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
 
       await screen.findByText("Sua sessão expirou. Faça login novamente.");
       expect(screen.queryByText("Não foi possível criar a O.S. agora. Tente novamente.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /tentar novamente/i })).not.toBeInTheDocument();
+      expect((screen.getByLabelText("Título") as HTMLInputElement).value).toBe(titleBefore);
+      expect(createServiceOrder).toHaveBeenCalledTimes(1);
     });
 
-    it("CF4: a 419-shaped error (expired CSRF token) shows the same session-expired message as 401", async () => {
+    it("CF4: a 419-shaped error (expired CSRF token) shows the same session-expired message as 401 but IS retryable — 'Tentar novamente' re-fires the create with an identical payload", async () => {
       vi.mocked(getCustomer).mockResolvedValue(customerDetail());
-      vi.mocked(createServiceOrder).mockRejectedValue(new ApiError(419, "CSRF token mismatch."));
+      vi.mocked(createServiceOrder)
+        .mockRejectedValueOnce(new ApiError(419, "CSRF token mismatch."))
+        .mockResolvedValueOnce({ id: "os-1", number: "OS-000001" } as never);
       const user = userEvent.setup();
       render(<ServiceOrderWizard />);
       await reachStep4(user);
       await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
 
       await screen.findByText("Sua sessão expirou. Faça login novamente.");
+      await user.click(screen.getByRole("button", { name: /tentar novamente/i }));
+
+      await waitFor(() => expect(createServiceOrder).toHaveBeenCalledTimes(2));
+      const [firstPayload] = vi.mocked(createServiceOrder).mock.calls[0]!;
+      const [secondPayload] = vi.mocked(createServiceOrder).mock.calls[1]!;
+      expect(secondPayload).toEqual(firstPayload);
     });
 
-    it("CF5: a 403-shaped error shows a permission-specific message", async () => {
+    it("CF5: a 403-shaped error shows a permission-specific message and is NOT retryable — no 'Tentar novamente' button, draft stays intact, and no second create ever fires", async () => {
       vi.mocked(getCustomer).mockResolvedValue(customerDetail());
       vi.mocked(createServiceOrder).mockRejectedValue(new ApiError(403, "Forbidden."));
       const user = userEvent.setup();
       render(<ServiceOrderWizard />);
       await reachStep4(user);
+      const titleBefore = (screen.getByLabelText("Título") as HTMLInputElement).value;
       await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
 
       await screen.findByText("Você não tem permissão para criar esta O.S.");
+      expect(screen.queryByRole("button", { name: /tentar novamente/i })).not.toBeInTheDocument();
+      expect((screen.getByLabelText("Título") as HTMLInputElement).value).toBe(titleBefore);
+      expect(createServiceOrder).toHaveBeenCalledTimes(1);
     });
 
-    it("CF6: a network-failure-shaped rejection (no status on the error) falls into the same 'tente novamente' bucket as 5xx", async () => {
+    it("CF6: a network-failure-shaped rejection (no status on the error) falls into the same 'tente novamente' bucket as 5xx and IS retryable", async () => {
       vi.mocked(getCustomer).mockResolvedValue(customerDetail());
-      vi.mocked(createServiceOrder).mockRejectedValue(new ApiNetworkError());
+      vi.mocked(createServiceOrder)
+        .mockRejectedValueOnce(new ApiNetworkError())
+        .mockResolvedValueOnce({ id: "os-1", number: "OS-000001" } as never);
       const user = userEvent.setup();
       render(<ServiceOrderWizard />);
       await reachStep4(user);
       await user.click(screen.getByRole("button", { name: /criar o\.s\./i }));
 
       await screen.findByText("Não foi possível criar a O.S. agora. Tente novamente.");
+      const retryButton = screen.getByRole("button", { name: /tentar novamente/i });
+      await user.click(retryButton);
+
+      await waitFor(() => expect(createServiceOrder).toHaveBeenCalledTimes(2));
     });
 
     it("CF7: a double-click on 'Criar O.S.' during an in-flight request still results in exactly one createServiceOrder call (regression)", async () => {

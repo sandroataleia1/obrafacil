@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Plus, Search, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,15 @@ export function StepItems({
   const [highlightedIndex, setHighlightedIndex] = useState(0);
 
   const searchSequence = useRef(0);
+  /** Bump this whenever the "current search" is semantically invalidated
+   * WITHOUT a new search necessarily firing (query shortened below the
+   * minimum, Escape, an item being added, a tenant switch) — clearing
+   * visual state alone never cancels an in-flight Promise, so every such
+   * site must also call this, or a stale response can still resolve
+   * into `setResults`/etc. after the fact. */
+  const invalidateSearch = useCallback(() => {
+    searchSequence.current += 1;
+  }, []);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // §Tenant safety: this component can stay mounted across a company
@@ -71,13 +80,14 @@ export function StepItems({
   useEffect(() => {
     if (stepItemsCompanyIdRef.current === requestCompanyId) return;
     stepItemsCompanyIdRef.current = requestCompanyId;
+    invalidateSearch();
     setSearchInput("");
     setSearch("");
     setResults([]);
     setLoading(false);
     setError(false);
     setQuickDialog(null);
-  }, [requestCompanyId]);
+  }, [requestCompanyId, invalidateSearch]);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
@@ -91,6 +101,7 @@ export function StepItems({
 
   useEffect(() => {
     if (search.length < MIN_SEARCH_LENGTH) {
+      invalidateSearch();
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setResults([]);
       setError(false);
@@ -119,13 +130,18 @@ export function StepItems({
         if (isStaleRequest(fireCompanyId)) return;
         setLoading(false);
       });
-  }, [search, typeFilter, requestCompanyId, isStaleRequest]);
+  }, [search, typeFilter, requestCompanyId, isStaleRequest, invalidateSearch]);
 
   /** Adds the item to the draft AND closes/clears the search UI — the
    * result list and "Itens adicionados" must never visually compete for
    * the same item. `typeFilter` is intentionally left untouched so a new
    * search starts from the same filter the user had picked. */
   function addCatalogItem(item: CatalogItem) {
+    // Covers add-via-click, add-via-Enter, and add-via-Quick-Product/
+    // Service creation alike, since all three funnel through this one
+    // function — an earlier in-flight catalog search must never
+    // repopulate the list this just cleared.
+    invalidateSearch();
     onAdd({
       clientId: newClientId(),
       catalogItemId: item.id,
@@ -162,6 +178,7 @@ export function StepItems({
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      invalidateSearch();
       setSearchInput("");
       setSearch("");
       setResults([]);

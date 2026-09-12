@@ -58,6 +58,16 @@ function page(items: CatalogItem[]): CatalogItemPaginationResponse {
 
 const isStaleRequestAlwaysFresh = () => false;
 
+function deferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function renderStepItems(overrides: Partial<Parameters<typeof StepItems>[0]> = {}) {
   return render(
     <StepItems
@@ -225,5 +235,187 @@ describe("StepItems — catalog autocomplete gating", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.queryByText("Pintura da Empresa A")).not.toBeInTheDocument();
+  });
+
+  it("CI10: a stale in-flight response can't repopulate results after the query drops back below 3 characters", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    const user = userEvent.setup();
+    renderStepItems();
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalled());
+
+    await user.type(input, "{Backspace}{Backspace}");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+
+    deferred.resolve(page([catalogItem()]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+  });
+
+  it("CI11: a stale in-flight response can't repopulate results after Escape clears the search", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    const user = userEvent.setup();
+    renderStepItems();
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalled());
+
+    await user.keyboard("{Escape}");
+    expect(input).toHaveValue("");
+
+    deferred.resolve(page([catalogItem()]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+  });
+
+  it("CI12: adding an item from a later, resolved search discards an earlier still-in-flight search's response", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    const onAdd = vi.fn();
+    const user = userEvent.setup();
+    renderStepItems({ onAdd });
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalledTimes(1));
+
+    vi.mocked(listCatalogItems).mockResolvedValueOnce(page([catalogItem({ id: "item-2", name: "Reparo elétrico" })]));
+    await user.clear(input);
+    await user.type(input, "rep");
+    await screen.findByText("Reparo elétrico");
+    await user.click(screen.getByRole("button", { name: "Adicionar" }));
+
+    expect(onAdd).toHaveBeenCalled();
+    expect(input).toHaveValue("");
+
+    deferred.resolve(page([catalogItem()]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("CI13: adding an item via Enter from a later, resolved search discards an earlier still-in-flight search's response", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    const onAdd = vi.fn();
+    const user = userEvent.setup();
+    renderStepItems({ onAdd });
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalledTimes(1));
+
+    vi.mocked(listCatalogItems).mockResolvedValueOnce(page([catalogItem({ id: "item-2", name: "Reparo elétrico" })]));
+    await user.clear(input);
+    await user.type(input, "rep");
+    await screen.findByText("Reparo elétrico");
+    await user.keyboard("{Enter}");
+
+    expect(onAdd).toHaveBeenCalled();
+    expect(input).toHaveValue("");
+
+    deferred.resolve(page([catalogItem()]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+  });
+
+  it("CI14: adding an item via Quick Product creation discards an earlier still-in-flight search's response", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    vi.mocked(createCatalogItem).mockResolvedValue(catalogItem({ id: "item-3", type: "product", name: "Produto Rápido" }));
+    const onAdd = vi.fn();
+    const user = userEvent.setup();
+    renderStepItems({ onAdd });
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: /novo produto/i }));
+    await user.type(screen.getByLabelText("Nome"), "Produto Rápido");
+    await user.type(screen.getByLabelText("Unidade"), "un");
+    await user.click(screen.getByRole("button", { name: /salvar e adicionar/i }));
+
+    await waitFor(() => expect(onAdd).toHaveBeenCalled());
+    expect(input).toHaveValue("");
+
+    deferred.resolve(page([catalogItem()]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+  });
+
+  it("CI15: adding an item via Quick Service creation discards an earlier still-in-flight search's response", async () => {
+    const deferred = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferred.promise);
+    vi.mocked(createCatalogItem).mockResolvedValue(catalogItem({ id: "item-2", name: "Serviço Rápido" }));
+    const onAdd = vi.fn();
+    const user = userEvent.setup();
+    renderStepItems({ onAdd });
+
+    const input = screen.getByLabelText("Buscar produto ou serviço");
+    await user.type(input, "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: /novo serviço/i }));
+    await user.type(screen.getByLabelText("Nome"), "Serviço Rápido");
+    await user.type(screen.getByLabelText("Unidade"), "un");
+    await user.click(screen.getByRole("button", { name: /salvar e adicionar/i }));
+
+    await waitFor(() => expect(onAdd).toHaveBeenCalled());
+    expect(input).toHaveValue("");
+
+    deferred.resolve(page([catalogItem()]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+  });
+
+  it("CI16: switching the type filter fires a newer search whose response wins over an older in-flight one, regardless of settle order", async () => {
+    const deferredAll = deferredPromise<CatalogItemPaginationResponse>();
+    const deferredProducts = deferredPromise<CatalogItemPaginationResponse>();
+    vi.mocked(listCatalogItems).mockReturnValueOnce(deferredAll.promise).mockReturnValueOnce(deferredProducts.promise);
+    const user = userEvent.setup();
+    renderStepItems();
+
+    await user.type(screen.getByLabelText("Buscar produto ou serviço"), "pin");
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("button", { name: "Produtos" }));
+    await waitFor(() => expect(listCatalogItems).toHaveBeenCalledTimes(2));
+
+    // R2 (the newer, "Produtos" filter) resolves FIRST.
+    deferredProducts.resolve(page([catalogItem({ id: "item-2", type: "product", name: "Tinta acrílica" })]));
+    await screen.findByText("Tinta acrílica");
+
+    // R1 (the older, "Todos" filter) resolves AFTER — it must not win.
+    deferredAll.resolve(page([catalogItem({ name: "Pintura de parede" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByText("Tinta acrílica")).toBeInTheDocument();
+    expect(screen.queryByText("Pintura de parede")).not.toBeInTheDocument();
+  });
+
+  it("CI17: changing the type filter while the query is under 3 characters fires zero API calls", async () => {
+    const user = userEvent.setup();
+    renderStepItems();
+
+    await user.type(screen.getByLabelText("Buscar produto ou serviço"), "pi");
+    await user.click(screen.getByRole("button", { name: "Produtos" }));
+    await user.click(screen.getByRole("button", { name: "Serviços" }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(listCatalogItems).not.toHaveBeenCalled();
   });
 });

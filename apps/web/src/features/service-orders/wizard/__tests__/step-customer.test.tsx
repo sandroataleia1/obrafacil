@@ -48,6 +48,16 @@ function page(items: CustomerListItem[]): CustomerPaginationResponse {
 
 const isStaleRequestAlwaysFresh = () => false;
 
+function deferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function renderStepCustomer(overrides: Partial<Parameters<typeof StepCustomer>[0]> = {}) {
   return render(
     <StepCustomer
@@ -207,5 +217,171 @@ describe("StepCustomer — autocomplete gating", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.queryByText("Fulano da Empresa A")).not.toBeInTheDocument();
+  });
+
+  it("SC11: a stale in-flight response can't repopulate results after the query drops back below 3 characters", async () => {
+    const deferred = deferredPromise<CustomerPaginationResponse>();
+    vi.mocked(listCustomers).mockReturnValueOnce(deferred.promise);
+    const user = userEvent.setup();
+    renderStepCustomer();
+
+    const input = screen.getByLabelText("Buscar cliente");
+    await user.type(input, "ful");
+    await waitFor(() => expect(listCustomers).toHaveBeenCalled());
+
+    // Delete back down to 2 characters — the UI clears results/loading and
+    // shows the hint, but the in-flight request for "ful" is still alive.
+    await user.type(input, "{Backspace}{Backspace}");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+
+    deferred.resolve(page([customerListItem({ name: "Fulano Pereira" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Fulano Pereira")).not.toBeInTheDocument();
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+  });
+
+  it("SC12: a stale in-flight response can't repopulate results after Escape clears the search", async () => {
+    const deferred = deferredPromise<CustomerPaginationResponse>();
+    vi.mocked(listCustomers).mockReturnValueOnce(deferred.promise);
+    const user = userEvent.setup();
+    renderStepCustomer();
+
+    const input = screen.getByLabelText("Buscar cliente");
+    await user.type(input, "ful");
+    await waitFor(() => expect(listCustomers).toHaveBeenCalled());
+
+    await user.keyboard("{Escape}");
+    expect(input).toHaveValue("");
+
+    deferred.resolve(page([customerListItem({ name: "Fulano Pereira" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Fulano Pereira")).not.toBeInTheDocument();
+  });
+
+  it("SC13: selecting a customer from a later, resolved search discards an earlier still-in-flight search's response", async () => {
+    const deferred = deferredPromise<CustomerPaginationResponse>();
+    vi.mocked(listCustomers).mockReturnValueOnce(deferred.promise);
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    renderStepCustomer({ onSelect });
+
+    const input = screen.getByLabelText("Buscar cliente");
+    await user.type(input, "ful");
+    await waitFor(() => expect(listCustomers).toHaveBeenCalledTimes(1));
+
+    // A second, different search fires and resolves before the first ever does.
+    vi.mocked(listCustomers).mockResolvedValueOnce(page([customerListItem({ id: "cust-search-2", name: "Beatriz Souza" })]));
+    await user.clear(input);
+    await user.type(input, "bea");
+    await screen.findByText("Beatriz Souza");
+    await user.click(screen.getByText("Beatriz Souza"));
+
+    expect(onSelect).toHaveBeenCalledWith(customerListItem({ id: "cust-search-2", name: "Beatriz Souza" }));
+    // Selection closes the autocomplete immediately (wizard variant).
+    expect(screen.queryByLabelText("Buscar cliente")).not.toBeInTheDocument();
+
+    deferred.resolve(page([customerListItem({ name: "Fulano Pereira" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The now-closed autocomplete must never reopen/repaint from the stale response.
+    expect(screen.queryByText("Fulano Pereira")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Buscar cliente")).not.toBeInTheDocument();
+  });
+
+  it("SC14: 'Trocar cliente' starts a new session that a stale response from the PREVIOUS session cannot repopulate", async () => {
+    const deferred = deferredPromise<CustomerPaginationResponse>();
+    vi.mocked(listCustomers).mockReturnValueOnce(deferred.promise);
+    const user = userEvent.setup();
+    const { rerender } = renderStepCustomer();
+
+    await user.type(screen.getByLabelText("Buscar cliente"), "ful");
+    await waitFor(() => expect(listCustomers).toHaveBeenCalled());
+
+    // A customer becomes selected via a path other than this in-flight
+    // search (e.g. the quick-create dialog) — simulated by rerendering
+    // with `selected` set, which closes search mode.
+    rerender(
+      <StepCustomer
+        selected={customerListItem({ id: "cust-other", name: "Outro Cliente" })}
+        onSelect={vi.fn()}
+        requestCompanyId="company-a"
+        isStaleRequest={isStaleRequestAlwaysFresh}
+      />
+    );
+    expect(screen.getByText("Cliente selecionado")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /trocar cliente/i }));
+    expect(screen.getByLabelText("Buscar cliente")).toBeInTheDocument();
+
+    deferred.resolve(page([customerListItem({ name: "Fulano Pereira" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Fulano Pereira")).not.toBeInTheDocument();
+  });
+
+  it("SC15: a tenant switch away and back invalidates a stale response via the sequence guard even when the company guard alone would not catch it", async () => {
+    const deferred = deferredPromise<CustomerPaginationResponse>();
+    vi.mocked(listCustomers).mockReturnValueOnce(deferred.promise);
+    const activeCompanyIdRef = { current: "company-a" as string | undefined };
+    const isStaleRequest = (requestCompanyId: string | undefined) => activeCompanyIdRef.current !== requestCompanyId;
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <StepCustomer selected={null} onSelect={vi.fn()} requestCompanyId="company-a" isStaleRequest={isStaleRequest} />
+    );
+
+    await user.type(screen.getByLabelText("Buscar cliente"), "ful");
+    await waitFor(() => expect(listCustomers).toHaveBeenCalled());
+
+    // Switch away, then back to the SAME company. The captured fireCompanyId
+    // ("company-a") ends up matching the active company again, so
+    // `isStaleRequest` alone would say "not stale" — only the sequence
+    // bump (fired on every requestCompanyId change, including back to A)
+    // still rejects the response.
+    activeCompanyIdRef.current = "company-b";
+    rerender(<StepCustomer selected={null} onSelect={vi.fn()} requestCompanyId="company-b" isStaleRequest={isStaleRequest} />);
+    activeCompanyIdRef.current = "company-a";
+    rerender(<StepCustomer selected={null} onSelect={vi.fn()} requestCompanyId="company-a" isStaleRequest={isStaleRequest} />);
+
+    expect(isStaleRequest("company-a")).toBe(false);
+
+    deferred.resolve(page([customerListItem({ name: "Fulano da Empresa A" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Fulano da Empresa A")).not.toBeInTheDocument();
+  });
+
+  it("SC16: the inline variant requires 3+ characters too — a 1-2 char query fires zero API calls", async () => {
+    const user = userEvent.setup();
+    renderStepCustomer({ variant: "inline" });
+
+    await user.type(screen.getByLabelText("Buscar cliente"), "jo");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(listCustomers).not.toHaveBeenCalled();
+    expect(screen.getByText(/digite pelo menos 3 caracteres/i)).toBeInTheDocument();
+  });
+
+  it("SC17: the inline variant preserves list-coexistence — the list stays open and a second result is selectable right after the first", async () => {
+    vi.mocked(listCustomers).mockResolvedValue(
+      page([customerListItem(), customerListItem({ id: "cust-search-2", name: "Beatriz Souza" })])
+    );
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    renderStepCustomer({ variant: "inline", onSelect });
+
+    await user.type(screen.getByLabelText("Buscar cliente"), "ful");
+    await screen.findByText("Fulano Pereira");
+    await user.click(screen.getByText("Fulano Pereira"));
+
+    expect(onSelect).toHaveBeenCalledWith(customerListItem());
+    // The inline variant never clears/closes on selection.
+    expect(screen.getByLabelText("Buscar cliente")).toBeInTheDocument();
+    expect(screen.getByText("Beatriz Souza")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Beatriz Souza"));
+    expect(onSelect).toHaveBeenCalledWith(customerListItem({ id: "cust-search-2", name: "Beatriz Souza" }));
   });
 });

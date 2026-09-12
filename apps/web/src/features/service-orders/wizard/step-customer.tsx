@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,13 +36,15 @@ export function StepCustomer({
   /**
    * "wizard" (default) is the Nova O.S. step-1 UX: search closes into a
    * compact "Cliente selecionado" card the instant a customer is picked,
-   * reopened only via "Trocar cliente". "inline" reproduces this
-   * component's PRE-existing behavior exactly — used by
-   * `service-order-edit.tsx`'s "Cliente" section, whose own tests (e.g.
+   * reopened only via "Trocar cliente". "inline" preserves this
+   * component's PRE-existing selection/list-coexistence semantics — used
+   * by `service-order-edit.tsx`'s "Cliente" section, whose own tests (e.g.
    * CDO5/CDO6) rely on the search list staying open and re-selectable
    * (clicking a second result right after the first, to exercise
    * superseded-selection ordering) — the search UI and card can coexist,
-   * and selecting never clears/closes anything locally.
+   * and selecting never clears/closes anything locally. It does NOT,
+   * however, preserve a lower character minimum: both variants now share
+   * the same global `MIN_SEARCH_LENGTH` (3) search-firing policy.
    */
   variant?: "wizard" | "inline";
 }) {
@@ -60,6 +62,15 @@ export function StepCustomer({
   const [searchMode, setSearchMode] = useState(selected === null);
 
   const searchSequence = useRef(0);
+  /** Bump this whenever the "current search" is semantically invalidated
+   * WITHOUT a new search necessarily firing (query shortened below the
+   * minimum, Escape, a selection, reopening search mode, a tenant
+   * switch) — clearing visual state alone never cancels an in-flight
+   * Promise, so every such site must also call this, or a stale response
+   * can still resolve into `setResults`/etc. after the fact. */
+  const invalidateSearch = useCallback(() => {
+    searchSequence.current += 1;
+  }, []);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // A customer becoming selected (id change, including from none) closes
@@ -81,13 +92,14 @@ export function StepCustomer({
   useEffect(() => {
     if (stepCustomerCompanyIdRef.current === requestCompanyId) return;
     stepCustomerCompanyIdRef.current = requestCompanyId;
+    invalidateSearch();
     setSearchInput("");
     setSearch("");
     setResults([]);
     setLoading(false);
     setError(false);
     setQuickCreateOpen(false);
-  }, [requestCompanyId]);
+  }, [requestCompanyId, invalidateSearch]);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
@@ -101,6 +113,7 @@ export function StepCustomer({
 
   useEffect(() => {
     if (search.length < MIN_SEARCH_LENGTH) {
+      invalidateSearch();
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setResults([]);
       setError(false);
@@ -129,7 +142,7 @@ export function StepCustomer({
         if (isStaleRequest(fireCompanyId)) return;
         setLoading(false);
       });
-  }, [search, requestCompanyId, isStaleRequest]);
+  }, [search, requestCompanyId, isStaleRequest, invalidateSearch]);
 
   function handleCreated(customer: Customer) {
     if (isStaleRequest(requestCompanyId)) return;
@@ -138,8 +151,12 @@ export function StepCustomer({
 
   /** Shared by a mouse click on a result and Enter on the search input —
    * both must close the autocomplete identically (wizard variant only —
-   * "inline" never clears/closes, matching its pre-existing behavior). */
+   * "inline" never clears/closes, matching its pre-existing behavior).
+   * A customer being selected is ALWAYS a real invalidation of "the
+   * search that led here" from a request-ownership perspective, even in
+   * the "inline" variant, which otherwise keeps the list open/visible. */
   function selectCustomer(customer: CustomerListItem | Customer) {
+    invalidateSearch();
     onSelect(customer);
     if (variant !== "wizard") return;
     setSearchInput("");
@@ -159,6 +176,7 @@ export function StepCustomer({
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      invalidateSearch();
       setSearchInput("");
       setSearch("");
       setResults([]);
@@ -177,6 +195,9 @@ export function StepCustomer({
   }
 
   function openSearchMode() {
+    // Invalidate BEFORE clearing so a request from the PREVIOUS session
+    // can never resolve into this new one.
+    invalidateSearch();
     setSearchMode(true);
     // A clean slate to search from — never re-show a previous customer's
     // stale search text/results under a new search.
