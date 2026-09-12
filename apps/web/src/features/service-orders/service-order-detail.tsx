@@ -2,20 +2,29 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ClipboardCheck, ExternalLink } from "lucide-react";
+import { ClipboardCheck, ExternalLink, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
-import { ApiError } from "@/lib/api-client";
+import { CATALOG_ITEM_TYPE_LABELS } from "@/features/catalog/labels";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { decimalStringToBrlDisplay } from "@/lib/currency";
 import { formatCep, formatCpfCnpj, formatE164PhoneForDisplay } from "@/lib/document";
 import { useAuth } from "@/features/auth/auth-provider";
-import { cancelServiceOrder, completeServiceOrder, getServiceOrder, startServiceOrder } from "./service-orders-client";
+import { AddItemDialog } from "./items/add-item-dialog";
+import { EditItemDialog } from "./items/edit-item-dialog";
+import {
+  cancelServiceOrder,
+  completeServiceOrder,
+  deleteServiceOrderItem,
+  getServiceOrder,
+  startServiceOrder,
+} from "./service-orders-client";
 import { ServiceOrderStatusBadge } from "./status-badge";
-import type { ServiceOrder } from "./types";
+import type { ServiceOrder, ServiceOrderItem } from "./types";
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -61,6 +70,12 @@ function DetailSkeleton() {
 
 type ActionKind = "start" | "complete" | "cancel";
 
+/** For open/in_progress orders only — terminal (completed/cancelled)
+ * orders are read-only everywhere on this page, items included. */
+function isMutableStatus(status: ServiceOrder["status"]): boolean {
+  return status === "open" || status === "in_progress";
+}
+
 export function ServiceOrderDetail({ id }: { id: string }) {
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
@@ -75,11 +90,25 @@ export function ServiceOrderDetail({ id }: { id: string }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
 
+  // Item management — each of add/edit/remove is its own immediate,
+  // independent action (its own request, its own dialog) per this
+  // round's "no fake atomicity" rule; never batched with the header PUT.
+  const [addItemOpen, setAddItemOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<ServiceOrderItem | null>(null);
+  const [removingItem, setRemovingItem] = useState<ServiceOrderItem | null>(null);
+  const [itemActionError, setItemActionError] = useState<string | null>(null);
+  const [itemMutationInFlight, setItemMutationInFlight] = useState<string | null>(null);
+
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
   useEffect(() => {
     activeCompanyIdRef.current = activeCompanyId;
   }, [activeCompanyId]);
+
+  const isStaleRequest = useCallback(
+    (requestCompanyId: string | undefined) => activeCompanyIdRef.current !== requestCompanyId,
+    []
+  );
 
   const load = useCallback(async () => {
     const requestId = ++requestSequence.current;
@@ -89,6 +118,11 @@ export function ServiceOrderDetail({ id }: { id: string }) {
     setPendingAction(null);
     setActionError(null);
     setCancelReason("");
+    setAddItemOpen(false);
+    setEditingItem(null);
+    setRemovingItem(null);
+    setItemActionError(null);
+    setItemMutationInFlight(null);
     try {
       const data = await getServiceOrder(id);
       if (requestSequence.current !== requestId) return;
@@ -114,18 +148,28 @@ export function ServiceOrderDetail({ id }: { id: string }) {
     void load();
   }, [load]);
 
-  /** Re-fetches the O.S. after a 409 conflict without clearing the
-   * conflict message `load()` itself would wipe (it resets actionError
-   * as part of its own full-reload contract). */
-  async function silentReload() {
+  /**
+   * Re-fetches the O.S. without clearing whatever conflict/error message
+   * the caller already set (unlike `load()`, which resets `actionError`
+   * as part of its own full-reload contract). This is the ONE shared
+   * refresh path for every post-mutation re-GET on this page — status
+   * actions (start/complete/cancel 409s) AND every item mutation
+   * (add/edit/remove success, or a 409 on any of them) — so there is
+   * never a second, slightly-different tenant-guard implementation.
+   * Item mutations never return the parent's totals themselves, so this
+   * is the ONLY way the Detail page's subtotal/total/updated_at ever
+   * reflect a just-added/edited/removed line.
+   */
+  async function refreshOrderAfterMutation() {
     const requestCompanyId = activeCompanyId;
     try {
       const data = await getServiceOrder(id);
       if (activeCompanyIdRef.current !== requestCompanyId) return;
       setOrder(data);
     } catch {
-      // The conflict message already surfaced; a failed refresh here is
-      // secondary and never replaces it with a second, contradicting error.
+      // The conflict/error message already surfaced; a failed refresh
+      // here is secondary and never replaces it with a second,
+      // contradicting error.
     }
   }
 
@@ -143,7 +187,7 @@ export function ServiceOrderDetail({ id }: { id: string }) {
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setActionError("Esta O.S. não pode mais ser iniciada. Os dados foram atualizados.");
-        void silentReload();
+        void refreshOrderAfterMutation();
       } else {
         setActionError("Não foi possível iniciar esta O.S. agora.");
       }
@@ -163,7 +207,7 @@ export function ServiceOrderDetail({ id }: { id: string }) {
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setActionError("Esta O.S. não pode mais ser concluída. Os dados foram atualizados.");
-        void silentReload();
+        void refreshOrderAfterMutation();
       } else {
         setActionError("Não foi possível concluir esta O.S. agora.");
       }
@@ -184,12 +228,61 @@ export function ServiceOrderDetail({ id }: { id: string }) {
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setActionError("Esta O.S. não pode mais ser cancelada. Os dados foram atualizados.");
-        void silentReload();
+        void refreshOrderAfterMutation();
       } else {
         setActionError("Não foi possível cancelar esta O.S. agora.");
       }
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  /** Shared success path for Add/Edit item dialogs — neither response
+   * carries the parent's new totals, so this is the ONLY place that
+   * refreshes them. */
+  function handleItemMutated() {
+    setItemActionError(null);
+    void refreshOrderAfterMutation();
+  }
+
+  /** Shared 409 path for Add/Edit/Remove item — the message differs per
+   * caller (e.g. the quick-create/catalog-survives special case), but
+   * every one of them re-fetches so the order renders as terminal once
+   * it actually is. */
+  function handleItemConflict(message: string) {
+    setItemActionError(message);
+    void refreshOrderAfterMutation();
+  }
+
+  async function handleRemoveItem() {
+    if (!order || !removingItem) return;
+    const targetItem = removingItem;
+    const requestCompanyId = activeCompanyId;
+    setItemMutationInFlight(targetItem.id);
+    setItemActionError(null);
+    try {
+      await deleteServiceOrderItem(order.id, targetItem.id);
+      if (isStaleRequest(requestCompanyId)) return;
+      setRemovingItem(null);
+      handleItemMutated();
+    } catch (error) {
+      if (isStaleRequest(requestCompanyId)) return;
+      setRemovingItem(null);
+      if (error instanceof ApiError && error.status === 409) {
+        handleItemConflict("A O.S. foi alterada por outro usuário.");
+      } else if (error instanceof ApiValidationError) {
+        // The item was NOT deleted server-side — never refetch as if
+        // something changed (nothing did), and never auto-adjust the
+        // order's discount ourselves.
+        setItemActionError(
+          error.errors.order_discount?.[0] ??
+            "O desconto da O.S. não pode ser maior que o novo subtotal. Reduza o desconto antes de remover este item."
+        );
+      } else {
+        setItemActionError("Não foi possível remover este item agora.");
+      }
+    } finally {
+      if (!isStaleRequest(requestCompanyId)) setItemMutationInFlight(null);
     }
   }
 
@@ -238,6 +331,24 @@ export function ServiceOrderDetail({ id }: { id: string }) {
         <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           {actionError}
         </p>
+      ) : null}
+
+      {itemActionError ? (
+        <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          {itemActionError}
+        </p>
+      ) : null}
+
+      {isMutableStatus(order.status) ? (
+        <div>
+          <Link
+            href={`/ordens-servico/${order.id}/editar`}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            <Pencil className="size-3.5" aria-hidden="true" />
+            Editar dados
+          </Link>
+        </div>
       ) : null}
 
       <section className="space-y-1 rounded-xl border border-border bg-card p-4">
@@ -296,7 +407,15 @@ export function ServiceOrderDetail({ id }: { id: string }) {
       </section>
 
       <section className="space-y-2 rounded-xl border border-border bg-card p-4">
-        <h2 className="pb-1 text-sm font-semibold text-foreground">Itens</h2>
+        <div className="flex items-center justify-between pb-1">
+          <h2 className="text-sm font-semibold text-foreground">Itens</h2>
+          {isMutableStatus(order.status) ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => setAddItemOpen(true)}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              Adicionar item
+            </Button>
+          ) : null}
+        </div>
         {!order.items || order.items.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum produto ou serviço nesta O.S.</p>
         ) : (
@@ -304,12 +423,42 @@ export function ServiceOrderDetail({ id }: { id: string }) {
             {order.items.map((item) => (
               <div key={item.id} className="flex items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {CATALOG_ITEM_TYPE_LABELS[item.type]}
+                    </span>
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {item.quantity} {item.unit} × {decimalStringToBrlDisplay(item.unit_price)}
                   </p>
+                  {item.notes ? <p className="text-xs text-muted-foreground">{item.notes}</p> : null}
                 </div>
-                <p className="shrink-0 text-sm font-medium text-foreground">{decimalStringToBrlDisplay(item.line_total)}</p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">{decimalStringToBrlDisplay(item.line_total)}</p>
+                  {isMutableStatus(order.status) ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingItem(item)}
+                        disabled={itemMutationInFlight === item.id}
+                        aria-label={`Editar ${item.name}`}
+                        className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      >
+                        <Pencil className="size-3.5" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRemovingItem(item)}
+                        disabled={itemMutationInFlight === item.id}
+                        aria-label={`Remover ${item.name}`}
+                        className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
@@ -408,6 +557,48 @@ export function ServiceOrderDetail({ id }: { id: string }) {
           />
         </div>
       </ConfirmActionDialog>
+
+      {addItemOpen ? (
+        <AddItemDialog
+          open={addItemOpen}
+          onOpenChange={setAddItemOpen}
+          orderId={order.id}
+          requestCompanyId={activeCompanyId}
+          isStaleRequest={isStaleRequest}
+          onAdded={handleItemMutated}
+          onConflict={handleItemConflict}
+        />
+      ) : null}
+
+      {editingItem ? (
+        <EditItemDialog
+          open={editingItem !== null}
+          onOpenChange={(open) => !open && setEditingItem(null)}
+          orderId={order.id}
+          item={editingItem}
+          requestCompanyId={activeCompanyId}
+          isStaleRequest={isStaleRequest}
+          onUpdated={() => {
+            setEditingItem(null);
+            handleItemMutated();
+          }}
+          onConflict={(message) => {
+            setEditingItem(null);
+            handleItemConflict(message);
+          }}
+        />
+      ) : null}
+
+      <ConfirmActionDialog
+        open={removingItem !== null}
+        onOpenChange={(open) => !open && setRemovingItem(null)}
+        title="Remover este item da O.S.?"
+        description="O item continua disponível no catálogo — apenas esta linha é removida da O.S."
+        confirmLabel="Remover"
+        destructive
+        disabled={removingItem !== null && itemMutationInFlight === removingItem.id}
+        onConfirm={() => void handleRemoveItem()}
+      />
     </div>
   );
 }

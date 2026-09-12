@@ -187,6 +187,42 @@ export interface ServiceOrderCreatePayload {
   items: ServiceOrderItemCreatePayload[];
 }
 
+/**
+ * PUT /api/v1/service-orders/{id} — header-only update (`UpdateServiceOrderRequest`).
+ * Never `status`, `number`, `company_id`, `project_id`, any snapshot
+ * field, `subtotal`/`total`, `items`, or any timestamp field — this
+ * endpoint never touches items or status, and always returns the full
+ * `ServiceOrder` (with `items`) on success.
+ */
+export interface ServiceOrderUpdatePayload {
+  customer_id: string;
+  customer_address_id: string;
+  customer_contact_id: string | null;
+  responsible_user_id: string | null;
+  title: string;
+  description: string | null;
+  scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
+  order_discount: string;
+  travel_fee: string;
+  notes: string | null;
+}
+
+/**
+ * PUT /api/v1/service-orders/{id}/items/{item} (`UpdateServiceOrderItemRequest`).
+ * Never `catalog_item_id` (the backend rejects it as `prohibited` — to
+ * swap the underlying product/service, remove this line and add a new
+ * one) nor `sort_order` (reordering is out of scope this round). Returns
+ * only the updated `ServiceOrderItem`, never the parent's totals — the
+ * caller must re-GET the order for authoritative totals afterward.
+ */
+export interface ServiceOrderItemUpdatePayload {
+  quantity: string;
+  unit_price: string;
+  line_discount: string;
+  notes: string | null;
+}
+
 /** GET/PUT /api/v1/service-orders/settings. */
 export interface ServiceOrderSettings {
   default_travel_fee: string;

@@ -34,3 +34,29 @@ export function dateOnlyToDayNumber(dateOnly: string): number {
 export function daysBetweenDateOnly(from: string, to: string): number {
   return dateOnlyToDayNumber(to) - dateOnlyToDayNumber(from);
 }
+
+/**
+ * ISO instant (e.g. "2026-09-10T13:00:00.000000Z") -> the `YYYY-MM-DDTHH:mm`
+ * shape a `datetime-local` input expects, in the VIEWER'S LOCAL time.
+ * Deliberately builds the string from `Date`'s local getters
+ * (`getFullYear()`/`getMonth()`/`getDate()`/`getHours()`/`getMinutes()`),
+ * never by slicing the ISO string itself — a naive slice would keep the
+ * UTC wall-clock time and silently reinterpret it as if it were already
+ * local, shifting the displayed instant by the viewer's UTC offset. Round
+ * trips with `new Date(value).toISOString()` (the wizard's existing
+ * local -> ISO approach) to the minute — `datetime-local` has no seconds,
+ * so a non-zero seconds/ms component on the original ISO instant is
+ * necessarily lost, same as it would be in the wizard's own new-value path.
+ * `null`/invalid -> "".
+ */
+export function isoToDatetimeLocalValue(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}

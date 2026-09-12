@@ -2,16 +2,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, ApiValidationError } from "@/lib/api-client";
 import {
+  addServiceOrderItem,
   cancelServiceOrder,
   completeServiceOrder,
   createServiceOrder,
+  deleteServiceOrderItem,
   getServiceOrder,
   getServiceOrderSettings,
   listServiceOrders,
   startServiceOrder,
+  updateServiceOrder,
+  updateServiceOrderItem,
   updateServiceOrderSettings,
 } from "../service-orders-client";
-import type { ServiceOrderCreatePayload } from "../types";
+import type {
+  ServiceOrderCreatePayload,
+  ServiceOrderItemCreatePayload,
+  ServiceOrderItemUpdatePayload,
+  ServiceOrderUpdatePayload,
+} from "../types";
 
 type FetchInit = RequestInit & { body?: string };
 type FetchMock = ReturnType<typeof vi.fn<(url: string, init?: FetchInit) => Promise<Response>>>;
@@ -177,5 +186,138 @@ describe("service-orders-client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(getServiceOrder("os-1")).rejects.not.toBeInstanceOf(ApiValidationError);
+  });
+
+  const headerUpdatePayload: ServiceOrderUpdatePayload = {
+    customer_id: "cust-1",
+    customer_address_id: "addr-1",
+    customer_contact_id: null,
+    responsible_user_id: null,
+    title: "Reparo elétrico",
+    description: null,
+    scheduled_start_at: null,
+    scheduled_end_at: null,
+    order_discount: "0.00",
+    travel_fee: "0.00",
+    notes: null,
+  };
+
+  it("S13: updateServiceOrder PUTs to /service-orders/{id} with the exact header-only payload, never status/number/items/snapshot fields", async () => {
+    const fetchMock = stubMutatingFetch(jsonResponse({ id: "os-1", number: "OS-000001", items: [] }));
+
+    await updateServiceOrder("os-1", headerUpdatePayload);
+
+    const call = mutatingCall(fetchMock);
+    expect(call[1]!.method).toBe("PUT");
+    expect(String(call[0])).toContain("/api/v1/service-orders/os-1");
+    expect(String(call[0])).not.toContain("/items");
+    const body = JSON.parse(call[1]!.body!);
+    expect(body).toEqual(headerUpdatePayload);
+    expect(body).not.toHaveProperty("status");
+    expect(body).not.toHaveProperty("number");
+    expect(body).not.toHaveProperty("company_id");
+    expect(body).not.toHaveProperty("project_id");
+    expect(body).not.toHaveProperty("subtotal");
+    expect(body).not.toHaveProperty("total");
+    expect(body).not.toHaveProperty("items");
+  });
+
+  it("S14: updateServiceOrder propagates a 409 as ApiError", async () => {
+    const fetchMock = stubMutatingFetch(jsonResponse({ message: "Conflict" }, 409));
+    void fetchMock;
+
+    await expect(updateServiceOrder("os-1", headerUpdatePayload)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  const addItemPayload: ServiceOrderItemCreatePayload = {
+    catalog_item_id: "cat-1",
+    quantity: "1.000",
+    unit_price: "30.00",
+    line_discount: "0.00",
+    notes: null,
+  };
+
+  it("S15: addServiceOrderItem POSTs to /service-orders/{id}/items with the exact payload, never a snapshot field", async () => {
+    const fetchMock = stubMutatingFetch(jsonResponse({ id: "item-1", catalog_item_id: "cat-1" }, 201));
+
+    await addServiceOrderItem("os-1", addItemPayload);
+
+    const call = mutatingCall(fetchMock);
+    expect(call[1]!.method).toBe("POST");
+    expect(String(call[0])).toContain("/api/v1/service-orders/os-1/items");
+    const body = JSON.parse(call[1]!.body!);
+    expect(body).toEqual(addItemPayload);
+    expect(body).not.toHaveProperty("id");
+    expect(body).not.toHaveProperty("company_id");
+    expect(body).not.toHaveProperty("service_order_id");
+    expect(body).not.toHaveProperty("type");
+    expect(body).not.toHaveProperty("code");
+    expect(body).not.toHaveProperty("name");
+    expect(body).not.toHaveProperty("unit");
+    expect(body).not.toHaveProperty("line_total");
+  });
+
+  it("S16: addServiceOrderItem propagates a 409 as ApiError", async () => {
+    const fetchMock = stubMutatingFetch(jsonResponse({ message: "Conflict" }, 409));
+    void fetchMock;
+
+    await expect(addServiceOrderItem("os-1", addItemPayload)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  const updateItemPayload: ServiceOrderItemUpdatePayload = {
+    quantity: "2.000",
+    unit_price: "30.00",
+    line_discount: "0.00",
+    notes: null,
+  };
+
+  it("S17: updateServiceOrderItem PUTs to /service-orders/{id}/items/{item}, never catalog_item_id or sort_order", async () => {
+    const fetchMock = stubMutatingFetch(jsonResponse({ id: "item-1" }));
+
+    await updateServiceOrderItem("os-1", "item-1", updateItemPayload);
+
+    const call = mutatingCall(fetchMock);
+    expect(call[1]!.method).toBe("PUT");
+    expect(String(call[0])).toContain("/api/v1/service-orders/os-1/items/item-1");
+    const body = JSON.parse(call[1]!.body!);
+    expect(body).toEqual(updateItemPayload);
+    expect(body).not.toHaveProperty("catalog_item_id");
+    expect(body).not.toHaveProperty("sort_order");
+    expect(body).not.toHaveProperty("type");
+    expect(body).not.toHaveProperty("code");
+    expect(body).not.toHaveProperty("name");
+    expect(body).not.toHaveProperty("unit");
+    expect(body).not.toHaveProperty("line_total");
+  });
+
+  it("S18: deleteServiceOrderItem DELETEs /service-orders/{id}/items/{item} and resolves on 204 with no content", async () => {
+    const fetchMock = stubMutatingFetch(new Response(null, { status: 204 }));
+
+    await expect(deleteServiceOrderItem("os-1", "item-1")).resolves.toBeUndefined();
+
+    const call = mutatingCall(fetchMock);
+    expect(call[1]!.method).toBe("DELETE");
+    expect(String(call[0])).toContain("/api/v1/service-orders/os-1/items/item-1");
+  });
+
+  it("S19: deleteServiceOrderItem propagates a 409 as ApiError", async () => {
+    const fetchMock = stubMutatingFetch(jsonResponse({ message: "Conflict" }, 409));
+    void fetchMock;
+
+    await expect(deleteServiceOrderItem("os-1", "item-1")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("S20: deleteServiceOrderItem propagates a 422 (order_discount exceeds new subtotal) as ApiValidationError", async () => {
+    const fetchMock = stubMutatingFetch(
+      jsonResponse({ errors: { order_discount: ["O desconto da O.S. não pode ser maior que o novo subtotal."] } }, 422)
+    );
+    void fetchMock;
+
+    await expect(deleteServiceOrderItem("os-1", "item-1")).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  it("S21: there is still no deleteServiceOrder function anywhere in this client — no DELETE-the-whole-order capability was ever added", async () => {
+    const client = await import("../service-orders-client");
+    expect("deleteServiceOrder" in client).toBe(false);
   });
 });
