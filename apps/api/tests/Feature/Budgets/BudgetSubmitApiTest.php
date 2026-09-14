@@ -38,7 +38,7 @@ class BudgetSubmitApiTest extends TestCase
         $budgetId = $this->createDraftBudgetId();
 
         $this->postJson("/api/v1/budgets/{$budgetId}/submit")
-            ->assertStatus(200)->assertJson(['status' => 'pending_approval', 'subtotal' => '0.00', 'total' => '0.00']);
+            ->assertStatus(200)->assertJson(['status' => 'pending_approval', 'sale_subtotal' => '0.00', 'total' => '0.00']);
     }
 
     /** BT3: submit generates a proposal_token. */
@@ -72,7 +72,7 @@ class BudgetSubmitApiTest extends TestCase
         $this->postJson("/api/v1/budgets/{$budgetId}/submit")->assertStatus(409);
     }
 
-    /** BT6: submit does not alter item values or totals — the same subtotal/total observed while draft is what submit returns. */
+    /** BT6: submit does not alter item values or totals — the same sale_subtotal/total observed while draft is what submit returns. */
     public function test_bt6_submit_preserves_totals_computed_from_items(): void
     {
         $budgetId = $this->createDraftBudgetId();
@@ -80,7 +80,7 @@ class BudgetSubmitApiTest extends TestCase
         $beforeSubmit = $this->getJson("/api/v1/budgets/{$budgetId}")->json();
 
         $response = $this->postJson("/api/v1/budgets/{$budgetId}/submit");
-        $response->assertJson(['subtotal' => $beforeSubmit['subtotal'], 'total' => $beforeSubmit['total']]);
+        $response->assertJson(['sale_subtotal' => $beforeSubmit['sale_subtotal'], 'total' => $beforeSubmit['total']]);
         $this->assertCount(1, $response->json('items'));
     }
 

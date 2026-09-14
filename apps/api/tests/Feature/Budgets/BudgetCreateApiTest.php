@@ -149,7 +149,7 @@ class BudgetCreateApiTest extends TestCase
         ]))->assertStatus(422)->assertJsonValidationErrors(['project_id']);
     }
 
-    /** B25: status/number/company_id/subtotal/total/margin_percentage are hostile fields, rejected as 422. */
+    /** B25: status/number/company_id/sale_subtotal/total/margin_percentage are hostile fields, rejected as 422. */
     public function test_b25_hostile_fields_are_prohibited(): void
     {
         $this->actingAsNewCompanyMember();
@@ -162,6 +162,28 @@ class BudgetCreateApiTest extends TestCase
             'margin_percentage' => '50.00',
             'proposal_token' => 'hijacked',
         ]))->assertStatus(422)->assertJsonValidationErrors(['status', 'number', 'margin_percentage', 'proposal_token']);
+    }
+
+    /** SS7: a payload carrying sale_subtotal directly is rejected as 422 (100% server-authoritative). */
+    public function test_ss7_sale_subtotal_payload_is_prohibited(): void
+    {
+        $this->actingAsNewCompanyMember();
+        $customer = $this->makeCustomer();
+
+        $this->postJson('/api/v1/budgets', $this->validBudgetPayload([
+            'customer_id' => $customer->id, 'sale_subtotal' => '999.00',
+        ]))->assertStatus(422)->assertJsonValidationErrors(['sale_subtotal']);
+    }
+
+    /** SS8: a payload carrying the OLD "subtotal" name is also rejected as 422 — never silently accepted under the wrong contract. */
+    public function test_ss8_legacy_subtotal_payload_is_prohibited(): void
+    {
+        $this->actingAsNewCompanyMember();
+        $customer = $this->makeCustomer();
+
+        $this->postJson('/api/v1/budgets', $this->validBudgetPayload([
+            'customer_id' => $customer->id, 'subtotal' => '999.00',
+        ]))->assertStatus(422)->assertJsonValidationErrors(['subtotal']);
     }
 
     /** B26: create with initial items computes totals atomically. */
@@ -177,8 +199,18 @@ class BudgetCreateApiTest extends TestCase
         ]));
 
         $response->assertStatus(201)->assertJson([
-            'subtotal' => '300.00', 'cost_subtotal' => '180.00', 'margin_amount' => '120.00', 'total' => '300.00',
+            'sale_subtotal' => '300.00', 'cost_subtotal' => '180.00', 'margin_amount' => '120.00', 'total' => '300.00',
         ]);
+    }
+
+    /** SS3: create's 201 response includes sale_subtotal. */
+    public function test_ss3_create_response_includes_sale_subtotal(): void
+    {
+        $this->actingAsNewCompanyMember();
+        $customer = $this->makeCustomer();
+
+        $this->postJson('/api/v1/budgets', $this->validBudgetPayload(['customer_id' => $customer->id]))
+            ->assertStatus(201)->assertJsonPath('sale_subtotal', '0.00');
     }
 
     /** B27: a failure while adding an initial item rolls back the whole Budget and its allocated number. */
@@ -206,8 +238,8 @@ class BudgetCreateApiTest extends TestCase
             ->assertJson(['number' => 'ORC-000001']);
     }
 
-    /** B28: discount_amount greater than the (initial) subtotal is rejected. */
-    public function test_b28_discount_greater_than_subtotal_is_rejected(): void
+    /** B28: discount_amount greater than the (initial) sale_subtotal is rejected. */
+    public function test_b28_discount_greater_than_sale_subtotal_is_rejected(): void
     {
         $this->actingAsNewCompanyMember();
         $customer = $this->makeCustomer();

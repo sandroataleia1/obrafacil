@@ -125,4 +125,46 @@ class BudgetManualDecisionApiTest extends TestCase
         $response = $this->postJson("/api/v1/budgets/{$budgetId}/approve-manually");
         $this->assertNotNull($response->json('decided_at'));
     }
+
+    // ================= DN1-DN10 (BUDGET-API-01A §25-31) — decision note/name contract =================
+
+    /** DN4: manual approve's note persists to decision_note (the controller previously ignored it entirely). */
+    public function test_dn4_manual_approve_note_persists(): void
+    {
+        $this->actingAsNewCompanyMember();
+        $budgetId = $this->createPendingBudgetId();
+
+        $this->postJson("/api/v1/budgets/{$budgetId}/approve-manually", ['note' => 'Aprovado por telefone'])
+            ->assertStatus(200)->assertJson(['decision_note' => 'Aprovado por telefone']);
+    }
+
+    /** DN5: manual reject's note persists to decision_note (regression of MD5, restated under this microgate's own numbering). */
+    public function test_dn5_manual_reject_note_persists(): void
+    {
+        $this->actingAsNewCompanyMember();
+        $budgetId = $this->createPendingBudgetId();
+
+        $this->postJson("/api/v1/budgets/{$budgetId}/reject-manually", ['note' => 'Fora do orçamento'])
+            ->assertStatus(200)->assertJson(['decision_note' => 'Fora do orçamento']);
+    }
+
+    /** DN7: a manual decision always has decision_by_name=null — that field is exclusively for the public/unauthenticated flow's self-reported name. */
+    public function test_dn7_manual_decision_by_name_is_null(): void
+    {
+        $this->actingAsNewCompanyMember();
+        $budgetId = $this->createPendingBudgetId();
+
+        $this->postJson("/api/v1/budgets/{$budgetId}/approve-manually")
+            ->assertJson(['decision_by_name' => null]);
+    }
+
+    /** DN8: decision_by_user_id on a manual decision is the authenticated user (regression of MD4, restated). */
+    public function test_dn8_manual_decision_by_user_id_is_authenticated_user(): void
+    {
+        [$company, $user] = $this->actingAsNewCompanyMember();
+        $budgetId = $this->createPendingBudgetId();
+
+        $this->postJson("/api/v1/budgets/{$budgetId}/approve-manually")
+            ->assertJson(['decision_by_user_id' => $user->id]);
+    }
 }

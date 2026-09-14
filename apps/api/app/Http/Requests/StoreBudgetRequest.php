@@ -9,11 +9,15 @@ use Illuminate\Validation\Rule;
 
 /**
  * POST /api/v1/budgets. `status`/`number`/`company_id`/
- * `created_by_user_id`/every snapshot field/`subtotal`/`cost_subtotal`/
- * `margin_amount`/`margin_percentage`/`total`/`proposal_token`/
- * `calculation_snapshot`/`project_id` are all hostile fields — never
- * accepted from the client. `margin_percentage` in particular is 100%
- * server-derived and never accepted anywhere in this gate.
+ * `created_by_user_id`/every snapshot field/`sale_subtotal`/
+ * `cost_subtotal`/`margin_amount`/`margin_percentage`/`total`/
+ * `proposal_token`/`calculation_snapshot`/`project_id` are all hostile
+ * fields — never accepted from the client. `margin_percentage` in
+ * particular is 100% server-derived and never accepted anywhere in this
+ * gate. `subtotal` (the pre-BUDGET-API-01A name) is ALSO kept rejected
+ * as an unknown/legacy hostile field (§11) — a client still built
+ * against the old contract must get a clean 422, never a silently
+ * ignored field.
  */
 class StoreBudgetRequest extends FormRequest
 {
@@ -39,6 +43,7 @@ class StoreBudgetRequest extends FormRequest
             'updated_at' => ['prohibited'],
             'project_id' => ['prohibited'],
             'subtotal' => ['prohibited'],
+            'sale_subtotal' => ['prohibited'],
             'cost_subtotal' => ['prohibited'],
             'margin_amount' => ['prohibited'],
             'margin_percentage' => ['prohibited'],
@@ -72,7 +77,10 @@ class StoreBudgetRequest extends FormRequest
             ],
             'items.*.code' => ['prohibited_if:items.*.source_type,catalog', 'nullable', 'string', 'max:255'],
             'items.*.name' => ['required_unless:items.*.source_type,catalog', 'prohibited_if:items.*.source_type,catalog', 'string', 'max:255'],
-            'items.*.unit' => ['required_unless:items.*.source_type,catalog', 'prohibited_if:items.*.source_type,catalog', 'string', 'max:255'],
+            // §14-16: unit is nullable for calculator/manual (a closed-price
+            // line has no natural unit of measure to force) — never
+            // required_unless here.
+            'items.*.unit' => ['prohibited_if:items.*.source_type,catalog', 'nullable', 'string', 'max:255'],
             'items.*.description' => ['prohibited_if:items.*.source_type,catalog', 'nullable', 'string'],
             'items.*.quantity' => ['required', 'numeric', 'gt:0', 'regex:/^\d+(\.\d{1,3})?$/'],
             'items.*.unit_price' => ['nullable', 'numeric', 'min:0', 'required_unless:items.*.source_type,catalog'],
@@ -80,7 +88,14 @@ class StoreBudgetRequest extends FormRequest
             // here either — same rule as StoreBudgetItemRequest.
             'items.*.unit_cost' => ['prohibited_if:items.*.source_type,catalog', 'nullable', 'numeric', 'min:0'],
             'items.*.line_discount' => ['nullable', 'numeric', 'min:0'],
-            'items.*.calculation_snapshot' => ['prohibited_unless:items.*.source_type,calculator', 'nullable', 'array'],
+            // §19-20: calculation_snapshot is REQUIRED for calculator items
+            // (a calculator-sourced line is meaningless without its audit
+            // trail) and prohibited otherwise — never merely optional.
+            'items.*.calculation_snapshot' => [
+                'required_if:items.*.source_type,calculator',
+                'prohibited_unless:items.*.source_type,calculator',
+                'array',
+            ],
             'items.*.notes' => ['nullable', 'string'],
         ];
     }

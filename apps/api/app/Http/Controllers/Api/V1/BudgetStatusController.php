@@ -30,7 +30,7 @@ class BudgetStatusController extends Controller
     public function approveManually(ApproveBudgetManuallyRequest $request, string $budget): BudgetResource
     {
         $model = Budget::query()->findOrFail($budget);
-        $model = $this->service->approveManually($model, $request->user());
+        $model = $this->service->approveManually($model, $request->user(), $request->input('note'));
 
         return new BudgetResource($model);
     }

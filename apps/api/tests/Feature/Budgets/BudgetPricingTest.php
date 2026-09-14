@@ -56,14 +56,14 @@ class BudgetPricingTest extends TestCase
         $this->assertIsString($response->json('quantity'));
     }
 
-    /** BP4: subtotal is the SUM of every item's line_total. */
-    public function test_bp4_subtotal_sums_all_line_totals(): void
+    /** BP4: sale_subtotal is the SUM of every item's line_total. */
+    public function test_bp4_sale_subtotal_sums_all_line_totals(): void
     {
         $budgetId = $this->createDraftBudgetId();
         $this->postJson("/api/v1/budgets/{$budgetId}/items", $this->manualItemPayload(['unit_price' => '100.00']));
         $this->postJson("/api/v1/budgets/{$budgetId}/items", $this->manualItemPayload(['unit_price' => '50.00']));
 
-        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['subtotal' => '150.00']);
+        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['sale_subtotal' => '150.00']);
     }
 
     /** BP5: when every item has unit_cost set, cost_subtotal/margin_amount are computed. */
@@ -105,7 +105,7 @@ class BudgetPricingTest extends TestCase
         $budgetId = $this->createDraftBudgetId();
         $this->postJson("/api/v1/budgets/{$budgetId}/items", $this->manualItemPayload(['unit_price' => '100.00', 'unit_cost' => '75.00']));
 
-        // subtotal=100.00, cost_subtotal=75.00, margin_amount=25.00
+        // sale_subtotal=100.00, cost_subtotal=75.00, margin_amount=25.00
         // margin_percentage = 25.00 / 75.00 * 100 = 33.3333
         $response = $this->getJson("/api/v1/budgets/{$budgetId}");
         $this->assertSame('33.3333', $response->json('margin_percentage'));
@@ -137,8 +137,8 @@ class BudgetPricingTest extends TestCase
         $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['margin_percentage' => '33.3333']);
     }
 
-    /** BP11: total = subtotal - discount_amount. */
-    public function test_bp11_total_is_subtotal_minus_discount(): void
+    /** BP11: total = sale_subtotal - discount_amount. */
+    public function test_bp11_total_is_sale_subtotal_minus_discount(): void
     {
         $budgetId = $this->createDraftBudgetId();
         $this->postJson("/api/v1/budgets/{$budgetId}/items", $this->manualItemPayload(['unit_price' => '200.00']));
@@ -149,8 +149,8 @@ class BudgetPricingTest extends TestCase
         ])->assertJson(['total' => '150.00']);
     }
 
-    /** BP12: discount_amount greater than subtotal is rejected. */
-    public function test_bp12_discount_greater_than_subtotal_rejected_on_update(): void
+    /** BP12: discount_amount greater than sale_subtotal is rejected. */
+    public function test_bp12_discount_greater_than_sale_subtotal_rejected_on_update(): void
     {
         $budgetId = $this->createDraftBudgetId();
         $this->postJson("/api/v1/budgets/{$budgetId}/items", $this->manualItemPayload(['unit_price' => '100.00']));
@@ -161,7 +161,7 @@ class BudgetPricingTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors(['discount_amount']);
     }
 
-    /** BP13: total is never negative (structurally guaranteed by discount <= subtotal). */
+    /** BP13: total is never negative (structurally guaranteed by discount <= sale_subtotal). */
     public function test_bp13_total_never_negative(): void
     {
         $budgetId = $this->createDraftBudgetId();
@@ -173,12 +173,12 @@ class BudgetPricingTest extends TestCase
         ])->assertStatus(200)->assertJson(['total' => '0.00']);
     }
 
-    /** BP14: zero items -> subtotal/total are 0.00, cost_subtotal is null (no items with null cost, but also nothing to sum meaningfully — treated as computed 0). */
+    /** BP14: zero items -> sale_subtotal/total are 0.00, cost_subtotal is null (no items with null cost, but also nothing to sum meaningfully — treated as computed 0). */
     public function test_bp14_zero_items_gives_zero_totals(): void
     {
         $budgetId = $this->createDraftBudgetId();
 
-        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['subtotal' => '0.00', 'total' => '0.00']);
+        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['sale_subtotal' => '0.00', 'total' => '0.00']);
     }
 
     /** BP15: cost_subtotal recomputed correctly after deleting the item that had a null unit_cost. */
@@ -274,7 +274,7 @@ class BudgetPricingTest extends TestCase
         ]))->assertStatus(422)->assertJsonValidationErrors(['line_discount']);
     }
 
-    /** BP3e: updating an item's line_discount recalculates line_total and the parent subtotal. */
+    /** BP3e: updating an item's line_discount recalculates line_total and the parent sale_subtotal. */
     public function test_bp23_update_line_discount_recalculates_totals(): void
     {
         $budgetId = $this->createDraftBudgetId();
@@ -283,7 +283,7 @@ class BudgetPricingTest extends TestCase
         $this->putJson("/api/v1/budgets/{$budgetId}/items/{$itemId}", ['line_discount' => '20.00'])
             ->assertJson(['line_discount' => '20.00', 'line_total' => '80.00']);
 
-        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['subtotal' => '80.00']);
+        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['sale_subtotal' => '80.00']);
     }
 
     /** BP3f: the public proposal resource exposes line_discount (spec §29 lists it as public-safe). */

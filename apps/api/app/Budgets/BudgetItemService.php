@@ -13,8 +13,8 @@ use Illuminate\Validation\ValidationException;
 /**
  * BUDGET-API-01. All BudgetItem mutation lives here — controllers stay
  * thin. Every method recalculates and persists the parent Budget's
- * subtotal/cost_subtotal/margin_amount/margin_percentage/total in the
- * same call, so the header is never left stale after an item
+ * sale_subtotal/cost_subtotal/margin_amount/margin_percentage/total in
+ * the same call, so the header is never left stale after an item
  * add/update/delete.
  *
  * Every public method wraps its ENTIRE body — lock, editability check,
@@ -79,9 +79,12 @@ class BudgetItemService
             $unitPrice = array_key_exists('unit_price', $input) && $input['unit_price'] !== null
                 ? Money::normalize((string) $input['unit_price'])
                 : (string) $lockedItem->unit_price;
-            $unitCost = array_key_exists('unit_cost', $input)
-                ? ($input['unit_cost'] !== null ? Money::normalize((string) $input['unit_cost']) : null)
-                : ($lockedItem->unit_cost !== null ? (string) $lockedItem->unit_cost : null);
+            // BUDGET-API-01A §2-4: unit_cost is a creation-time-only
+            // snapshot — never settable via PUT, regardless of source_type
+            // (already rejected at the FormRequest layer; this is
+            // belt-and-suspenders — `$input['unit_cost']` is never read
+            // here, only the item's own already-persisted value).
+            $unitCost = $lockedItem->unit_cost !== null ? (string) $lockedItem->unit_cost : null;
             $lineDiscount = array_key_exists('line_discount', $input) && $input['line_discount'] !== null
                 ? Money::normalize((string) $input['line_discount'])
                 : (string) $lockedItem->line_discount;
@@ -242,7 +245,7 @@ class BudgetItemService
             null,
             $input['code'] ?? null,
             $input['name'],
-            $input['unit'],
+            $input['unit'] ?? null,
             $input['description'] ?? null,
             $unitPrice,
             $unitCost,
@@ -259,24 +262,24 @@ class BudgetItemService
     {
         $items = $budget->items()->get(['line_total', 'line_cost_total']);
 
-        $subtotal = BudgetCalculator::subtotal($items->map(fn ($item) => (string) $item->line_total));
+        $saleSubtotal = BudgetCalculator::saleSubtotal($items->map(fn ($item) => (string) $item->line_total));
         $costSubtotal = BudgetCalculator::costSubtotal(
             $items->map(fn ($item) => $item->line_cost_total !== null ? (string) $item->line_cost_total : null)
         );
-        $marginAmount = BudgetCalculator::marginAmount($subtotal, $costSubtotal);
+        $marginAmount = BudgetCalculator::marginAmount($saleSubtotal, $costSubtotal);
         $marginPercentage = BudgetCalculator::marginPercentage($marginAmount, $costSubtotal);
 
-        if (Money::compare((string) $budget->discount_amount, $subtotal) > 0) {
+        if (Money::compare((string) $budget->discount_amount, $saleSubtotal) > 0) {
             throw ValidationException::withMessages([
-                'discount_amount' => 'O desconto não pode ser maior que o novo subtotal.',
+                'discount_amount' => 'O desconto não pode ser maior que o novo subtotal de venda.',
             ]);
         }
 
-        $budget->subtotal = $subtotal;
+        $budget->sale_subtotal = $saleSubtotal;
         $budget->cost_subtotal = $costSubtotal;
         $budget->margin_amount = $marginAmount;
         $budget->margin_percentage = $marginPercentage;
-        $budget->total = BudgetCalculator::total($subtotal, (string) $budget->discount_amount);
+        $budget->total = BudgetCalculator::total($saleSubtotal, (string) $budget->discount_amount);
         $budget->save();
     }
 

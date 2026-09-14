@@ -32,7 +32,7 @@ class BudgetListResource extends JsonResource
                 'id' => $this->customer_id,
                 'name' => $this->customer_name,
             ],
-            'subtotal' => (string) $this->subtotal,
+            'sale_subtotal' => (string) $this->sale_subtotal,
             'margin_amount' => $this->margin_amount !== null ? (string) $this->margin_amount : null,
             'margin_percentage' => $this->margin_percentage !== null ? (string) $this->margin_percentage : null,
             'discount_amount' => (string) $this->discount_amount,

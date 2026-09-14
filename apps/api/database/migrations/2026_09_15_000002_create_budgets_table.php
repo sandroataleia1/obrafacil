@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Schema;
  * snapshot of the Customer it was created against, so `customer_id` stays
  * `restrictOnDelete()` (Customer is soft-deleted, never hard-deleted).
  *
- * Money columns (`subtotal`, `discount_amount`, `total`) are never
+ * Money columns (`sale_subtotal`, `discount_amount`, `total`) are never
  * negative — enforced below. `cost_subtotal`/`margin_amount` are
  * deliberately NULLABLE with NO "not negative" constraint on
  * `margin_amount`: selling below cost is valid business behavior, and
@@ -48,7 +48,7 @@ return new class extends Migration
             $table->string('customer_phone')->nullable();
             $table->string('customer_email')->nullable();
 
-            $table->decimal('subtotal', 14, 2)->default('0.00');
+            $table->decimal('sale_subtotal', 14, 2)->default('0.00');
             $table->decimal('cost_subtotal', 14, 2)->nullable();
             $table->decimal('margin_amount', 14, 2)->nullable();
             $table->decimal('margin_percentage', 9, 4)->nullable();
@@ -82,7 +82,7 @@ return new class extends Migration
             "CHECK (decision_source IS NULL OR decision_source IN ('manual_internal', 'public_link'))"
         );
 
-        DB::statement('ALTER TABLE budgets ADD CONSTRAINT budgets_subtotal_check CHECK (subtotal >= 0)');
+        DB::statement('ALTER TABLE budgets ADD CONSTRAINT budgets_sale_subtotal_check CHECK (sale_subtotal >= 0)');
         DB::statement(
             'ALTER TABLE budgets ADD CONSTRAINT budgets_cost_subtotal_check CHECK (cost_subtotal IS NULL OR cost_subtotal >= 0)'
         );
@@ -106,7 +106,7 @@ return new class extends Migration
         DB::statement('ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_total_check');
         DB::statement('ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_discount_amount_check');
         DB::statement('ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_cost_subtotal_check');
-        DB::statement('ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_subtotal_check');
+        DB::statement('ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_sale_subtotal_check');
         DB::statement('ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_decision_source_check');
         DB::statement('ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_status_check');
 

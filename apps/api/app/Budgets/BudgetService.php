@@ -57,7 +57,7 @@ class BudgetService
                     'title' => $validated['title'],
                     'reference' => $validated['reference'] ?? null,
                     'notes' => $validated['notes'] ?? null,
-                    'subtotal' => '0.00',
+                    'sale_subtotal' => '0.00',
                     'discount_amount' => '0.00',
                     'total' => '0.00',
                     'created_by_user_id' => $actingUser->id,
@@ -73,9 +73,9 @@ class BudgetService
             $this->itemService->recalculateTotals($budget);
 
             $budget->refresh();
-            $this->assertDiscountWithinSubtotal($discountAmount, (string) $budget->subtotal);
+            $this->assertDiscountWithinSaleSubtotal($discountAmount, (string) $budget->sale_subtotal);
             $budget->discount_amount = $discountAmount;
-            $budget->total = BudgetCalculator::total((string) $budget->subtotal, $discountAmount);
+            $budget->total = BudgetCalculator::total((string) $budget->sale_subtotal, $discountAmount);
             $budget->save();
 
             return $budget->fresh(['items']);
@@ -97,7 +97,7 @@ class BudgetService
 
             $customer = Customer::query()->findOrFail($validated['customer_id']);
             $discountAmount = Money::normalize((string) ($validated['discount_amount'] ?? '0.00'));
-            $this->assertDiscountWithinSubtotal($discountAmount, (string) $lockedBudget->subtotal);
+            $this->assertDiscountWithinSaleSubtotal($discountAmount, (string) $lockedBudget->sale_subtotal);
 
             $lockedBudget->fill(array_merge(
                 [
@@ -105,7 +105,7 @@ class BudgetService
                     'reference' => $validated['reference'] ?? null,
                     'notes' => $validated['notes'] ?? null,
                     'discount_amount' => $discountAmount,
-                    'total' => BudgetCalculator::total((string) $lockedBudget->subtotal, $discountAmount),
+                    'total' => BudgetCalculator::total((string) $lockedBudget->sale_subtotal, $discountAmount),
                 ],
                 $this->customerSnapshot($customer),
                 ['customer_id' => $customer->id]
@@ -144,9 +144,9 @@ class BudgetService
     /**
      * Authenticated, tenant-scoped manual decision.
      */
-    public function approveManually(Budget|string $budget, User $actingUser): Budget
+    public function approveManually(Budget|string $budget, User $actingUser, ?string $note = null): Budget
     {
-        return $this->decideManually($budget, $actingUser, BudgetStatus::Approved);
+        return $this->decideManually($budget, $actingUser, BudgetStatus::Approved, $note);
     }
 
     public function rejectManually(Budget|string $budget, User $actingUser, ?string $note = null): Budget
@@ -190,11 +190,11 @@ class BudgetService
         }
     }
 
-    private function assertDiscountWithinSubtotal(string $discountAmount, string $subtotal): void
+    private function assertDiscountWithinSaleSubtotal(string $discountAmount, string $saleSubtotal): void
     {
-        if (Money::compare($discountAmount, $subtotal) > 0) {
+        if (Money::compare($discountAmount, $saleSubtotal) > 0) {
             throw ValidationException::withMessages([
-                'discount_amount' => 'O desconto não pode ser maior que o subtotal.',
+                'discount_amount' => 'O desconto não pode ser maior que o subtotal de venda.',
             ]);
         }
     }

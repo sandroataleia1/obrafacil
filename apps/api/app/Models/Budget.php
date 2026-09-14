@@ -22,7 +22,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'number', 'status',
     'customer_id', 'title', 'reference', 'notes',
     'customer_name', 'customer_document', 'customer_phone', 'customer_email',
-    'subtotal', 'cost_subtotal', 'margin_amount', 'margin_percentage', 'discount_amount', 'total',
+    'sale_subtotal', 'cost_subtotal', 'margin_amount', 'margin_percentage', 'discount_amount', 'total',
     'proposal_token', 'submitted_at',
     'decision_source', 'decision_by_user_id', 'decision_by_name', 'decision_note', 'decided_at',
     'created_by_user_id',
@@ -34,7 +34,7 @@ class Budget extends Model
 
     protected $attributes = [
         'status' => BudgetStatus::Draft->value,
-        'subtotal' => '0.00',
+        'sale_subtotal' => '0.00',
         'discount_amount' => '0.00',
         'total' => '0.00',
     ];
@@ -44,7 +44,7 @@ class Budget extends Model
         return [
             'status' => BudgetStatus::class,
             'decision_source' => BudgetDecisionSource::class,
-            'subtotal' => 'decimal:2',
+            'sale_subtotal' => 'decimal:2',
             'cost_subtotal' => 'decimal:2',
             'margin_amount' => 'decimal:2',
             'margin_percentage' => 'decimal:4',

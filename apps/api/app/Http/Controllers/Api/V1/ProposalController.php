@@ -33,14 +33,14 @@ class ProposalController extends Controller
 
     public function approve(ApproveProposalRequest $request, string $token): PublicProposalResource
     {
-        $budget = $this->service->approve($token, $request->input('name'));
+        $budget = $this->service->approve($token, $request->input('name'), $request->input('note'));
 
         return new PublicProposalResource($this->resolver->loadItemsWithoutScope($budget));
     }
 
     public function reject(RejectProposalRequest $request, string $token): PublicProposalResource
     {
-        $budget = $this->service->reject($token, $request->input('name'), $request->input('reason'));
+        $budget = $this->service->reject($token, $request->input('name'), $request->input('note'));
 
         return new PublicProposalResource($this->resolver->loadItemsWithoutScope($budget));
     }

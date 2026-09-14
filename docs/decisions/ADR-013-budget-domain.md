@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (BUDGET-API-01).
+Accepted (BUDGET-API-01, hardened by BUDGET-API-01A).
 
 ## Context
 
@@ -49,10 +49,21 @@ these patterns rather than inventing new ones.
    - `line_cost_total = round(quantity × unit_cost, 2)`, or `NULL` when
      `unit_cost` is `NULL` — note `line_cost_total` is never reduced by
      `line_discount`; the discount only applies to the sale side.
-   - `subtotal = SUM(line_total)`
+   - `sale_subtotal = SUM(line_total)` — named `sale_subtotal`, never the
+     bare, ambiguous `subtotal` (BUDGET-API-01A §6-13): with two distinct
+     subtotal concepts on the same row (`sale_subtotal`/`cost_subtotal`),
+     an unqualified name doesn't say which one it means. The column, the
+     `BudgetCalculator::saleSubtotal()` method, every Resource key, and
+     every FormRequest hostile-field entry all use `sale_subtotal`; the
+     old `subtotal` name is corrected directly in the same
+     BUDGET-API-01 migration/model/code (never deployed, so no rename
+     migration was needed) and is ALSO kept explicitly `prohibited` in
+     `StoreBudgetRequest`/`UpdateBudgetRequest` as a rejected legacy/
+     unknown field, so a client still built against the old contract
+     gets a clean 422 instead of a silently-ignored field.
    - `cost_subtotal = SUM(line_cost_total)`, or `NULL` the instant ANY
      item has a `NULL` `line_cost_total` — never silently treated as `0`
-   - `margin_amount = subtotal - cost_subtotal`, or `NULL` when
+   - `margin_amount = sale_subtotal - cost_subtotal`, or `NULL` when
      `cost_subtotal` is `NULL`. **Deliberately allowed to be negative** —
      selling below cost is valid business behavior, so there is no
      database CHECK and no application validation rejecting it.
@@ -61,8 +72,10 @@ these patterns rather than inventing new ones.
      `cost_subtotal`) is `NULL`, or when `cost_subtotal` is `0`. **100%
      server-derived** — it is never a field accepted from request input
      anywhere (create, update, item create/update); every FormRequest
-     explicitly marks it `prohibited`.
-   - `total = subtotal - discount_amount`
+     explicitly marks it `prohibited`. Note the denominator is
+     `cost_subtotal`, not `sale_subtotal` — this is a markup-style
+     percentage (relative to cost), matching spec §2's literal formula.
+   - `total = sale_subtotal - discount_amount`
 
 3. **Status lifecycle.** `draft` → `pending_approval` → `approved` |
    `rejected`. Only `draft` is mutable (header + items) — the moment a
@@ -106,31 +119,59 @@ these patterns rather than inventing new ones.
    immutable after creation), `calculator` (a frontend quantity-calculator
    result submitted as already-computed values, identified by the
    required `calculator_type` — exactly one of `masonry`/`floor`/
-   `ceiling`/`slab`, backed by a Postgres CHECK constraint — and
-   optionally carrying a `calculation_snapshot` JSON snapshot of the
-   calculator's inputs for audit, never re-validated or re-derived
+   `ceiling`/`slab` — and REQUIRED to carry a `calculation_snapshot` JSON
+   snapshot of the calculator's inputs for audit (BUDGET-API-01A §19-21:
+   a calculator-sourced line is meaningless without its audit trail, so
+   this stopped being optional), never re-validated or re-derived
    server-side in this gate), and `manual` (fully hand-entered). `type`
-   is `NULL` for `calculator`/`manual` items; `calculator_type` is
-   `NULL`/prohibited for `catalog`/`manual` items. Both `type` and
-   `calculator_type`, like `catalog_item_id`, are creation-time-only
+   is `NULL` for `calculator`/`manual` items; `calculator_type` and
+   `calculation_snapshot` are `NULL`/prohibited for `catalog`/`manual`
+   items — and as of BUDGET-API-01A §21-22 this is enforced by two real
+   Postgres CHECK constraints
+   (`budget_items_calculator_type_check`/`budget_items_calculation_snapshot_check`,
+   each phrased as `(source_type = 'calculator' AND <field> constraint)
+   OR (source_type != 'calculator' AND <field> IS NULL)`), not merely the
+   FormRequest — the original BUDGET-API-01 `calculator_type` CHECK only
+   validated the enum value when present, allowing (in theory, bypassing
+   the FormRequest) a non-calculator row to carry one; this closes that
+   gap for both fields at once. `type`/`calculator_type`/
+   `calculation_snapshot`, like `catalog_item_id`, are creation-time-only
    snapshot fields — never accepted or changed on item update.
+   `unit` is **nullable** (BUDGET-API-01A §14-18): a closed-price line —
+   a calculator result or a manual lump sum — has no natural unit of
+   measure to force, so `calculator`/`manual` items may omit it entirely
+   (`unit` column is `nullable()`, FormRequest rule dropped
+   `required_unless:source_type,catalog` in favor of plain
+   `nullable|string|max:255`). `catalog` items are unaffected — they
+   still snapshot `CatalogItem.unit`, which is itself non-nullable by
+   that domain's own contract.
    `unit_price` resolution for `catalog` items follows ServiceOrderItem's
    precedent: an explicit value in the payload wins; omitted/`null` falls
    back to the CatalogItem's `sale_price` (missing with no override is a
-   validation error). `unit_cost` is different (spec §20): for a
-   `catalog` item it is **never** client-supplied — the FormRequest
-   rejects it outright (`prohibited_if:source_type,catalog`) and
+   validation error). `unit_cost` is different (spec §20) and, as of
+   BUDGET-API-01A §1-5, is a **creation-time-only snapshot for every
+   source type, not just catalog**: for a `catalog` item it is **never**
+   client-supplied at all — the FormRequest rejects it outright
+   (`prohibited_if:source_type,catalog`) on create and
    `BudgetItemService::resolveFromCatalog()` unconditionally mirrors
    `CatalogItem.cost_price` server-side, even if a caller somehow bypassed
-   the FormRequest layer. A missing `cost_price` on the CatalogItem simply
-   leaves `unit_cost` `NULL`, which is what triggers rule #2's
-   cost_subtotal/margin nulling. `calculator`/`manual` items may set
-   `unit_cost` explicitly (or omit it, leaving it `NULL`). `line_discount`
-   is accepted for all three source types alike (spec §39-41's payload
-   examples show it on catalog/calculator/manual), defaults to `0.00`,
-   and feeds `line_total` per rule #2 — it is never itself a
-   snapshot/immutable field; it stays editable via item update just like
-   `quantity`/`unit_price`/`unit_cost`.
+   the FormRequest layer; for `calculator`/`manual` items it may be set
+   ONLY at creation, from the payload (or omitted, leaving it `NULL`). On
+   `PUT /items/{item}` — regardless of source_type — `unit_cost` is now
+   `prohibited` in `UpdateBudgetItemRequest`, and
+   `BudgetItemService::updateItem()` never reads `$input['unit_cost']`
+   at all (belt-and-suspenders: it always recomputes `line_cost_total`
+   from `$lockedItem->unit_cost`, the item's own already-persisted
+   value). Rationale: allowing `unit_cost` to drift post-creation would
+   silently corrupt historical cost data with no matching update to
+   `calculation_snapshot`, breaking the whole point of that audit trail.
+   A missing `cost_price` on the CatalogItem simply leaves `unit_cost`
+   `NULL`, which is what triggers rule #2's cost_subtotal/margin nulling.
+   `line_discount` is accepted for all three source types alike (spec
+   §39-41's payload examples show it on catalog/calculator/manual),
+   defaults to `0.00`, and feeds `line_total` per rule #2 — unlike
+   `unit_cost`, it is NOT a creation-time snapshot; it stays editable via
+   item update just like `quantity`/`unit_price`.
 
 7. **Public proposal access.** `GET /api/v1/proposals/{token}` and
    `POST /api/v1/proposals/{token}/approve|reject` are registered outside
@@ -168,24 +209,57 @@ these patterns rather than inventing new ones.
    minimum-item-count check — a Budget with zero items can be submitted
    (and, later, approved/rejected) just as validly as one with items;
    nothing in the spec requires otherwise. What *is* real is
-   `BudgetItem.calculation_snapshot` (JSONB, nullable, item-level) — an
-   audit copy of a `calculator`-sourced item's calculator inputs, set
-   once at item creation and never touched again. Once a Budget leaves
-   `draft`, its items are frozen anyway (rule #3 — every item mutation
-   route re-checks `isMutable()` on the freshly-locked parent row), so a
+   `BudgetItem.calculation_snapshot` (JSONB, item-level, and as of
+   BUDGET-API-01A REQUIRED — not merely optional — for `calculator`
+   items, NULL/prohibited for every other source type, both at the
+   FormRequest and the database-CHECK layer — see rule #6) — an audit
+   copy of a `calculator`-sourced item's calculator inputs, set once at
+   item creation and never touched again. Once a Budget leaves `draft`,
+   its items are frozen anyway (rule #3 — every item mutation route
+   re-checks `isMutable()` on the freshly-locked parent row), so a
    separate header-level snapshot would have been redundant with that
    guarantee, not an additional safety net.
 
-10. **Decision attribution.** `BudgetDecisionSource`: `manual_internal`
-    (an authenticated, tenant-scoped user via `/approve-manually` |
-    `/reject-manually` — `decision_by_user_id` always comes from
-    `$request->user()`, never the request body) or `public_link` (the
-    unauthenticated customer via `/proposals/{token}/approve|reject` —
-    attributed by the required `name` field into `decision_by_name`,
-    since there is no authenticated identity to record). A decision is
-    only accepted while `status = pending_approval`; both decision paths
-    share the identical 409-on-non-pending guard, enforced after
-    acquiring the row lock in decision #5.
+10. **Decision attribution and the note/name contract.**
+    `BudgetDecisionSource`: `manual_internal` (an authenticated,
+    tenant-scoped user via `/approve-manually` | `/reject-manually` —
+    `decision_by_user_id` always comes from `$request->user()`, never
+    the request body) or `public_link` (the unauthenticated customer via
+    `/proposals/{token}/approve|reject` — attributed by the required
+    `name` field into `decision_by_name`, since there is no
+    authenticated identity to record; `decision_by_user_id` is always
+    `NULL` for this path). A decision is only accepted while
+    `status = pending_approval`; both decision paths share the identical
+    409-on-non-pending guard, enforced after acquiring the row lock in
+    decision #5.
+    **The persisted field is always `decision_note` — one canonical
+    column regardless of decision path.** The public payload key is
+    `note` for BOTH `approve` and `reject` (BUDGET-API-01A §25-27):
+    `ApproveProposalRequest` gained a `note` rule it didn't have before
+    (public approve previously had no way to attach a note at all — the
+    controller/service now accept and persist it), and
+    `RejectProposalRequest`'s field was renamed from `reason` to `note`
+    with **no alias kept** — no real frontend consumes this API yet, so
+    there was no reason to carry two public names for the same thing; a
+    `reason` key in a reject payload is now silently ignored (not
+    validated, not read by the controller), proven by `PublicProposalApiTest::
+    test_dn3_public_reject_reason_field_is_not_used()`. The manual-decision
+    side had the same gap on approve specifically:
+    `ApproveBudgetManuallyRequest` already validated a `note` field, but
+    `BudgetStatusController::approveManually()` never read it and
+    `BudgetService::approveManually()` had no parameter to receive it —
+    both are fixed to thread it through to `decision_note`, matching
+    `rejectManually()`'s already-correct behavior.
+    **`decision_by_name` (not `decision_name`) is the definitive,
+    permanent name for the public-decision attribution column**
+    (BUDGET-API-01A §30) — an earlier audit flagged this as a possible
+    naming inconsistency against draft spec language, but no schema
+    exists in production yet (pre-deploy, `migrate:fresh`-only), and
+    `decision_by_name` reads more clearly as "the name the decider
+    supplied" (parallel to `decision_by_user_id`) than the more generic
+    `decision_name` would. This is a closed decision, not an open
+    non-blocker: no future gate should revisit or rename it without a
+    fresh architectural review.
 
 11. **No DELETE route for Budget itself.** Item `DELETE` exists (draft-only,
     same discipline as every other mutation). There is no

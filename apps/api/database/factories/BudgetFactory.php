@@ -40,7 +40,7 @@ class BudgetFactory extends Factory
             'customer_document' => $customer->document,
             'customer_phone' => $customer->phone,
             'customer_email' => $customer->email,
-            'subtotal' => '0.00',
+            'sale_subtotal' => '0.00',
             'cost_subtotal' => null,
             'margin_amount' => null,
             'margin_percentage' => null,

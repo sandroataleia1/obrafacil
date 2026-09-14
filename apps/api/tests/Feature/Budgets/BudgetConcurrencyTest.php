@@ -116,7 +116,7 @@ class BudgetConcurrencyTest extends TestCase
         $this->assertSame('pending_approval', $fresh->status->value);
         // Only the original item made it in — the racing add-item never
         // landed (rejected by the status check once submit() won the lock).
-        $this->assertSame('100.00', (string) $fresh->subtotal);
+        $this->assertSame('100.00', (string) $fresh->sale_subtotal);
         $this->assertCount(1, $fresh->items);
         $this->assertBudgetInvariants($company, $budget->id);
     }

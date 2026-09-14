@@ -85,9 +85,9 @@ trait InteractsWithBudgetConcurrency
 
     /**
      * The financial invariant every concurrent scenario must satisfy once
-     * all transactions have settled: subtotal is exactly the sum of the
-     * current items' line_total, and total is exactly
-     * subtotal - discount_amount. Uses bcmath directly (not
+     * all transactions have settled: sale_subtotal is exactly the sum of
+     * the current items' line_total, and total is exactly
+     * sale_subtotal - discount_amount. Uses bcmath directly (not
      * App\Budgets\Money) so this assertion doesn't share a bug with the
      * production code it's checking.
      */
@@ -101,10 +101,10 @@ trait InteractsWithBudgetConcurrency
                 $sum = bcadd($sum, (string) $item->line_total, 2);
             }
 
-            $this->assertSame($sum, (string) $budget->subtotal, 'subtotal must equal SUM(budget_items.line_total)');
+            $this->assertSame($sum, (string) $budget->sale_subtotal, 'sale_subtotal must equal SUM(budget_items.line_total)');
 
-            $expectedTotal = bcsub((string) $budget->subtotal, (string) $budget->discount_amount, 2);
-            $this->assertSame($expectedTotal, (string) $budget->total, 'total must equal subtotal - discount_amount');
+            $expectedTotal = bcsub((string) $budget->sale_subtotal, (string) $budget->discount_amount, 2);
+            $this->assertSame($expectedTotal, (string) $budget->total, 'total must equal sale_subtotal - discount_amount');
         });
     }
 }

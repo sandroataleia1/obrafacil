@@ -36,6 +36,7 @@ class UpdateBudgetRequest extends FormRequest
             'updated_at' => ['prohibited'],
             'project_id' => ['prohibited'],
             'subtotal' => ['prohibited'],
+            'sale_subtotal' => ['prohibited'],
             'cost_subtotal' => ['prohibited'],
             'margin_amount' => ['prohibited'],
             'margin_percentage' => ['prohibited'],

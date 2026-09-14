@@ -84,7 +84,7 @@ class BudgetMutationTest extends TestCase
         $this->putJson("/api/v1/budgets/{$budgetId}/items/{$itemId}", ['quantity' => '2.000'])
             ->assertJson(['line_total' => '200.00']);
 
-        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['subtotal' => '200.00']);
+        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['sale_subtotal' => '200.00']);
     }
 
     /** BM7: update item on pending_approval is 409. */
@@ -106,7 +106,7 @@ class BudgetMutationTest extends TestCase
 
         $this->deleteJson("/api/v1/budgets/{$budgetId}/items/{$itemId}")->assertStatus(204);
 
-        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['subtotal' => '50.00']);
+        $this->getJson("/api/v1/budgets/{$budgetId}")->assertJson(['sale_subtotal' => '50.00']);
     }
 
     /** BM9: delete item on pending_approval is 409. */

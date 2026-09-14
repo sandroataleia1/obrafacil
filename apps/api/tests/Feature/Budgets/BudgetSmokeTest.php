@@ -30,7 +30,7 @@ class BudgetSmokeTest extends TestCase
 
         $show = $this->getJson("/api/v1/budgets/{$budgetId}");
         $show->assertStatus(200)->assertJson([
-            'subtotal' => '450.00',
+            'sale_subtotal' => '450.00',
             'cost_subtotal' => null,
             'margin_amount' => null,
             'margin_percentage' => null,

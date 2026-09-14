@@ -44,7 +44,7 @@ class BudgetResource extends JsonResource
                 'email' => $this->customer_email,
             ],
 
-            'subtotal' => (string) $this->subtotal,
+            'sale_subtotal' => (string) $this->sale_subtotal,
             'cost_subtotal' => $this->cost_subtotal !== null ? (string) $this->cost_subtotal : null,
             'margin_amount' => $this->margin_amount !== null ? (string) $this->margin_amount : null,
             'margin_percentage' => $this->margin_percentage !== null ? (string) $this->margin_percentage : null,

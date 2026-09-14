@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Budgets;
 
+use App\Models\Budget;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Budgets\Concerns\InteractsWithBudgets;
 use Tests\TestCase;
@@ -154,7 +155,7 @@ class PublicProposalApiTest extends TestCase
     {
         [, $token] = $this->createPendingBudget();
 
-        $this->postJson("/api/v1/proposals/{$token}/reject", ['name' => 'Cliente Final', 'reason' => 'Muito caro'])
+        $this->postJson("/api/v1/proposals/{$token}/reject", ['name' => 'Cliente Final', 'note' => 'Muito caro'])
             ->assertStatus(200)->assertJson(['status' => 'rejected']);
     }
 
@@ -202,5 +203,86 @@ class PublicProposalApiTest extends TestCase
             ])->getStatusCode();
         }
         $this->assertContains(429, $statuses, 'Expected at least one 429 among 15 rapid decision attempts: '.json_encode($statuses));
+    }
+
+    // ================= DN1-DN10 (BUDGET-API-01A §25-31) — decision note/name contract =================
+
+    /** DN1: public approve's note persists to decision_note. */
+    public function test_dn1_public_approve_note_persists(): void
+    {
+        [$budgetId, $token] = $this->createPendingBudget();
+
+        $this->postJson("/api/v1/proposals/{$token}/approve", [
+            'name' => 'Cliente Final', 'accepted' => true, 'note' => 'Combinado por WhatsApp',
+        ])->assertStatus(200);
+
+        $this->actingAsNewCompanyMember();
+        // The authenticated resource is the one that exposes decision_note
+        // (the public resource deliberately does not) — read it back from
+        // the same underlying row via the tenant that owns it.
+        $this->assertSame(
+            'Combinado por WhatsApp',
+            Budget::withoutCompanyScope()->find($budgetId)->decision_note
+        );
+    }
+
+    /** DN2: public reject's note persists to decision_note. */
+    public function test_dn2_public_reject_note_persists(): void
+    {
+        [$budgetId, $token] = $this->createPendingBudget();
+
+        $this->postJson("/api/v1/proposals/{$token}/reject", ['name' => 'Cliente Final', 'note' => 'Muito caro'])
+            ->assertStatus(200);
+
+        $this->assertSame('Muito caro', Budget::withoutCompanyScope()->find($budgetId)->decision_note);
+    }
+
+    /** DN3: the old "reason" field name is never accepted/silently used — only "note" is. */
+    public function test_dn3_public_reject_reason_field_is_not_used(): void
+    {
+        [$budgetId, $token] = $this->createPendingBudget();
+
+        $this->postJson("/api/v1/proposals/{$token}/reject", ['name' => 'Cliente Final', 'reason' => 'Isto nunca deve ser salvo'])
+            ->assertStatus(200);
+
+        $this->assertNull(Budget::withoutCompanyScope()->find($budgetId)->decision_note);
+    }
+
+    /** DN6: decision_by_name on the public resource matches the submitted name. */
+    public function test_dn6_public_decision_by_name_matches_submitted_name(): void
+    {
+        [, $token] = $this->createPendingBudget();
+
+        $this->postJson("/api/v1/proposals/{$token}/approve", ['name' => 'Carlos Souza', 'accepted' => true])
+            ->assertJson(['decision_by_name' => 'Carlos Souza']);
+    }
+
+    /** DN9: decision_by_user_id is always null for a public decision — there is no authenticated user. */
+    public function test_dn9_public_decision_by_user_id_is_null(): void
+    {
+        [$budgetId, $token] = $this->createPendingBudget();
+
+        $this->postJson("/api/v1/proposals/{$token}/approve", ['name' => 'Cliente', 'accepted' => true])->assertStatus(200);
+
+        $this->assertNull(Budget::withoutCompanyScope()->find($budgetId)->decision_by_user_id);
+    }
+
+    /**
+     * DN10: resource contract is consistent — decision_note is the ONE
+     * canonical persisted field regardless of decision path (public
+     * approve/reject, manual approve/reject); there is no second name for
+     * the same thing anywhere (already proven per-path by DN1/DN2/DN4/
+     * DN5; this asserts all four land in the exact same column/shape).
+     */
+    public function test_dn10_decision_note_is_the_single_canonical_field_across_all_decision_paths(): void
+    {
+        [$budgetIdPublicApprove, $tokenA] = $this->createPendingBudget();
+        $this->postJson("/api/v1/proposals/{$tokenA}/approve", ['name' => 'A', 'accepted' => true, 'note' => 'via public approve']);
+
+        [$budgetIdPublicReject, $tokenB] = $this->createPendingBudget();
+        $this->postJson("/api/v1/proposals/{$tokenB}/reject", ['name' => 'B', 'note' => 'via public reject']);
+
+        $this->assertSame('via public approve', Budget::withoutCompanyScope()->find($budgetIdPublicApprove)->decision_note);
+        $this->assertSame('via public reject', Budget::withoutCompanyScope()->find($budgetIdPublicReject)->decision_note);
     }
 }

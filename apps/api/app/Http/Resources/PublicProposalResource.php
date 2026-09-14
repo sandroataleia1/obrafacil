@@ -35,7 +35,7 @@ class PublicProposalResource extends JsonResource
 
             'customer_name' => $this->customer_name,
 
-            'subtotal' => (string) $this->subtotal,
+            'sale_subtotal' => (string) $this->sale_subtotal,
             'discount_amount' => (string) $this->discount_amount,
             'total' => (string) $this->total,
 

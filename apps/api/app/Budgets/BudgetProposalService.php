@@ -24,14 +24,14 @@ class BudgetProposalService
 {
     public function __construct(private readonly BudgetLocker $locker) {}
 
-    public function approve(string $token, string $decidedByName): Budget
+    public function approve(string $token, string $decidedByName, ?string $note = null): Budget
     {
-        return $this->decide($token, $decidedByName, BudgetStatus::Approved);
+        return $this->decide($token, $decidedByName, BudgetStatus::Approved, $note);
     }
 
-    public function reject(string $token, string $decidedByName, ?string $reason = null): Budget
+    public function reject(string $token, string $decidedByName, ?string $note = null): Budget
     {
-        return $this->decide($token, $decidedByName, BudgetStatus::Rejected, $reason);
+        return $this->decide($token, $decidedByName, BudgetStatus::Rejected, $note);
     }
 
     private function decide(string $token, string $decidedByName, BudgetStatus $target, ?string $note = null): Budget

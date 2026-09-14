@@ -56,7 +56,7 @@ class BudgetStructuralTest extends TestCase
         $columns = DB::select("
             SELECT column_name, data_type FROM information_schema.columns
             WHERE table_name = 'budgets' AND column_name IN
-            ('subtotal', 'cost_subtotal', 'margin_amount', 'discount_amount', 'total')
+            ('sale_subtotal', 'cost_subtotal', 'margin_amount', 'discount_amount', 'total')
         ");
 
         $this->assertCount(5, $columns);
@@ -79,8 +79,8 @@ class BudgetStructuralTest extends TestCase
         }
     }
 
-    /** B7: subtotal/discount_amount/total DO have a "not negative" CHECK constraint. */
-    public function test_b7_subtotal_discount_total_have_not_negative_checks(): void
+    /** B7: sale_subtotal/discount_amount/total DO have a "not negative" CHECK constraint. */
+    public function test_b7_sale_subtotal_discount_total_have_not_negative_checks(): void
     {
         $definitions = collect(DB::select("
             SELECT pg_get_constraintdef(oid) AS definition
@@ -88,9 +88,28 @@ class BudgetStructuralTest extends TestCase
             WHERE conrelid = 'budgets'::regclass AND contype = 'c'
         "))->pluck('definition')->implode(' | ');
 
-        $this->assertStringContainsString('subtotal', $definitions);
+        $this->assertStringContainsString('sale_subtotal', $definitions);
         $this->assertStringContainsString('discount_amount', $definitions);
         $this->assertStringContainsString('total', $definitions);
+    }
+
+    /** SS1/SS2: the migration created sale_subtotal, and never the ambiguous old "subtotal" name. */
+    public function test_ss1_ss2_migration_has_sale_subtotal_not_subtotal(): void
+    {
+        $this->assertTrue(Schema::hasColumn('budgets', 'sale_subtotal'));
+        $this->assertFalse(Schema::hasColumn('budgets', 'subtotal'));
+    }
+
+    /** NU6: budget_items.unit is nullable at the Postgres level. */
+    public function test_nu6_budget_items_unit_column_is_nullable(): void
+    {
+        $columns = DB::select("
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_name = 'budget_items' AND column_name = 'unit'
+        ");
+
+        $this->assertCount(1, $columns);
+        $this->assertSame('YES', $columns[0]->is_nullable);
     }
 
     /** B8: proposal_token has a unique index at the database level. */
