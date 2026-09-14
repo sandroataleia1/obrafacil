@@ -84,5 +84,18 @@ class AppServiceProvider extends ServiceProvider
 
             return Limit::perMinute(30)->by($key);
         });
+
+        // BUDGET-API-01: public, unauthenticated proposal decision
+        // endpoints (approve/reject) — keyed by IP + the proposal token
+        // itself, so one customer deciding on their own proposal never
+        // exhausts the limit for a different proposal token hit from the
+        // same IP (e.g. shared office network), while still bounding how
+        // many decision attempts a single client can throw at a single
+        // token per minute.
+        RateLimiter::for('proposal-decisions', function (Request $request) {
+            $key = $request->ip().'|'.$request->route('token');
+
+            return Limit::perMinute(10)->by($key);
+        });
     }
 }
