@@ -15,7 +15,7 @@
 
 import { todayIso } from "@/lib/date";
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
-import type { Budget } from "@/features/budgets/types";
+import type { Budget } from "@/features/budgets/prototype/legacy-types";
 import { getPayableStatus } from "@/features/payables/payable-status";
 import type { Payable } from "@/features/payables/types";
 import { calculateReceivableFinancials } from "@/features/receivables/receivable-status";

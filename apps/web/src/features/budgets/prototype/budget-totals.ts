@@ -10,7 +10,7 @@
  * Engine is implemented.
  */
 
-import type { Budget, BudgetStage, CalculatedBudgetStage, ManualBudgetStage } from "../types";
+import type { Budget, BudgetStage, CalculatedBudgetStage, ManualBudgetStage } from "./legacy-types";
 
 export function isCalculatedStage(stage: BudgetStage): stage is CalculatedBudgetStage {
   return stage.kind === "calculated";

@@ -1,40 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ChevronLeft, Copy, FileText, Plus, Send, Trash2 } from "lucide-react";
+import { Copy, ExternalLink, FileText, Pencil, Plus, Send, Trash2 } from "lucide-react";
 
+import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/shared/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
+import { EmptyState } from "@/components/shared/empty-state";
 import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
-import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
-import { formatDate } from "@/lib/date";
-import { parseDecimalInput } from "@/lib/decimal";
-import { setPendingProject } from "@/features/projects/prototype/pending-project";
-import { AdditionalField } from "./components/additional-field";
-import { CalculatedStageCard } from "./components/calculated-stage-card";
-import { ManualStageCard } from "./components/manual-stage-card";
-import { ManualStageForm } from "./components/manual-stage-form";
-import { MoneyField } from "@/components/shared/money-field";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
+import { decimalStringToBrlDisplay } from "@/lib/currency";
+import { decimalStringToQuantityInputValue } from "@/lib/quantity";
+import { formatCpfCnpj, formatE164PhoneForDisplay } from "@/lib/document";
+import { useAuth } from "@/features/auth/auth-provider";
+import { AddCatalogItemDialog } from "./items/add-catalog-item-dialog";
+import { AddManualItemDialog } from "./items/add-manual-item-dialog";
+import { EditItemDialog } from "./items/edit-item-dialog";
+import {
+  approveBudgetManually,
+  deleteBudgetItem,
+  getBudget,
+  rejectBudgetManually,
+  submitBudget,
+} from "./budgets-client";
 import { StatusBadge } from "./components/status-badge";
-import { removeBudget, submitBudgetForApproval, updateBudgetComposition } from "./prototype/budget";
-import { calculateBudgetTotals, isCalculatedStage, isManualStage } from "./prototype/budget-totals";
-import { useBudget } from "./prototype/use-budget";
-import { BUDGET_STATUS_LABEL, type BudgetStage } from "./types";
+import type { Budget, BudgetItem } from "./types";
 
-const EDITABLE_STATUSES = new Set(["draft", "pending_approval"]);
+const SOURCE_TYPE_LABEL: Record<BudgetItem["source_type"], string> = {
+  catalog: "Catálogo",
+  calculator: "Calculadora",
+  manual: "Manual",
+};
 
-function InfoRow({
-  label,
-  value,
-  emphasis,
-}: {
-  label: string;
-  value: string;
-  emphasis?: boolean;
-}) {
+const CALCULATOR_TYPE_LABEL: Record<string, string> = {
+  masonry: "Alvenaria",
+  floor: "Piso",
+  ceiling: "Forro",
+  slab: "Laje",
+};
+
+function InfoRow({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
     <div className="flex items-center justify-between py-1.5">
       <span className={emphasis ? "text-base font-semibold text-foreground" : "text-sm text-muted-foreground"}>
@@ -53,52 +60,185 @@ function InfoRow({
   );
 }
 
+/** ISO instant -> a short pt-BR date+time. `null` -> "—". */
+function dateTimeDisplay(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+/** A short human summary for a calculator-sourced item — falls back to
+ * just the calculator type label when the snapshot shape isn't cheaply
+ * derivable (never dumps raw JSON on screen). */
+function calculatorSummary(item: BudgetItem): string {
+  const typeLabel = item.calculator_type ? CALCULATOR_TYPE_LABEL[item.calculator_type] ?? item.calculator_type : "Calculadora";
+  const snapshot = item.calculation_snapshot;
+  if (snapshot && typeof snapshot === "object") {
+    const area = snapshot["area"] ?? snapshot["totalArea"] ?? snapshot["total_area"];
+    if (typeof area === "number") {
+      return `${typeLabel} — ${area.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m²`;
+    }
+  }
+  return typeLabel;
+}
+
+function DetailSkeleton() {
+  return (
+    <div className="space-y-4" role="status" aria-busy="true">
+      <span className="sr-only">Carregando orçamento</span>
+      <Skeleton className="h-8 w-48" />
+      <Skeleton className="h-32 rounded-xl" />
+      <Skeleton className="h-32 rounded-xl" />
+      <Skeleton className="h-32 rounded-xl" />
+    </div>
+  );
+}
+
+type AddItemChoice = "choose" | "catalog" | "manual" | null;
+type DecisionKind = "approve" | "reject";
+
 export function BudgetDetail({ id }: { id: string }) {
-  const router = useRouter();
-  const { budget, refresh } = useBudget(id);
-  const [additionalInput, setAdditionalInput] = useState("");
-  const [discountInput, setDiscountInput] = useState("");
-  const [addingStage, setAddingStage] = useState(false);
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+
+  const [status, setStatus] = useState<"loading" | "success" | "error" | "not_found">("loading");
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [loadedCompanyId, setLoadedCompanyId] = useState<string | undefined>(undefined);
+  const [resolvedCompanyId, setResolvedCompanyId] = useState<string | undefined>(undefined);
+
   const [linkCopied, setLinkCopied] = useState(false);
+
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const [pendingDecision, setPendingDecision] = useState<DecisionKind | null>(null);
+  const [decisionNote, setDecisionNote] = useState("");
+  const [decisionSubmitting, setDecisionSubmitting] = useState(false);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+
+  const [addItemChoice, setAddItemChoice] = useState<AddItemChoice>(null);
+  const [editingItem, setEditingItem] = useState<BudgetItem | null>(null);
+  const [removingItem, setRemovingItem] = useState<BudgetItem | null>(null);
+  const [itemActionError, setItemActionError] = useState<string | null>(null);
+  const [itemMutationInFlight, setItemMutationInFlight] = useState<string | null>(null);
+
+  const requestSequence = useRef(0);
+  const activeCompanyIdRef = useRef(activeCompanyId);
   useEffect(() => {
-    if (budget) {
-      // Seed the editable input strings once the budget loads from
-      // localStorage. Safe post-mount update (see useBudget); only re-syncs
-      // when a *different* budget loads, not on every persist() from editing.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setAdditionalInput(String(budget.marginPercentage).replace(".", ","));
-      setDiscountInput(String(budget.discountAmount).replace(".", ","));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [budget?.id]);
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
 
-  function updateStages(stages: BudgetStage[]) {
-    if (!budget) return;
-    const result = updateBudgetComposition(budget, { stages });
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
-    }
-    refresh();
+  const isStaleRequest = useCallback(
+    (requestCompanyId: string | undefined) => activeCompanyIdRef.current !== requestCompanyId,
+    []
+  );
+
+  // Ordering primitive shared by EVERY `Budget` GET that can reach this
+  // screen (initial load, retry, and every post-mutation refresh) —
+  // mirrors `ServiceOrderDetail`'s `orderReadSequenceRef` discipline. A
+  // read started AFTER this one always carries a higher id; comparing the
+  // ref's CURRENT value against the id captured at fire time correctly
+  // rejects an older read even if it resolves after a newer one.
+  // `currentBudgetIdRef` additionally guards against navigating from
+  // Budget X to Budget Y within the same company.
+  const budgetReadSequenceRef = useRef(0);
+  const currentBudgetIdRef = useRef(id);
+  useEffect(() => {
+    currentBudgetIdRef.current = id;
+  }, [id]);
+
+  function nextBudgetReadContext() {
+    return ++budgetReadSequenceRef.current;
   }
 
-  function handleConfirmSubmitForApproval() {
-    if (!budget) return;
-    const result = submitBudgetForApproval(budget);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
-    }
+  function isCurrentBudgetRead(myReadId: number, requestCompanyId: string | undefined, requestBudgetId: string) {
+    return (
+      budgetReadSequenceRef.current === myReadId &&
+      activeCompanyIdRef.current === requestCompanyId &&
+      currentBudgetIdRef.current === requestBudgetId
+    );
+  }
+
+  const load = useCallback(async () => {
+    const requestId = ++requestSequence.current;
+    const requestCompanyId = activeCompanyId;
+    const requestBudgetId = id;
+    const myReadId = nextBudgetReadContext();
+    setStatus("loading");
+    setBudget(null);
+    setLinkCopied(false);
     setSubmitConfirmOpen(false);
-    refresh();
+    setSubmitting(false);
+    setSubmitError(null);
+    setPendingDecision(null);
+    setDecisionNote("");
+    setDecisionSubmitting(false);
+    setDecisionError(null);
+    setAddItemChoice(null);
+    setEditingItem(null);
+    setRemovingItem(null);
+    setItemActionError(null);
+    setItemMutationInFlight(null);
+    try {
+      const data = await getBudget(id);
+      if (requestSequence.current !== requestId) return;
+      if (!isCurrentBudgetRead(myReadId, requestCompanyId, requestBudgetId)) return;
+      setBudget(data);
+      setLoadedCompanyId(requestCompanyId);
+      setResolvedCompanyId(requestCompanyId);
+      setStatus("success");
+    } catch (error) {
+      if (requestSequence.current !== requestId) return;
+      if (!isCurrentBudgetRead(myReadId, requestCompanyId, requestBudgetId)) return;
+      setResolvedCompanyId(requestCompanyId);
+      if (error instanceof ApiError && error.status === 404) {
+        setStatus("not_found");
+        return;
+      }
+      setStatus("error");
+    }
+  }, [id, activeCompanyId]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  /**
+   * Re-fetches the Budget without clearing whatever conflict/error message
+   * the caller already set. The ONE shared refresh path for every
+   * post-mutation re-GET (submit, approve/reject-manually, and every item
+   * add/edit/delete — success AND 409/422) — item mutations never return
+   * the parent's totals themselves, so this is the ONLY way the Detail
+   * page's financials/items ever reflect a just-mutated line. Participates
+   * in the same `budgetReadSequenceRef` ordering as `load()`.
+   */
+  async function refreshBudgetAfterMutation() {
+    const requestCompanyId = activeCompanyId;
+    const requestBudgetId = id;
+    const myReadId = nextBudgetReadContext();
+    try {
+      const data = await getBudget(id);
+      if (!isCurrentBudgetRead(myReadId, requestCompanyId, requestBudgetId)) return;
+      setBudget(data);
+    } catch {
+      // The conflict/error message already surfaced; a failed refresh
+      // here is secondary and never replaces it with a second message.
+    }
+  }
+
+  const isCurrentTenant = budget !== null && loadedCompanyId === activeCompanyId;
+  const isResolvedForCurrentTenant = resolvedCompanyId !== undefined && resolvedCompanyId === activeCompanyId;
+
+  function isActionStale(requestCompanyId: string | undefined, requestBudgetId: string) {
+    return activeCompanyIdRef.current !== requestCompanyId || currentBudgetIdRef.current !== requestBudgetId;
   }
 
   async function handleCopyLink() {
-    if (!budget) return;
-    const url = `${window.location.origin}/proposta/${budget.proposalToken}`;
+    if (!budget || !budget.proposal_token) return;
+    const url = `${window.location.origin}/proposta/${budget.proposal_token}`;
     try {
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(url);
@@ -112,283 +252,525 @@ export function BudgetDetail({ id }: { id: string }) {
     }
   }
 
-  function handleConfirmDelete() {
+  async function handleConfirmSubmit() {
     if (!budget) return;
-    const result = removeBudget(budget);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
+    const requestCompanyId = activeCompanyId;
+    const requestBudgetId = budget.id;
+    const myReadId = nextBudgetReadContext();
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const updated = await submitBudget(budget.id);
+      if (isActionStale(requestCompanyId, requestBudgetId)) return;
+      if (isCurrentBudgetRead(myReadId, requestCompanyId, requestBudgetId)) {
+        setBudget(updated);
+      }
+      setSubmitConfirmOpen(false);
+    } catch {
+      if (isActionStale(requestCompanyId, requestBudgetId)) return;
+      setSubmitError("Não foi possível disponibilizar este orçamento agora.");
+    } finally {
+      if (!isActionStale(requestCompanyId, requestBudgetId)) setSubmitting(false);
     }
-    router.push("/orcamentos");
   }
 
-  function handleCreateProject() {
-    if (!budget) return;
-    setPendingProject({
-      budgetId: budget.id,
-      budgetName: budget.name,
-      budgetTotal: calculateBudgetTotals(budget).total,
-      customerId: budget.customerId,
-      customerName: budget.customerName,
-      reference: budget.projectReference,
-    });
-    router.push("/obras/nova");
+  async function handleConfirmDecision() {
+    if (!budget || !pendingDecision) return;
+    const requestCompanyId = activeCompanyId;
+    const requestBudgetId = budget.id;
+    const myReadId = nextBudgetReadContext();
+    const note = decisionNote.trim() || null;
+    setDecisionSubmitting(true);
+    setDecisionError(null);
+    try {
+      const updated =
+        pendingDecision === "approve"
+          ? await approveBudgetManually(budget.id, { note })
+          : await rejectBudgetManually(budget.id, { note });
+      if (isActionStale(requestCompanyId, requestBudgetId)) return;
+      if (isCurrentBudgetRead(myReadId, requestCompanyId, requestBudgetId)) {
+        setBudget(updated);
+      }
+      setPendingDecision(null);
+      setDecisionNote("");
+    } catch (error) {
+      if (isActionStale(requestCompanyId, requestBudgetId)) return;
+      if (error instanceof ApiError && error.status === 409) {
+        setPendingDecision(null);
+        setDecisionNote("");
+        setDecisionError("Este orçamento já recebeu uma decisão.");
+        void refreshBudgetAfterMutation();
+        return;
+      }
+      setDecisionError("Não foi possível registrar esta decisão agora.");
+    } finally {
+      if (!isActionStale(requestCompanyId, requestBudgetId)) setDecisionSubmitting(false);
+    }
   }
 
-  if (budget === undefined) return null;
+  /** Shared success path for Add/Edit item dialogs — neither response
+   * carries the Budget's new totals, so this is the ONLY place that
+   * refreshes them. */
+  function handleItemMutated() {
+    setItemActionError(null);
+    void refreshBudgetAfterMutation();
+  }
 
-  if (budget === null) {
+  function handleItemConflict(message: string) {
+    setItemActionError(message);
+    void refreshBudgetAfterMutation();
+  }
+
+  async function handleRemoveItem() {
+    if (!budget || !removingItem) return;
+    const targetItem = removingItem;
+    const requestCompanyId = activeCompanyId;
+    setItemMutationInFlight(targetItem.id);
+    setItemActionError(null);
+    try {
+      await deleteBudgetItem(budget.id, targetItem.id);
+      if (isStaleRequest(requestCompanyId)) return;
+      setRemovingItem(null);
+      handleItemMutated();
+    } catch (error) {
+      if (isStaleRequest(requestCompanyId)) return;
+      setRemovingItem(null);
+      if (error instanceof ApiError && error.status === 409) {
+        handleItemConflict("O orçamento foi alterado por outro usuário.");
+      } else if (error instanceof ApiValidationError) {
+        // 422: discount_amount > new sale_subtotal after removal — the
+        // item was NOT deleted server-side, so it must visibly remain
+        // and the discount is never auto-adjusted by this code.
+        setItemActionError("Reduza o desconto do orçamento antes de remover este item.");
+      } else {
+        setItemActionError("Não foi possível remover este item agora.");
+      }
+    } finally {
+      if (!isStaleRequest(requestCompanyId)) setItemMutationInFlight(null);
+    }
+  }
+
+  if (status === "error" && isResolvedForCurrentTenant) {
     return (
       <div className="space-y-4">
-        <button
-          type="button"
-          onClick={() => router.push("/orcamentos")}
-          className="-ml-1.5 flex items-center gap-1 rounded-lg py-1.5 pr-3 pl-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <ChevronLeft className="size-4" aria-hidden="true" />
-          Voltar
-        </button>
+        <BackLink title="Orçamento" icon={FileText} href="/orcamentos" />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar este orçamento agora.
+          </p>
+          <Button type="button" onClick={() => void load()}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "not_found" && isResolvedForCurrentTenant) {
+    return (
+      <div className="space-y-4">
+        <BackLink title="Orçamento" icon={FileText} href="/orcamentos" />
         <EmptyState
           icon={FileText}
           title="Orçamento não encontrado"
-          description="Ele pode ter sido removido ou o link está incorreto."
+          description="Ele pode ter sido removido ou pertencer a outra empresa."
         />
       </div>
     );
   }
 
-  const totals = calculateBudgetTotals(budget);
-  const isComposable = EDITABLE_STATUSES.has(budget.status);
+  if (!isCurrentTenant || status === "loading" || !budget) {
+    return (
+      <div className="space-y-4">
+        <BackLink title="Orçamento" icon={FileText} href="/orcamentos" />
+        <DetailSkeleton />
+      </div>
+    );
+  }
+
+  const isDraft = budget.status === "draft";
+  const isPendingApproval = budget.status === "pending_approval";
+  const isDecided = budget.status === "approved" || budget.status === "rejected";
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <button
-          type="button"
-          onClick={() => router.push("/orcamentos")}
-          className="-ml-1.5 flex items-center gap-1 rounded-lg py-1.5 pr-3 pl-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <ChevronLeft className="size-4" aria-hidden="true" />
-          Voltar
-        </button>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            {budget.name}
-          </h1>
-          <StatusBadge status={budget.status} />
-        </div>
-        {budget.projectReference ? (
-          <p className="text-sm text-muted-foreground">{budget.projectReference}</p>
-        ) : null}
+    <div className="space-y-6 pb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <BackLink title={budget.number} description={budget.title} icon={FileText} href="/orcamentos" />
+        <StatusBadge status={budget.status} />
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4">
-        <InfoRow label="Cliente" value={budget.customerName} />
-        <InfoRow label="Atualizado em" value={formatDate(budget.updatedAt)} />
-        <div className="mt-2 border-t border-border pt-2">
-          <InfoRow label="Valor" value={formatCurrency(totals.total)} emphasis />
-        </div>
-      </div>
+      {budget.reference ? <p className="-mt-4 text-sm text-muted-foreground">{budget.reference}</p> : null}
 
-      <div className="space-y-3">
-        {budget.stages.map((stage) =>
-          isCalculatedStage(stage) ? (
-            <CalculatedStageCard
-              key={stage.id}
-              stage={stage}
-              readOnly={!isComposable}
-              onUpdateLabor={(laborCost) =>
-                updateStages(
-                  budget.stages.map((s) => (s.id === stage.id ? { ...s, laborCost } : s))
-                )
-              }
-              onRemove={() => updateStages(budget.stages.filter((s) => s.id !== stage.id))}
-            />
-          ) : isManualStage(stage) ? (
-            <ManualStageCard
-              key={stage.id}
-              stage={stage}
-              readOnly={!isComposable}
-              onUpdate={(update) =>
-                updateStages(
-                  budget.stages.map((s) => (s.id === stage.id ? { ...s, ...update } : s))
-                )
-              }
-              onRemove={() => updateStages(budget.stages.filter((s) => s.id !== stage.id))}
-            />
-          ) : null
-        )}
+      {submitError ? (
+        <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          {submitError}
+        </p>
+      ) : null}
+      {decisionError ? (
+        <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          {decisionError}
+        </p>
+      ) : null}
+      {itemActionError ? (
+        <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          {itemActionError}
+        </p>
+      ) : null}
 
-        {!isComposable ? null : (
-          <button
-            type="button"
-            onClick={() => setAddingStage(true)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-3 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+      {isDraft ? (
+        <div>
+          <Link
+            href={`/orcamentos/${budget.id}/editar`}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
           >
-            <Plus className="size-4" aria-hidden="true" />
-            Adicionar etapa
-          </button>
-        )}
-      </div>
-
-      <ResponsiveDialog open={addingStage} onOpenChange={setAddingStage} title="Adicionar etapa" size="sm">
-        <ManualStageForm
-          onSave={(newStage) => {
-            updateStages([
-              ...budget.stages,
-              { id: `stage-${Date.now()}`, kind: "manual", ...newStage },
-            ]);
-            setAddingStage(false);
-          }}
-          onCancel={() => setAddingStage(false)}
-        />
-      </ResponsiveDialog>
-
-      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        <InfoRow label="Custo de materiais" value={formatCurrency(totals.materialsCost)} />
-        <InfoRow label="Mão de obra" value={formatCurrency(totals.laborCost)} />
-        {totals.manualStagesTotal > 0 ? (
-          <InfoRow label="Outras etapas" value={formatCurrency(totals.manualStagesTotal)} />
-        ) : null}
-
-        {isComposable ? (
-          <>
-            <AdditionalField
-              id="additional"
-              value={additionalInput}
-              onChange={(raw) => {
-                setAdditionalInput(raw);
-                const parsed = parseDecimalInput(raw);
-                if (parsed !== null && parsed >= 0) {
-                  const result = updateBudgetComposition(budget, { marginPercentage: parsed });
-                  if (result.ok) refresh();
-                }
-              }}
-            />
-
-            <MoneyField
-              id="discount"
-              label="Desconto"
-              value={discountInput}
-              onChange={(raw) => {
-                setDiscountInput(raw);
-                const parsed = parseCurrencyInput(raw);
-                if (parsed !== null && parsed >= 0) {
-                  const result = updateBudgetComposition(budget, { discountAmount: parsed });
-                  if (result.ok) refresh();
-                }
-              }}
-            />
-          </>
-        ) : (
-          <>
-            <InfoRow label="Adicional" value={`${budget.marginPercentage}%`} />
-            {budget.discountAmount > 0 ? (
-              <InfoRow label="Desconto" value={`-${formatCurrency(budget.discountAmount)}`} />
-            ) : null}
-          </>
-        )}
-
-        <div className="space-y-1 border-t border-border pt-3">
-          <InfoRow label="Total do orçamento" value={formatCurrency(totals.total)} emphasis />
+            <Pencil className="size-3.5" aria-hidden="true" />
+            Editar
+          </Link>
         </div>
-      </div>
+      ) : null}
 
-      <div className="space-y-2">
-        {budget.status === "draft" ? (
-          <>
-            <Button type="button" size="lg" className="w-full" onClick={() => setSubmitConfirmOpen(true)}>
-              <Send className="size-4" aria-hidden="true" />
-              Disponibilizar para aprovação
+      <section className="space-y-1 rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between pb-2">
+          <h2 className="text-sm font-semibold text-foreground">Cliente</h2>
+          <Link
+            href={`/clientes/${budget.customer_id}`}
+            className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            Ver cliente
+            <ExternalLink className="size-3" aria-hidden="true" />
+          </Link>
+        </div>
+        <InfoRow label="Nome" value={budget.customer.name} />
+        {budget.customer.document ? <InfoRow label="Documento" value={formatCpfCnpj(budget.customer.document)} /> : null}
+        {budget.customer.phone ? <InfoRow label="Telefone" value={formatE164PhoneForDisplay(budget.customer.phone)} /> : null}
+        {budget.customer.email ? <InfoRow label="E-mail" value={budget.customer.email} /> : null}
+      </section>
+
+      <section className="space-y-2 rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between pb-1">
+          <h2 className="text-sm font-semibold text-foreground">Itens</h2>
+          {isDraft ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => setAddItemChoice("choose")}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              Adicionar item
             </Button>
-            <Button
-              variant="outline"
-              className="w-full"
-              nativeButton={false}
-              render={<Link href={`/orcamentos/${budget.id}/editar`}>Editar</Link>}
-            />
-          </>
-        ) : EDITABLE_STATUSES.has(budget.status) ? (
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              nativeButton={false}
-              render={<Link href={`/orcamentos/${budget.id}/editar`}>Editar</Link>}
-            />
-            <Button type="button" variant="outline" onClick={handleCopyLink}>
-              <Copy className="size-4" aria-hidden="true" />
-              {linkCopied ? "Link copiado" : "Copiar link"}
-            </Button>
-          </div>
+          ) : null}
+        </div>
+        {budget.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhum item neste orçamento.</p>
         ) : (
-          <Button type="button" variant="outline" className="w-full" onClick={handleCopyLink}>
+          <div className="divide-y divide-border">
+            {budget.items.map((item) => (
+              <div key={item.id} className="flex items-start justify-between gap-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {SOURCE_TYPE_LABEL[item.source_type]}
+                    </span>
+                  </div>
+                  {item.code ? <p className="text-xs text-muted-foreground">{item.code}</p> : null}
+                  {item.source_type === "calculator" ? (
+                    <p className="text-xs text-muted-foreground">{calculatorSummary(item)}</p>
+                  ) : null}
+                  {item.description ? <p className="text-xs text-muted-foreground">{item.description}</p> : null}
+                  <p className="text-xs text-muted-foreground">
+                    {decimalStringToQuantityInputValue(item.quantity)} {item.unit ?? ""} ×{" "}
+                    {decimalStringToBrlDisplay(item.unit_price)}
+                    {item.line_discount !== "0.00" ? ` − ${decimalStringToBrlDisplay(item.line_discount)}` : ""}
+                  </p>
+                  {item.unit_cost !== null ? (
+                    <p className="text-xs text-muted-foreground">
+                      Custo: {decimalStringToBrlDisplay(item.unit_cost)}
+                      {item.line_cost_total !== null ? ` (total ${decimalStringToBrlDisplay(item.line_cost_total)})` : ""}
+                    </p>
+                  ) : null}
+                  {item.notes ? <p className="text-xs text-muted-foreground">{item.notes}</p> : null}
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <p className="text-sm font-medium text-foreground">{decimalStringToBrlDisplay(item.line_total)}</p>
+                  {isDraft ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingItem(item)}
+                        disabled={itemMutationInFlight === item.id}
+                        aria-label={`Editar ${item.name}`}
+                        className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      >
+                        <Pencil className="size-3.5" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRemovingItem(item)}
+                        disabled={itemMutationInFlight === item.id}
+                        aria-label={`Remover ${item.name}`}
+                        className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-1 rounded-xl border border-border bg-card p-4">
+        <h2 className="pb-2 text-sm font-semibold text-foreground">Financeiro</h2>
+        <InfoRow label="Subtotal de venda" value={decimalStringToBrlDisplay(budget.sale_subtotal) ?? "—"} />
+        {budget.cost_subtotal !== null ? (
+          <InfoRow label="Custo" value={decimalStringToBrlDisplay(budget.cost_subtotal) ?? "—"} />
+        ) : (
+          <div className="py-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Custo</span>
+              <span className="text-sm font-medium text-foreground">—</span>
+            </div>
+            <p className="text-xs text-muted-foreground">Custo não informado para todos os itens</p>
+          </div>
+        )}
+        <InfoRow label="Desconto" value={decimalStringToBrlDisplay(budget.discount_amount) ?? "—"} />
+        <InfoRow
+          label="Margem"
+          value={budget.margin_amount !== null ? decimalStringToBrlDisplay(budget.margin_amount) ?? "—" : "—"}
+        />
+        <InfoRow
+          label="Margem %"
+          value={budget.margin_percentage !== null ? `${budget.margin_percentage.replace(".", ",")}%` : "—"}
+        />
+        <div className="flex items-center justify-between border-t border-border pt-2">
+          <span className="text-sm font-semibold text-foreground">Total</span>
+          <span className="text-base font-semibold text-foreground">{decimalStringToBrlDisplay(budget.total)}</span>
+        </div>
+      </section>
+
+      {budget.notes ? (
+        <section className="space-y-1 rounded-xl border border-border bg-card p-4">
+          <h2 className="pb-2 text-sm font-semibold text-foreground">Observações</h2>
+          <p className="text-sm text-foreground">{budget.notes}</p>
+        </section>
+      ) : null}
+
+      {isDecided ? (
+        <section className="space-y-1 rounded-xl border border-border bg-card p-4">
+          <h2 className="pb-2 text-sm font-semibold text-foreground">Decisão</h2>
+          <InfoRow label="Decidido em" value={dateTimeDisplay(budget.decided_at)} />
+          {budget.decision_source === "public_link" ? (
+            <>
+              <p className="text-sm text-foreground">
+                {budget.status === "approved" ? "Aprovado pelo cliente via proposta" : "Recusado pelo cliente via proposta"}
+              </p>
+              {budget.decision_by_name ? (
+                <p className="text-sm text-muted-foreground">{budget.decision_by_name}</p>
+              ) : null}
+            </>
+          ) : budget.decision_source === "manual_internal" ? (
+            <>
+              <p className="text-sm text-foreground">Decisão registrada internamente</p>
+              {budget.decision_note ? <p className="text-sm text-muted-foreground">{budget.decision_note}</p> : null}
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      <section className="space-y-1 rounded-xl border border-border bg-card p-4">
+        <h2 className="pb-2 text-sm font-semibold text-foreground">Histórico</h2>
+        <InfoRow label="Criado em" value={dateTimeDisplay(budget.created_at)} />
+        <InfoRow label="Atualizado em" value={dateTimeDisplay(budget.updated_at)} />
+        {budget.submitted_at ? <InfoRow label="Disponibilizado em" value={dateTimeDisplay(budget.submitted_at)} /> : null}
+      </section>
+
+      {budget.proposal_token !== null ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href={`/proposta/${budget.proposal_token}`}>Visualizar proposta</Link>}
+          />
+          <Button type="button" variant="outline" onClick={() => void handleCopyLink()}>
             <Copy className="size-4" aria-hidden="true" />
             {linkCopied ? "Link copiado" : "Copiar link"}
           </Button>
-        )}
-
-        <Button
-          size="lg"
-          variant="outline"
-          className="w-full"
-          nativeButton={false}
-          render={<Link href={`/proposta/${budget.proposalToken}`}>Visualizar proposta</Link>}
-        />
-      </div>
-
-      {budget.status === "approved" ? (
-        budget.projectId ? (
-          <Button
-            variant="outline"
-            size="lg"
-            className="w-full"
-            nativeButton={false}
-            render={<Link href={`/obras/${budget.projectId}`}>Abrir obra</Link>}
-          />
-        ) : (
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            className="w-full"
-            onClick={handleCreateProject}
-          >
-            Criar obra
-          </Button>
-        )
+        </div>
       ) : null}
 
-      {EDITABLE_STATUSES.has(budget.status) ? (
-        <Button type="button" variant="destructive" className="w-full" onClick={() => setDeleteConfirmOpen(true)}>
-          <Trash2 className="size-4" aria-hidden="true" />
-          Excluir
+      {isDraft ? (
+        <Button type="button" size="lg" className="w-full" onClick={() => setSubmitConfirmOpen(true)}>
+          <Send className="size-4" aria-hidden="true" />
+          Disponibilizar para aprovação
         </Button>
+      ) : null}
+
+      {isPendingApproval ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button type="button" onClick={() => setPendingDecision("approve")}>
+            Registrar aprovação
+          </Button>
+          <Button type="button" variant="destructive" onClick={() => setPendingDecision("reject")}>
+            Registrar recusa
+          </Button>
+        </div>
       ) : null}
 
       <ConfirmActionDialog
         open={submitConfirmOpen}
-        onOpenChange={setSubmitConfirmOpen}
+        onOpenChange={(open) => !open && setSubmitConfirmOpen(false)}
         title="Disponibilizar para aprovação?"
         confirmLabel="Disponibilizar"
-        onConfirm={handleConfirmSubmitForApproval}
+        disabled={submitting}
+        onConfirm={() => void handleConfirmSubmit()}
       >
-        <div className="space-y-1 rounded-lg border border-border bg-muted/30 p-3 text-sm">
-          <p className="text-foreground">Cliente: {budget.customerName}</p>
-          <p className="text-foreground">Valor total: {formatCurrency(totals.total)}</p>
-          <p className="text-muted-foreground">
-            {BUDGET_STATUS_LABEL[budget.status]} → {BUDGET_STATUS_LABEL.pending_approval}
-          </p>
+        <div className="space-y-1 text-sm text-muted-foreground">
+          <p>Depois de disponibilizado, este orçamento não poderá mais ser editado.</p>
+          <p>Para alterar a proposta depois, será necessário criar um novo orçamento.</p>
         </div>
       </ConfirmActionDialog>
 
       <ConfirmActionDialog
-        open={deleteConfirmOpen}
-        onOpenChange={setDeleteConfirmOpen}
-        title="Excluir orçamento?"
-        description={`Excluir o orçamento "${budget.name}"? Esta ação não pode ser desfeita.`}
-        confirmLabel="Excluir"
+        open={pendingDecision === "approve"}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDecision(null);
+            setDecisionNote("");
+          }
+        }}
+        title="Registrar aprovação?"
+        confirmLabel="Confirmar aprovação"
+        disabled={decisionSubmitting}
+        onConfirm={() => void handleConfirmDecision()}
+      >
+        <div className="space-y-1.5">
+          <label htmlFor="approve-note" className="text-sm font-medium text-foreground">
+            Observação
+          </label>
+          <textarea
+            id="approve-note"
+            value={decisionNote}
+            onChange={(event) => setDecisionNote(event.target.value)}
+            rows={3}
+            className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+          />
+        </div>
+      </ConfirmActionDialog>
+
+      <ConfirmActionDialog
+        open={pendingDecision === "reject"}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDecision(null);
+            setDecisionNote("");
+          }
+        }}
+        title="Registrar recusa?"
+        confirmLabel="Confirmar recusa"
         destructive
-        onConfirm={handleConfirmDelete}
+        disabled={decisionSubmitting}
+        onConfirm={() => void handleConfirmDecision()}
+      >
+        <div className="space-y-1.5">
+          <label htmlFor="reject-note" className="text-sm font-medium text-foreground">
+            Observação
+          </label>
+          <textarea
+            id="reject-note"
+            value={decisionNote}
+            onChange={(event) => setDecisionNote(event.target.value)}
+            rows={3}
+            className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+          />
+        </div>
+      </ConfirmActionDialog>
+
+      <ResponsiveDialog
+        open={addItemChoice === "choose"}
+        onOpenChange={(open) => !open && setAddItemChoice(null)}
+        title="Adicionar item"
+        size="sm"
+      >
+        <div className="grid grid-cols-2 gap-3 pb-1">
+          <button
+            type="button"
+            onClick={() => setAddItemChoice("catalog")}
+            className="flex flex-col items-center gap-2 rounded-xl border border-border bg-card p-4 text-sm font-medium text-foreground transition-colors hover:border-primary/40"
+          >
+            Catálogo
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddItemChoice("manual")}
+            className="flex flex-col items-center gap-2 rounded-xl border border-border bg-card p-4 text-sm font-medium text-foreground transition-colors hover:border-primary/40"
+          >
+            Item manual
+          </button>
+        </div>
+      </ResponsiveDialog>
+
+      {addItemChoice === "catalog" ? (
+        <AddCatalogItemDialog
+          open
+          onOpenChange={(open) => !open && setAddItemChoice(null)}
+          budgetId={budget.id}
+          requestCompanyId={activeCompanyId}
+          isStaleRequest={isStaleRequest}
+          onAdded={() => {
+            setAddItemChoice(null);
+            handleItemMutated();
+          }}
+          onConflict={(message) => {
+            setAddItemChoice(null);
+            handleItemConflict(message);
+          }}
+        />
+      ) : null}
+
+      {addItemChoice === "manual" ? (
+        <AddManualItemDialog
+          open
+          onOpenChange={(open) => !open && setAddItemChoice(null)}
+          budgetId={budget.id}
+          requestCompanyId={activeCompanyId}
+          isStaleRequest={isStaleRequest}
+          onAdded={() => {
+            setAddItemChoice(null);
+            handleItemMutated();
+          }}
+          onConflict={(message) => {
+            setAddItemChoice(null);
+            handleItemConflict(message);
+          }}
+        />
+      ) : null}
+
+      {editingItem ? (
+        <EditItemDialog
+          open={editingItem !== null}
+          onOpenChange={(open) => !open && setEditingItem(null)}
+          budgetId={budget.id}
+          item={editingItem}
+          requestCompanyId={activeCompanyId}
+          isStaleRequest={isStaleRequest}
+          onUpdated={() => {
+            setEditingItem(null);
+            handleItemMutated();
+          }}
+          onConflict={(message) => {
+            setEditingItem(null);
+            handleItemConflict(message);
+          }}
+        />
+      ) : null}
+
+      <ConfirmActionDialog
+        open={removingItem !== null}
+        onOpenChange={(open) => !open && setRemovingItem(null)}
+        title="Remover este item do orçamento?"
+        confirmLabel="Remover"
+        destructive
+        disabled={removingItem !== null && itemMutationInFlight === removingItem.id}
+        onConfirm={() => void handleRemoveItem()}
       />
     </div>
   );

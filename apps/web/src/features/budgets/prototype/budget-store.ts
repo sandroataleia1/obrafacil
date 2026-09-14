@@ -10,7 +10,7 @@
 
 import { budgets as seedBudgets } from "@/mocks/budgets";
 import { demoDataEnabled } from "@/lib/pilot-config";
-import type { Budget } from "../types";
+import type { Budget } from "./legacy-types";
 
 const STORAGE_KEY = "obrafacil:budgets";
 const DELETED_KEY = "obrafacil:budgets:deleted";

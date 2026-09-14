@@ -54,7 +54,7 @@
  */
 
 import { formatCurrency } from "@/lib/currency";
-import type { Budget } from "@/features/budgets/types";
+import type { Budget } from "@/features/budgets/prototype/legacy-types";
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
 import { sumCosts, sumCostsByCategory } from "@/features/project-costs/prototype/cost-totals";
 import type { ProjectCost, ProjectCostCategory } from "@/features/project-costs/types";

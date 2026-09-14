@@ -30,7 +30,7 @@ import { useAuth } from "@/features/auth/auth-provider";
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
 import { StatusBadge } from "@/features/budgets/components/status-badge";
-import type { Budget } from "@/features/budgets/types";
+import type { Budget } from "@/features/budgets/prototype/legacy-types";
 import { listProjectsByCustomer } from "@/features/projects/prototype/project-store";
 import { ProjectStatusBadge } from "@/features/projects/components/status-badge";
 import type { Project } from "@/features/projects/types";

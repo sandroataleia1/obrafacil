@@ -16,7 +16,7 @@
  */
 
 import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
-import type { Budget } from "@/features/budgets/types";
+import type { Budget } from "@/features/budgets/prototype/legacy-types";
 import { sumCosts } from "@/features/project-costs/prototype/cost-totals";
 import type { ProjectCost } from "@/features/project-costs/types";
 import type { Payable } from "@/features/payables/types";

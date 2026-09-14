@@ -1,4 +1,4 @@
-import type { Budget } from "@/features/budgets/types";
+import type { Budget } from "@/features/budgets/prototype/legacy-types";
 
 export const budgets: Budget[] = [
   {

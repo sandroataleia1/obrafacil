@@ -1,6 +1,4 @@
-import { Suspense } from "react";
-
-import { BudgetForm } from "@/features/budgets/budget-form";
+import { EditBudgetHeaderForm } from "@/features/budgets/edit-budget-header-form";
 
 export default async function EditarOrcamentoPage({
   params,
@@ -8,9 +6,5 @@ export default async function EditarOrcamentoPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return (
-    <Suspense fallback={null}>
-      <BudgetForm budgetId={id} />
-    </Suspense>
-  );
+  return <EditBudgetHeaderForm id={id} />;
 }

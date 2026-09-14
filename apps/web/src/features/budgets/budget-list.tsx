@@ -1,45 +1,57 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, FileText, Plus, Search } from "lucide-react";
+import { FileText, Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { formatCurrency } from "@/lib/currency";
-import { formatDate } from "@/lib/date";
-import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageTitle } from "@/components/shared/page-title";
-import { calculateBudgetTotals } from "./prototype/budget-totals";
-import { listAllBudgets } from "./prototype/budget-store";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ApiError } from "@/lib/api-client";
+import { decimalStringToBrlDisplay } from "@/lib/currency";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@/features/auth/auth-provider";
+import { listBudgets } from "./budgets-client";
+import { Pagination } from "./components/pagination";
 import { StatusBadge } from "./components/status-badge";
-import { BUDGET_STATUS_LABEL, type Budget, type BudgetStatus } from "./types";
+import type { BudgetListItem, BudgetPaginationResponse, BudgetStatus } from "./types";
 
-type BudgetStatusFilter = "all" | BudgetStatus;
+const PER_PAGE = 15;
+const SEARCH_DEBOUNCE_MS = 300;
 
-const STATUS_FILTERS: BudgetStatusFilter[] = [
-  "all",
-  "draft",
-  "pending_approval",
-  "approved",
-  "rejected",
+type LoadStatus = "loading" | "success" | "error";
+
+const STATUS_FILTER_OPTIONS: { value: BudgetStatus | ""; label: string }[] = [
+  { value: "", label: "Todos" },
+  { value: "draft", label: "Rascunhos" },
+  { value: "pending_approval", label: "Aguardando aprovação" },
+  { value: "approved", label: "Aprovados" },
+  { value: "rejected", label: "Recusados" },
 ];
 
-const STATUS_FILTER_LABEL: Record<BudgetStatusFilter, string> = {
-  all: "Todos",
-  ...BUDGET_STATUS_LABEL,
-};
-
-function normalize(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
+/** `updated_at` -> a short Brazilian date, never through `lib/date`'s
+ * `formatDate` (which expects a date-only "YYYY-MM-DD" string, not a
+ * full ISO instant). */
+function updatedDisplay(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("pt-BR");
 }
 
-function BudgetCard({ budget }: { budget: Budget }) {
-  const { total } = calculateBudgetTotals(budget);
+/**
+ * `margin_percentage` is a raw decimal string ("22.5000") from the API.
+ * A comma-swap keeps every digit exactly as the server sent it — never
+ * routed through `Number()`, which could lose trailing zeros. Renders
+ * "—" whenever either margin field is `null` (§ never invent a 0%
+ * margin the API didn't send).
+ */
+function marginDisplay(item: BudgetListItem): string {
+  if (item.margin_amount === null || item.margin_percentage === null) return "—";
+  return `${item.margin_percentage.replace(".", ",")}%`;
+}
 
+function BudgetCard({ budget }: { budget: BudgetListItem }) {
   return (
     <Link
       href={`/orcamentos/${budget.id}`}
@@ -47,34 +59,29 @@ function BudgetCard({ budget }: { budget: Budget }) {
     >
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-semibold text-foreground">
-            {budget.name}
-          </p>
+          <p className="truncate text-sm font-semibold text-foreground">{budget.number}</p>
           <StatusBadge status={budget.status} />
         </div>
-        <p className="text-xs text-muted-foreground">{budget.customerName}</p>
-        <div className="flex items-center justify-between">
+        <p className="truncate text-sm text-foreground">{budget.title}</p>
+        <p className="truncate text-xs text-muted-foreground">{budget.customer.name}</p>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="text-base font-semibold tabular-nums text-foreground">
-            {formatCurrency(total)}
+            {decimalStringToBrlDisplay(budget.total)}
           </span>
-          <span className="text-xs text-muted-foreground">
-            {formatDate(budget.updatedAt)}
-          </span>
+          <span>{updatedDisplay(budget.updated_at)}</span>
+        </div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Margem {marginDisplay(budget)}</span>
         </div>
       </div>
-      <ChevronRight
-        className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-        aria-hidden="true"
-      />
     </Link>
   );
 }
 
-const TABLE_ROW_GRID = "lg:grid lg:grid-cols-[minmax(0,1fr)_150px_140px_110px_20px] lg:items-center lg:gap-4";
+const TABLE_ROW_GRID =
+  "lg:grid lg:grid-cols-[minmax(0,1fr)_160px_120px_110px_120px_100px] lg:items-center lg:gap-4";
 
-function BudgetTableRow({ budget }: { budget: Budget }) {
-  const { total } = calculateBudgetTotals(budget);
-
+function BudgetTableRow({ budget }: { budget: BudgetListItem }) {
   return (
     <Link
       href={`/orcamentos/${budget.id}`}
@@ -84,25 +91,23 @@ function BudgetTableRow({ budget }: { budget: Budget }) {
       )}
     >
       <div className="min-w-0 space-y-0.5">
-        <p className="truncate text-sm font-medium text-foreground">{budget.name}</p>
-        <p className="truncate text-xs text-muted-foreground">{budget.customerName}</p>
+        <p className="truncate text-sm font-medium text-foreground">{budget.number}</p>
+        <p className="truncate text-xs text-muted-foreground">{budget.title}</p>
       </div>
+      <span className="truncate text-sm text-muted-foreground">{budget.customer.name}</span>
       <div>
         <StatusBadge status={budget.status} />
       </div>
       <span className="text-sm font-semibold tabular-nums text-foreground">
-        {formatCurrency(total)}
+        {decimalStringToBrlDisplay(budget.total)}
       </span>
-      <span className="text-sm text-muted-foreground">{formatDate(budget.updatedAt)}</span>
-      <ChevronRight
-        className="size-4 shrink-0 justify-self-end text-muted-foreground transition-transform group-hover:translate-x-0.5"
-        aria-hidden="true"
-      />
+      <span className="text-sm tabular-nums text-muted-foreground">{marginDisplay(budget)}</span>
+      <span className="text-sm text-muted-foreground">{updatedDisplay(budget.updated_at)}</span>
     </Link>
   );
 }
 
-function BudgetTable({ budgets }: { budgets: Budget[] }) {
+function BudgetTable({ budgets }: { budgets: BudgetListItem[] }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div
@@ -112,10 +117,11 @@ function BudgetTable({ budgets }: { budgets: Budget[] }) {
         )}
       >
         <span>Orçamento</span>
+        <span>Cliente</span>
         <span>Status</span>
         <span>Valor</span>
+        <span>Margem</span>
         <span>Atualizado</span>
-        <span />
       </div>
       <div className="divide-y divide-border">
         {budgets.map((budget) => (
@@ -126,99 +132,105 @@ function BudgetTable({ budgets }: { budgets: Budget[] }) {
   );
 }
 
-const MOBILE_PAGE_SIZE = 5;
-const DESKTOP_PAGE_SIZE = 15;
-
-function Pagination({
-  page,
-  totalPages,
-  onChange,
-  className,
-}: {
-  page: number;
-  totalPages: number;
-  onChange: (page: number) => void;
-  className?: string;
-}) {
-  if (totalPages <= 1) return null;
-
+function ListSkeleton() {
   return (
-    <div className={cn("flex items-center justify-between gap-3", className)}>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => onChange(page - 1)}
-        disabled={page === 0}
-      >
-        <ChevronLeft className="size-4" aria-hidden="true" />
-        Anterior
-      </Button>
-      <span className="text-xs text-muted-foreground">
-        Página {page + 1} de {totalPages}
-      </span>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => onChange(page + 1)}
-        disabled={page >= totalPages - 1}
-      >
-        Próxima
-        <ChevronRight className="size-4" aria-hidden="true" />
-      </Button>
+    <div className="space-y-3" role="status" aria-busy="true">
+      <span className="sr-only">Carregando orçamentos</span>
+      {[0, 1, 2, 3].map((index) => (
+        <Skeleton key={index} className="h-24 rounded-xl" />
+      ))}
     </div>
   );
 }
 
+interface LoadedList {
+  companyId: string | undefined;
+  response: BudgetPaginationResponse;
+}
+
 export function BudgetList() {
-  const [budgets, setBudgets] = useState<Budget[] | null>(null);
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+
+  const [status, setStatus] = useState<LoadStatus>("loading");
+  const [loaded, setLoaded] = useState<LoadedList | null>(null);
+  const [errorCompanyId, setErrorCompanyId] = useState<string | undefined>(undefined);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<BudgetStatusFilter>("all");
-  const [mobilePage, setMobilePage] = useState(0);
-  const [desktopPage, setDesktopPage] = useState(0);
+  const [statusFilter, setStatusFilter] = useState<BudgetStatus | "">("");
+  const [page, setPage] = useState(1);
+
+  const requestSequence = useRef(0);
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+  const previousCompanyIdRef = useRef(activeCompanyId);
 
   useEffect(() => {
-    // localStorage read after mount: server/hydration both render `null`
-    // (loading) first, so there is no mismatch.
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const load = useCallback(async () => {
+    const isCompanySwitch = previousCompanyIdRef.current !== activeCompanyId;
+    previousCompanyIdRef.current = activeCompanyId;
+    const effectivePage = isCompanySwitch ? 1 : page;
+    if (isCompanySwitch) {
+      setPage(1);
+    }
+
+    const requestId = ++requestSequence.current;
+    const requestCompanyId = activeCompanyId;
+    setStatus("loading");
+    try {
+      const result = await listBudgets({
+        search: search || undefined,
+        page: effectivePage,
+        perPage: PER_PAGE,
+        status: statusFilter || undefined,
+      });
+      if (requestSequence.current !== requestId) return;
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      setLoaded({ companyId: requestCompanyId, response: result });
+      setStatus("success");
+    } catch (error) {
+      if (requestSequence.current !== requestId) return;
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      if (error instanceof ApiError && error.status === 401) {
+        void auth.refresh();
+        return;
+      }
+      setStatus("error");
+      setErrorCompanyId(requestCompanyId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, page, statusFilter, activeCompanyId]);
+
+  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setBudgets(listAllBudgets());
-  }, []);
+    void load();
+  }, [load]);
 
-  const normalizedSearch = normalize(search.trim());
-  const filtered = (budgets ?? []).filter((budget) => {
-    const matchesStatus = statusFilter === "all" || budget.status === statusFilter;
-    const matchesSearch =
-      normalizedSearch === "" || normalize(budget.name).includes(normalizedSearch);
-    return matchesStatus && matchesSearch;
-  });
-
-  function updateSearch(value: string) {
-    setSearch(value);
-    setMobilePage(0);
-    setDesktopPage(0);
-  }
-
-  function updateStatusFilter(value: BudgetStatusFilter) {
-    setStatusFilter(value);
-    setMobilePage(0);
-    setDesktopPage(0);
-  }
-
-  const mobileTotalPages = Math.max(1, Math.ceil(filtered.length / MOBILE_PAGE_SIZE));
-  const desktopTotalPages = Math.max(1, Math.ceil(filtered.length / DESKTOP_PAGE_SIZE));
-  const mobileBudgets = filtered.slice(
-    mobilePage * MOBILE_PAGE_SIZE,
-    mobilePage * MOBILE_PAGE_SIZE + MOBILE_PAGE_SIZE
-  );
-  const desktopBudgets = filtered.slice(
-    desktopPage * DESKTOP_PAGE_SIZE,
-    desktopPage * DESKTOP_PAGE_SIZE + DESKTOP_PAGE_SIZE
-  );
+  const currentResponse = loaded && loaded.companyId === activeCompanyId ? loaded.response : null;
+  const items = currentResponse?.data ?? [];
+  const meta = currentResponse?.meta;
+  const isCurrentTenant = currentResponse !== null;
+  // §Tenant safety: an error resolved for a since-departed company must
+  // never render — mirrors `ServiceOrderList`'s equivalent gate. Without
+  // this, a stale "error" status can flash for one render under the new
+  // company before its own request even fires/resolves.
+  const isErrorForCurrentTenant = status === "error" && errorCompanyId === activeCompanyId;
+  const isFiltered = search !== "" || statusFilter !== "";
+  const isEmptyOverall = isCurrentTenant && status === "success" && items.length === 0 && !isFiltered && page === 1;
+  const isEmptySearch = isCurrentTenant && status === "success" && items.length === 0 && !isEmptyOverall;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <PageTitle icon={FileText}>Orçamentos</PageTitle>
           <p className="text-sm text-muted-foreground">
@@ -231,56 +243,68 @@ export function BudgetList() {
           render={
             <Link href="/orcamentos/novo">
               <Plus className="size-4" aria-hidden="true" />
-              Novo
+              Novo orçamento
             </Link>
           }
         />
       </div>
 
-      {budgets === null || budgets.length === 0 ? null : (
-        <div className="space-y-3">
-          <div className="relative">
-            <Search
-              className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(event) => updateSearch(event.target.value)}
-              placeholder="Buscar por nome do orçamento"
-              aria-label="Buscar por nome do orçamento"
-              className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {STATUS_FILTERS.map((item) => (
-              <button
-                key={item}
-                type="button"
-                aria-pressed={statusFilter === item}
-                onClick={() => updateStatusFilter(item)}
-                className={
-                  statusFilter === item
-                    ? "rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
-                    : "rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/30"
-                }
-              >
-                {STATUS_FILTER_LABEL[item]}
-              </button>
-            ))}
-          </div>
+      <div className="space-y-3">
+        <div className="relative">
+          <Search
+            className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Buscar por número, título, referência ou cliente"
+            aria-label="Buscar por número, título, referência ou cliente"
+            className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+          />
         </div>
-      )}
+        <div className="flex flex-wrap gap-1.5">
+          {STATUS_FILTER_OPTIONS.map((option) => (
+            <button
+              key={option.value || "all"}
+              type="button"
+              onClick={() => {
+                setStatusFilter(option.value);
+                setPage(1);
+              }}
+              aria-pressed={statusFilter === option.value}
+              className={cn(
+                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
+                statusFilter === option.value
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground"
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      {budgets === null ? null : budgets.length === 0 ? (
+      {isErrorForCurrentTenant ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar os orçamentos agora.
+          </p>
+          <Button type="button" onClick={() => void load()}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : !isCurrentTenant || status === "loading" ? (
+        <ListSkeleton />
+      ) : isEmptyOverall ? (
         <EmptyState
           icon={FileText}
-          title="Nenhum orçamento ainda"
+          title="Nenhum orçamento cadastrado"
           description="Crie seu primeiro orçamento para começar a enviar propostas."
         />
-      ) : filtered.length === 0 ? (
+      ) : isEmptySearch ? (
         <EmptyState
           icon={FileText}
           title="Nenhum orçamento encontrado"
@@ -289,15 +313,22 @@ export function BudgetList() {
       ) : (
         <>
           <div className="space-y-3 lg:hidden">
-            {mobileBudgets.map((budget) => (
+            {items.map((budget) => (
               <BudgetCard key={budget.id} budget={budget} />
             ))}
-            <Pagination page={mobilePage} totalPages={mobileTotalPages} onChange={setMobilePage} />
           </div>
-          <div className="hidden space-y-3 lg:block">
-            <BudgetTable budgets={desktopBudgets} />
-            <Pagination page={desktopPage} totalPages={desktopTotalPages} onChange={setDesktopPage} />
+          <div className="hidden lg:block">
+            <BudgetTable budgets={items} />
           </div>
+          <Pagination
+            page={(meta?.current_page ?? page) - 1}
+            totalPages={meta?.last_page ?? 1}
+            totalItems={meta?.total ?? 0}
+            pageSize={meta?.per_page ?? PER_PAGE}
+            itemLabel="orçamentos"
+            ariaLabel="Paginação de orçamentos"
+            onChange={(nextPage) => setPage(nextPage + 1)}
+          />
         </>
       )}
     </div>
