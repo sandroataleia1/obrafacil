@@ -12,6 +12,21 @@
  * §39 HEADER 409 — another actor submitted the Budget while this form
  * was open: the PUT 409s, we refetch, and show the "can no longer be
  * edited" message. No automatic retry.
+ *
+ * FRONTEND-BUDGETS-01A §13-18: visual tenant fail-closed, mirroring
+ * `BudgetDetail`'s already-approved pattern field-for-field —
+ * `loadedCompanyId`/`resolvedCompanyId` are the render-gating source of
+ * truth (recomputed every render directly from state, so a Company
+ * switch hides Company A's values in the SAME render, never a frame
+ * later), while `activeCompanyIdRef`/`requestSequence`/`isStaleRequest`
+ * remain the async-continuation guards for the in-flight GET/PUT.
+ * `isCurrentTenant` gates the editable form (only true once a budget is
+ * loaded AND it belongs to the currently active Company);
+ * `isResolvedForCurrentTenant` gates the terminal error/not_found
+ * screens the same way, so an error that belongs to a Company the user
+ * has since left never renders under the new one — the fallback is
+ * always the skeleton, never an infinite one (a switch always
+ * re-triggers `loadBudget()` for the new Company).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -47,6 +62,8 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
 
   const [status, setStatus] = useState<"loading" | "success" | "error" | "not_found">("loading");
   const [budget, setBudget] = useState<Budget | null>(null);
+  const [loadedCompanyId, setLoadedCompanyId] = useState<string | undefined>(undefined);
+  const [resolvedCompanyId, setResolvedCompanyId] = useState<string | undefined>(undefined);
 
   const [title, setTitle] = useState("");
   const [customer, setCustomer] = useState<CustomerListItem | Customer | null>(null);
@@ -61,15 +78,29 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
 
   const requestSequence = useRef(0);
 
-  const loadBudget = useCallback(() => {
+  const loadBudget = useCallback((options?: { keepConflict?: boolean }) => {
     const requestId = ++requestSequence.current;
     const requestCompanyId = activeCompanyId;
     setStatus("loading");
+    setBudget(null);
+    setFieldErrors({});
+    setError(null);
+    // The 409 handler below sets `conflict=true` and then calls this
+    // SAME function to refetch — without `keepConflict`, this reset
+    // would immediately wipe the flag it just set (both run in the same
+    // tick), silently swapping the "alterado" message for the generic
+    // "já foi disponibilizado" one. A genuinely fresh load (mount, a
+    // Company switch, or the "Tentar novamente" retry) always wants the
+    // reset, so this only opts out for that one internal call site.
+    if (!options?.keepConflict) setConflict(false);
+    setSubmitting(false);
     getBudget(id)
       .then((found) => {
         if (requestSequence.current !== requestId) return;
         if (isStaleRequest(requestCompanyId)) return;
         setBudget(found);
+        setLoadedCompanyId(requestCompanyId);
+        setResolvedCompanyId(requestCompanyId);
         setTitle(found.title);
         setCustomer({
           id: found.customer_id,
@@ -86,6 +117,7 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
       .catch((caught) => {
         if (requestSequence.current !== requestId) return;
         if (isStaleRequest(requestCompanyId)) return;
+        setResolvedCompanyId(requestCompanyId);
         if (caught instanceof ApiError && caught.status === 404) {
           setStatus("not_found");
         } else {
@@ -98,6 +130,14 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadBudget();
   }, [loadBudget]);
+
+  // §14/§15: recomputed fresh every render directly from state — the
+  // instant `activeCompanyId` changes (a Company switch), this goes
+  // false in that SAME render, before any effect has a chance to run,
+  // so the skeleton branch below takes over immediately rather than
+  // ever painting Company A's loaded values under B.
+  const isCurrentTenant = budget !== null && loadedCompanyId === activeCompanyId;
+  const isResolvedForCurrentTenant = resolvedCompanyId !== undefined && resolvedCompanyId === activeCompanyId;
 
   const canSubmit = title.trim() !== "" && customer !== null && !submitting;
 
@@ -118,6 +158,10 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
         notes: notes.trim() || null,
         discount_amount: brlInputToDecimalString(discountInput) ?? "0.00",
       });
+      // §17: a PUT for A resolving after a switch to B must never
+      // navigate, never surface its error, and never touch B's own
+      // `submitting` state — the `finally` guard below covers that
+      // last part; this early return covers success.
       if (isStaleRequest(requestCompanyId)) return;
       router.push(`/orcamentos/${updated.id}`);
     } catch (caught) {
@@ -128,7 +172,7 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
         setError("Verifique os campos destacados.");
       } else if (caught instanceof ApiError && caught.status === 409) {
         setConflict(true);
-        loadBudget();
+        loadBudget({ keepConflict: true });
       } else if (caught instanceof ApiError) {
         setError(caught.message || "Não foi possível salvar as alterações.");
       } else {
@@ -139,7 +183,33 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
     }
   }
 
-  if (status === "loading") {
+  if (status === "error" && isResolvedForCurrentTenant) {
+    return (
+      <div className="space-y-6">
+        <BackLink href="/orcamentos" title="Erro ao carregar" />
+        <p className="text-sm text-destructive">Não foi possível carregar este orçamento.</p>
+        <Button type="button" variant="outline" onClick={() => loadBudget()}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "not_found" && isResolvedForCurrentTenant) {
+    return (
+      <div className="space-y-6">
+        <BackLink href="/orcamentos" title="Editar orçamento" />
+        <EmptyState icon={FileText} title="Orçamento não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
+      </div>
+    );
+  }
+
+  // §16/§18: covers the initial load, a Company switch (isCurrentTenant
+  // goes false immediately), and the "resolved under a different
+  // Company" gap for error/not_found above — never an infinite
+  // skeleton, since a switch always re-fires `loadBudget()` for the new
+  // Company via the effect above.
+  if (!isCurrentTenant || status === "loading" || !budget) {
     return (
       <div className="space-y-4" role="status" aria-busy="true">
         <span className="sr-only">Carregando orçamento</span>
@@ -149,32 +219,11 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
     );
   }
 
-  if (status === "not_found") {
-    return (
-      <div className="space-y-6">
-        <BackLink href="/orcamentos" title="Editar orçamento" />
-        <EmptyState icon={FileText} title="Orçamento não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
-      </div>
-    );
-  }
-
-  if (status === "error") {
-    return (
-      <div className="space-y-6">
-        <BackLink href="/orcamentos" title="Erro ao carregar" />
-        <p className="text-sm text-destructive">Não foi possível carregar este orçamento.</p>
-        <Button type="button" variant="outline" onClick={loadBudget}>
-          Tentar novamente
-        </Button>
-      </div>
-    );
-  }
-
   // §37: a Budget that is no longer draft is blocked from editing even
   // if the user navigates here directly — ZERO PUT is ever attempted.
   // §39: if we got here because a concurrent PUT 409'd and we refetched,
   // show the conflict-specific wording instead of the generic §37 one.
-  if (budget && budget.status !== "draft") {
+  if (budget.status !== "draft") {
     return (
       <div className="space-y-6">
         <BackLink href={`/orcamentos/${id}`} title="Orçamento" />

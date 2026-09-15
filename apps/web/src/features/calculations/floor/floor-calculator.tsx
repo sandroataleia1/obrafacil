@@ -8,6 +8,7 @@ import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatDecimal, formatInteger, parseDecimalInput } from "@/lib/decimal";
+import { useAuth } from "@/features/auth/auth-provider";
 import { setPendingBudgetItem } from "@/features/budgets/prototype/pending-budget-item";
 import { AreaRoomGroup } from "../shared/area-room-group";
 import { areaRoomAreaM2, totalAreaM2, type AreaRoom } from "../shared/area-room";
@@ -40,6 +41,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export function FloorCalculator() {
   const router = useRouter();
+  const auth = useAuth();
   const [step, setStep] = useState<FloorStep>("rooms");
   const [rooms, setRooms] = useState<AreaRoom[]>([]);
   const [coverage, setCoverage] = useState("");
@@ -83,7 +85,7 @@ export function FloorCalculator() {
   }
 
   function handleAddToBudget() {
-    setPendingBudgetItem({
+    const saved = setPendingBudgetItem(auth.activeCompany?.id, {
       source: "floor",
       title: "Piso",
       areaM2: area,
@@ -91,7 +93,7 @@ export function FloorCalculator() {
       coveragePerBoxM2: coverageValue ?? 0,
       boxes,
     });
-    setAddedToBudget(true);
+    if (saved) setAddedToBudget(true);
   }
 
   return (

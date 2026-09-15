@@ -208,6 +208,62 @@ describe("BudgetDetail", () => {
     expect(screen.queryByRole("button", { name: /registrar recusa/i })).not.toBeInTheDocument();
   });
 
+  /** DN1 (FRONTEND-BUDGETS-01A §19): a public_link decision WITH a note shows the note in the authenticated Detail. */
+  it("DN1: public_link decision with a decision_note shows the note on the authenticated Detail", async () => {
+    vi.mocked(getBudget).mockResolvedValue(
+      budget({
+        status: "approved",
+        decided_at: "2026-09-03T00:00:00Z",
+        decision_source: "public_link",
+        decision_by_name: "Cliente Final Público",
+        decision_note: "Aprovado conforme visita técnica.",
+        proposal_token: "tok-1",
+      })
+    );
+    render(<BudgetDetail id="budget-1" />);
+    await screen.findAllByText("ORC-000001");
+
+    expect(screen.getByText("Aprovado pelo cliente via proposta")).toBeInTheDocument();
+    expect(screen.getByText("Cliente Final Público")).toBeInTheDocument();
+    expect(screen.getByText("Aprovado conforme visita técnica.")).toBeInTheDocument();
+  });
+
+  /** DN2: a public_link decision with NO note never renders an empty "Observação" block. */
+  it("DN2: public_link decision without a decision_note shows no empty Observação block", async () => {
+    vi.mocked(getBudget).mockResolvedValue(
+      budget({
+        status: "approved",
+        decided_at: "2026-09-03T00:00:00Z",
+        decision_source: "public_link",
+        decision_by_name: "João Cliente",
+        decision_note: null,
+        proposal_token: "tok-1",
+      })
+    );
+    render(<BudgetDetail id="budget-1" />);
+    await screen.findAllByText("ORC-000001");
+
+    expect(screen.getByText("Aprovado pelo cliente via proposta")).toBeInTheDocument();
+    expect(screen.queryByText("Observação")).not.toBeInTheDocument();
+  });
+
+  /** DN3: manual_internal decisions continue to show decision_note (regression). */
+  it("DN3: manual_internal decision continues to show decision_note", async () => {
+    vi.mocked(getBudget).mockResolvedValue(
+      budget({
+        status: "rejected",
+        decided_at: "2026-09-03T00:00:00Z",
+        decision_source: "manual_internal",
+        decision_note: "Cliente desistiu",
+      })
+    );
+    render(<BudgetDetail id="budget-1" />);
+    await screen.findAllByText("ORC-000001");
+
+    expect(screen.getByText("Decisão registrada internamente")).toBeInTheDocument();
+    expect(screen.getByText("Cliente desistiu")).toBeInTheDocument();
+  });
+
   describe("Money null-safety", () => {
     it("never renders R$ 0,00 for null cost/margin — shows em-dash instead", async () => {
       // discount_amount is deliberately non-zero here so the only way

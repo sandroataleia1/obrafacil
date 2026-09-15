@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatDecimal, parseDecimalInput } from "@/lib/decimal";
+import { useAuth } from "@/features/auth/auth-provider";
 import { setPendingBudgetItem } from "@/features/budgets/prototype/pending-budget-item";
 import {
   SLAB_CEMENT_BAGS_PER_M3,
@@ -66,6 +67,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export function SlabCalculator() {
   const router = useRouter();
+  const auth = useAuth();
   const [step, setStep] = useState<SlabStep>("rooms");
   const [rooms, setRooms] = useState<AreaRoom[]>([]);
   const [slabType, setSlabType] = useState<SlabType | null>(null);
@@ -127,7 +129,7 @@ export function SlabCalculator() {
 
   function handleAddToBudget() {
     const typeLabel = SLAB_TYPES.find((item) => item.id === slabType)?.name ?? "";
-    setPendingBudgetItem({
+    const saved = setPendingBudgetItem(auth.activeCompany?.id, {
       source: "slab",
       title: "Laje",
       slabTypeLabel: typeLabel,
@@ -142,7 +144,7 @@ export function SlabCalculator() {
       sandM3,
       gravelM3,
     });
-    setAddedToBudget(true);
+    if (saved) setAddedToBudget(true);
   }
 
   return (

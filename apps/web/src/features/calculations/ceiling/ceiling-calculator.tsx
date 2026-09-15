@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatDecimal, formatInteger } from "@/lib/decimal";
+import { useAuth } from "@/features/auth/auth-provider";
 import { setPendingBudgetItem } from "@/features/budgets/prototype/pending-budget-item";
 import {
   CEILING_ANCHORS_PER_RODAFORRO,
@@ -93,6 +94,7 @@ function effectiveYield(room: CeilingRoom, waste: number): CeilingRoomYield | nu
 
 export function CeilingCalculator() {
   const router = useRouter();
+  const auth = useAuth();
   const [step, setStep] = useState<CeilingStep>("rooms");
   const [rooms, setRooms] = useState<CeilingRoom[]>([]);
   const [waste, setWaste] = useState(10);
@@ -179,7 +181,7 @@ export function CeilingCalculator() {
   }
 
   function handleAddToBudget() {
-    setPendingBudgetItem({
+    const saved = setPendingBudgetItem(auth.activeCompany?.id, {
       source: "ceiling",
       title: "Forro",
       areaM2: area,
@@ -191,7 +193,7 @@ export function CeilingCalculator() {
       rodaforroLengthM: CEILING_RODAFORRO_LENGTH_M,
       rodaforros,
     });
-    setAddedToBudget(true);
+    if (saved) setAddedToBudget(true);
   }
 
   return (

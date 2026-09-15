@@ -81,7 +81,8 @@ const CREATED_BUDGET: Budget = {
 beforeEach(() => {
   vi.clearAllMocks();
   searchParams = new URLSearchParams();
-  clearPendingBudgetItem();
+  clearPendingBudgetItem("company-a");
+  clearPendingBudgetItem("company-b");
   authState.activeCompany = { id: "company-a", name: "Empresa A" };
   vi.mocked(listCustomers).mockResolvedValue({
     data: [CUSTOMER],
@@ -165,7 +166,7 @@ describe("BudgetForm (create)", () => {
   });
 
   it("CH1: includes a calculator handoff item atomically in the same POST", async () => {
-    setPendingBudgetItem({
+    setPendingBudgetItem("company-a", {
       source: "masonry",
       title: "Parede externa",
       materialId: "mat-1",
@@ -202,7 +203,7 @@ describe("BudgetForm (create)", () => {
   });
 
   it("CH2: clears the pending handoff only after a successful create", async () => {
-    setPendingBudgetItem({
+    setPendingBudgetItem("company-a", {
       source: "floor",
       title: "Piso sala",
       areaM2: 10,
@@ -229,7 +230,7 @@ describe("BudgetForm (create)", () => {
   });
 
   it("CH3: 'Remover item do cálculo' drops the calculator item and allows an empty create", async () => {
-    setPendingBudgetItem({
+    setPendingBudgetItem("company-a", {
       source: "floor",
       title: "Piso sala",
       areaM2: 10,
@@ -271,7 +272,7 @@ describe("BudgetForm (create)", () => {
     expect(screen.getByRole("button", { name: "Criar orçamento" })).toBeDisabled();
   });
 
-  it("§79: discards a create response after the active company changed mid-request", async () => {
+  it("§79/BT6: discards a create response after the active company changed mid-request", async () => {
     let resolveCreate: (value: Budget) => void = () => {};
     vi.mocked(createBudget).mockImplementation(
       () => new Promise((resolve) => { resolveCreate = resolve; })
@@ -289,5 +290,131 @@ describe("BudgetForm (create)", () => {
 
     await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
     expect(push).not.toHaveBeenCalled();
+  });
+
+  // ================= BT1-BT8 (FRONTEND-BUDGETS-01A §1-4/§22) — tenant draft isolation =================
+
+  /** BT1: a draft's title disappears immediately on a Company switch — no stale frame. */
+  it("BT1: draft A disappears immediately under Company B", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma da Empresa A");
+    expect(screen.getByLabelText("Título")).toHaveValue("Reforma da Empresa A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+
+    expect(screen.getByLabelText("Título")).toHaveValue("");
+  });
+
+  /** BT2: a selected Customer under A never renders under B. */
+  it("BT2: selected Customer A no longer appears under Company B", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<BudgetForm />);
+
+    await selectCustomer(user);
+    expect(screen.getByText("Cliente selecionado")).toBeInTheDocument();
+    expect(screen.getByText("Maria Cliente")).toBeInTheDocument();
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+
+    expect(screen.queryByText("Cliente selecionado")).not.toBeInTheDocument();
+    expect(screen.queryByText("Maria Cliente")).not.toBeInTheDocument();
+  });
+
+  /** BT3: title/reference/notes/discount are all reset on a switch. */
+  it("BT3: title/reference/notes/discount are all reset on a Company switch", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Título A");
+    await user.type(screen.getByLabelText(/Referência/), "Referência A");
+    await user.type(screen.getByLabelText(/Observações/), "Notas A");
+    await user.type(screen.getByLabelText(/Desconto global/), "50,00");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+
+    expect(screen.getByLabelText("Título")).toHaveValue("");
+    expect(screen.getByLabelText(/Referência/)).toHaveValue("");
+    expect(screen.getByLabelText(/Observações/)).toHaveValue("");
+    expect(screen.getByLabelText(/Desconto global/)).toHaveValue("");
+  });
+
+  /** BT4: a resolved preselected Customer A never survives a switch to B. */
+  it("BT4: preselected Customer A does not remain selected under Company B", async () => {
+    searchParams = new URLSearchParams({ customerId: "cust-1" });
+    vi.mocked(getCustomer).mockResolvedValue({ ...CUSTOMER, addresses: [], contacts: [] } as never);
+    const { rerender } = render(<BudgetForm />);
+
+    await waitFor(() => expect(screen.getByText("Maria Cliente")).toBeInTheDocument());
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+
+    expect(screen.queryByText("Maria Cliente")).not.toBeInTheDocument();
+  });
+
+  /** BT5: a preselect GET for A that resolves AFTER switching to B is discarded, never applied under B. */
+  it("BT5: a late preselect GET for Company A is discarded after switching to B", async () => {
+    searchParams = new URLSearchParams({ customerId: "cust-1" });
+    let resolveGetCustomer: (value: Awaited<ReturnType<typeof getCustomer>>) => void = () => {};
+    vi.mocked(getCustomer).mockImplementation(
+      () => new Promise((resolve) => { resolveGetCustomer = resolve; })
+    );
+    const { rerender } = render(<BudgetForm />);
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+
+    resolveGetCustomer({ ...CUSTOMER, addresses: [], contacts: [] } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Maria Cliente")).not.toBeInTheDocument();
+  });
+
+  /** BT7: a create error for A resolving after a switch to B never surfaces under B. */
+  it("BT7: a create error for A after switching to B never appears under B", async () => {
+    let rejectCreate: (reason: unknown) => void = () => {};
+    vi.mocked(createBudget).mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectCreate = reject; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+    rejectCreate(new Error("network down"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Não foi possível criar o orçamento. Verifique sua conexão e tente novamente.")).not.toBeInTheDocument();
+  });
+
+  /** BT8: the fresh instance under B starts on every field's true default — not just title/customer. */
+  it("BT8: form B starts completely clean on every field", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Título A");
+    await selectCustomer(user);
+    await user.type(screen.getByLabelText(/Referência/), "Referência A");
+    await user.type(screen.getByLabelText(/Observações/), "Notas A");
+    await user.type(screen.getByLabelText(/Desconto global/), "50,00");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+
+    expect(screen.getByLabelText("Título")).toHaveValue("");
+    expect(screen.getByLabelText(/Referência/)).toHaveValue("");
+    expect(screen.getByLabelText(/Observações/)).toHaveValue("");
+    expect(screen.getByLabelText(/Desconto global/)).toHaveValue("");
+    expect(screen.queryByText("Cliente selecionado")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Criar orçamento" })).toBeDisabled();
   });
 });

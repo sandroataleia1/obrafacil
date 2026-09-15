@@ -566,6 +566,18 @@ export function BudgetDetail({ id }: { id: string }) {
               {budget.decision_by_name ? (
                 <p className="text-sm text-muted-foreground">{budget.decision_by_name}</p>
               ) : null}
+              {/* §19: decision_note is captured on the public approve/reject
+                  payload too (not just manual_internal) — the authenticated
+                  Detail must surface it here whenever present, never only
+                  for the manual_internal path (§21: the public contract
+                  itself is unchanged, this reads decision_note from the
+                  already-authenticated BudgetResource). */}
+              {budget.decision_note ? (
+                <div className="pt-1">
+                  <p className="text-xs font-medium text-muted-foreground">Observação</p>
+                  <p className="text-sm text-foreground">{budget.decision_note}</p>
+                </div>
+              ) : null}
             </>
           ) : budget.decision_source === "manual_internal" ? (
             <>

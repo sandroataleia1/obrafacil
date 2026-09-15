@@ -70,7 +70,7 @@ beforeEach(() => {
 });
 
 describe("EditBudgetHeaderForm", () => {
-  it("§36: loads the draft header and submits a full PUT with the 4 header fields", async () => {
+  it("ET1/§36: loads the draft header and submits a full PUT with the 4 header fields", async () => {
     vi.mocked(getBudget).mockResolvedValue(draftBudget());
     vi.mocked(updateBudget).mockResolvedValue(draftBudget({ title: "Reforma total" }));
     const user = userEvent.setup();
@@ -142,14 +142,27 @@ describe("EditBudgetHeaderForm", () => {
     await waitFor(() => expect(screen.getByText("Título inválido")).toBeInTheDocument());
   });
 
-  it("shows 'Orçamento não encontrado' on a 404", async () => {
+  it("ET5: shows 'Orçamento não encontrado' on a 404", async () => {
     vi.mocked(getBudget).mockRejectedValue(new ApiError(404, "not found"));
     render(<EditBudgetHeaderForm id="missing" />);
 
     await waitFor(() => expect(screen.getByText("Orçamento não encontrado")).toBeInTheDocument());
   });
 
-  it("§79: discards a stale PUT response after a company switch mid-request", async () => {
+  it("ET6: shows a generic error + retry on a non-404 load failure, and retry re-fetches", async () => {
+    vi.mocked(getBudget).mockRejectedValueOnce(new Error("network down"));
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByText("Não foi possível carregar este orçamento.")).toBeInTheDocument());
+
+    vi.mocked(getBudget).mockResolvedValueOnce(draftBudget());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+  });
+
+  it("ET7/§79: discards a stale PUT success response after a company switch mid-request", async () => {
     vi.mocked(getBudget).mockResolvedValue(draftBudget());
     let resolveUpdate: (value: Budget) => void = () => {};
     vi.mocked(updateBudget).mockImplementation(
@@ -167,5 +180,86 @@ describe("EditBudgetHeaderForm", () => {
 
     await waitFor(() => expect(updateBudget).toHaveBeenCalledTimes(1));
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("ET8: a stale PUT error for A after switching to B never surfaces under B, and B's own submitting state is untouched", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget());
+    let rejectUpdate: (reason: unknown) => void = () => {};
+    vi.mocked(updateBudget).mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectUpdate = reject; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+    rejectUpdate(new Error("network down"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Não foi possível salvar. Verifique sua conexão e tente novamente.")).not.toBeInTheDocument();
+    // B's own instance re-loaded fresh and is not stuck in a submitting state.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar alterações" })).toBeInTheDocument());
+  });
+
+  // ================= ET2-ET4 (FRONTEND-BUDGETS-01A §13-18) — visual tenant fail-closed =================
+
+  /** ET2: switching from A to B hides Company A's loaded form immediately — the skeleton takes over in the same render. */
+  it("ET2: switching to Company B immediately hides Company A's loaded form", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget());
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+
+    // Company B's own GET never resolves in this test — we only care
+    // that A's values disappear the instant the switch happens.
+    vi.mocked(getBudget).mockImplementation(() => new Promise(() => {}));
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+
+    expect(screen.queryByDisplayValue("Reforma")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Título")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  /** ET3: a late GET for A that resolves after switching to B is discarded — never overwrites B's own loaded budget. */
+  it("ET3: a late GET for Company A is discarded after switching to B", async () => {
+    let resolveGetA: (value: Budget) => void = () => {};
+    vi.mocked(getBudget).mockReturnValueOnce(new Promise((resolve) => { resolveGetA = resolve; }));
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    vi.mocked(getBudget).mockResolvedValueOnce(draftBudget({ title: "Orçamento da Empresa B" }));
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Orçamento da Empresa B")).toBeInTheDocument());
+
+    // A's GET resolves only now, after B has already loaded successfully.
+    resolveGetA(draftBudget({ title: "Orçamento da Empresa A" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByDisplayValue("Orçamento da Empresa A")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Orçamento da Empresa B")).toBeInTheDocument();
+  });
+
+  /** ET4: a late error for A's GET resolving after switching to B never renders under B. */
+  it("ET4: a late error for Company A's GET is discarded after switching to B", async () => {
+    let rejectGetA: (reason: unknown) => void = () => {};
+    vi.mocked(getBudget).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectGetA = reject; }));
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    vi.mocked(getBudget).mockResolvedValueOnce(draftBudget());
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+
+    rejectGetA(new Error("network down"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Não foi possível carregar este orçamento.")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument();
   });
 });

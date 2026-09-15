@@ -7,6 +7,7 @@ import { CheckCircle2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatDecimal, formatInteger } from "@/lib/decimal";
+import { useAuth } from "@/features/auth/auth-provider";
 import { setPendingBudgetItem } from "@/features/budgets/prototype/pending-budget-item";
 import type { MasonryMaterial } from "@/mocks/calculations/masonry";
 import type { MasonryCalculationResult } from "./prototype-calculator";
@@ -31,10 +32,14 @@ export function ResultStep({
   result,
   onNewCalculation,
 }: ResultStepProps) {
+  const auth = useAuth();
   const [addedToBudget, setAddedToBudget] = useState(false);
 
+  // §6-7: the handoff always belongs to the CURRENT authenticated
+  // Company — never accepted from anywhere else — and fails closed
+  // (writes nothing, never shows the "added" state) when there is none.
   function handleAddToBudget() {
-    setPendingBudgetItem({
+    const saved = setPendingBudgetItem(auth.activeCompany?.id, {
       source: "masonry",
       title: "Alvenaria",
       materialId: material.id,
@@ -49,7 +54,7 @@ export function ResultStep({
         sandM3: result.auxiliary.sandM3,
       },
     });
-    setAddedToBudget(true);
+    if (saved) setAddedToBudget(true);
   }
 
   return (

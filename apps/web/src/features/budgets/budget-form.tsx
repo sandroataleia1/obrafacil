@@ -16,9 +16,24 @@
  * successful 201 (§27); an error preserves it (§28); a Company switch
  * during the POST must never let the response apply under the wrong
  * Company (§79).
+ *
+ * FRONTEND-BUDGETS-01A §1-2: a draft in progress must NEVER survive a
+ * Company switch — title/customer/reference/notes/discount/calculator
+ * price/errors all belong to the OLD Company and must disappear in the
+ * SAME render as the switch, not a frame later via some manual reset
+ * effect. `BudgetForm` is a thin wrapper that remounts `BudgetFormInner`
+ * via `key={activeCompanyId}` — React destroys the whole old instance
+ * (and every piece of its state) and mounts a genuinely fresh one the
+ * moment the key changes, which is the only way to guarantee zero stale
+ * frames. `activeCompanyIdRef` is created in the wrapper (which never
+ * itself remounts) and updated with a `useLayoutEffect` — synchronous,
+ * before paint, unlike a plain `useEffect` — so a promise continuation
+ * from the OLD (now-unmounted) instance reading `.current` after the
+ * switch always sees the truth (mirrors the same pattern already
+ * hardened for Customers in BUDGET/CLIENTS rounds).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -37,19 +52,30 @@ import { clearPendingBudgetItem, getPendingBudgetItem, type PendingBudgetItem } 
 import type { BudgetItemCreatePayload } from "./types";
 
 export function BudgetForm() {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
+  return <BudgetFormInner key={activeCompanyId ?? "no-company"} activeCompanyId={activeCompanyId} activeCompanyIdRef={activeCompanyIdRef} />;
+}
+
+function BudgetFormInner({
+  activeCompanyId,
+  activeCompanyIdRef,
+}: {
+  activeCompanyId: string | undefined;
+  activeCompanyIdRef: MutableRefObject<string | undefined>;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const preselectedCustomerId = searchParams.get("customerId") ?? "";
 
-  const auth = useAuth();
-  const activeCompanyId = auth.activeCompany?.id;
-  const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
-    activeCompanyIdRef.current = activeCompanyId;
-  }, [activeCompanyId]);
   const isStaleRequest = useCallback(
     (requestCompanyId: string | undefined) => activeCompanyIdRef.current !== requestCompanyId,
-    []
+    [activeCompanyIdRef]
   );
 
   const [pendingItem, setPendingItem] = useState<PendingBudgetItem | null | undefined>(undefined);
@@ -68,15 +94,21 @@ export function BudgetForm() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    // sessionStorage read after mount only — server/hydration both
-    // render `undefined` first, so there is no mismatch.
+    // §5-9: reads ONLY this Company's own handoff — a fresh instance
+    // (mounted because the key changed) always re-reads for its OWN
+    // activeCompanyId, never inherits whatever the previous instance
+    // had in state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPendingItem(getPendingBudgetItem());
+    setPendingItem(getPendingBudgetItem(activeCompanyId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // §23 PRESELECT CUSTOMER — /orcamentos/novo?customerId=UUID. Loads
-  // and validates the real Customer; a cross-tenant/not-found id is
-  // never used silently.
+  // §23/§4 PRESELECT CUSTOMER — /orcamentos/novo?customerId=UUID. Loads
+  // and validates the real Customer UNDER THE CURRENT Company; a
+  // cross-tenant/not-found id is never used silently. Since this whole
+  // component remounts on a Company switch, this effect re-runs fresh
+  // against the new tenant automatically — no separate "revalidate on
+  // switch" logic needed.
   useEffect(() => {
     if (!preselectedCustomerId) return;
     const requestCompanyId = activeCompanyId;
@@ -125,12 +157,17 @@ export function BudgetForm() {
         items,
       });
 
-      // §79: never navigate into a Budget created under a Company the
-      // user has since switched away from.
+      // §79/§10: never navigate into a Budget created under a Company
+      // the user has since switched away from. The Budget itself is
+      // still created correctly server-side — only this stale UI
+      // continuation is suppressed.
       if (isStaleRequest(requestCompanyId)) return;
 
-      // §27: clear the handoff only after the POST actually succeeded.
-      clearPendingBudgetItem();
+      // §27/§10: clear ONLY the handoff belonging to the Company that
+      // actually made this request — never a different Company's
+      // (possibly newer) handoff, which the per-company key already
+      // guarantees structurally.
+      clearPendingBudgetItem(requestCompanyId);
       router.push(`/orcamentos/${created.id}`);
     } catch (caught) {
       if (isStaleRequest(requestCompanyId)) return;
