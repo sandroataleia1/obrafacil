@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, ChevronDown } from "lucide-react";
 
@@ -9,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { formatDecimal, formatInteger } from "@/lib/decimal";
 import { useAuth } from "@/features/auth/auth-provider";
 import { setPendingBudgetItem } from "@/features/budgets/prototype/pending-budget-item";
+import { useAddedToBudget } from "../shared/use-added-to-budget";
 import type { MasonryMaterial } from "@/mocks/calculations/masonry";
 import type { MasonryCalculationResult } from "./prototype-calculator";
 
@@ -33,7 +33,7 @@ export function ResultStep({
   onNewCalculation,
 }: ResultStepProps) {
   const auth = useAuth();
-  const [addedToBudget, setAddedToBudget] = useState(false);
+  const [addedToBudget, setAddedToBudget] = useAddedToBudget(auth.activeCompany?.id);
 
   // §6-7: the handoff always belongs to the CURRENT authenticated
   // Company — never accepted from anywhere else — and fails closed

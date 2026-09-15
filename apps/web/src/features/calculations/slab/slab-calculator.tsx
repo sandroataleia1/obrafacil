@@ -21,6 +21,7 @@ import { areaRoomAreaM2, totalAreaM2, type AreaRoom } from "../shared/area-room"
 import { DecimalField } from "../shared/decimal-field";
 import { FlowHeader } from "../shared/flow-header";
 import { StepFooter } from "../shared/step-footer";
+import { useAddedToBudget } from "../shared/use-added-to-budget";
 
 type SlabStep =
   | "rooms"
@@ -74,7 +75,7 @@ export function SlabCalculator() {
   const [fillingCoverage, setFillingCoverage] = useState("");
   const [thickness, setThickness] = useState("");
   const [waste, setWaste] = useState(5);
-  const [addedToBudget, setAddedToBudget] = useState(false);
+  const [addedToBudget, setAddedToBudget] = useAddedToBudget(auth.activeCompany?.id);
 
   const thicknessValue = parseDecimalInput(thickness);
   const fillingCoverageValue = parseDecimalInput(fillingCoverage);

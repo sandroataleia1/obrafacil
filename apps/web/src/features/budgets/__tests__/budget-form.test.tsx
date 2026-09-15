@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BudgetForm } from "../budget-form";
 import { ApiValidationError } from "@/lib/api-client";
-import { clearPendingBudgetItem, setPendingBudgetItem } from "../prototype/pending-budget-item";
+import { clearPendingBudgetItem, getPendingBudgetItem, setPendingBudgetItem } from "../prototype/pending-budget-item";
 import type { Budget } from "../types";
 
 const push = vi.fn();
@@ -253,6 +253,28 @@ describe("BudgetForm (create)", () => {
     expect(vi.mocked(createBudget).mock.calls[0]![0].items).toEqual([]);
   });
 
+  it("CH4: a successful create consumes exactly the handoff that was used", async () => {
+    setPendingBudgetItem("company-a", {
+      source: "floor",
+      title: "Piso sala",
+      areaM2: 10,
+      wastePercentage: 5,
+      coveragePerBoxM2: 2,
+      boxes: 6,
+    });
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Preço de venda deste item"), "300,00");
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orcamentos/budget-1"));
+    expect(getPendingBudgetItem("company-a")).toBeNull();
+  });
+
   it("§23: preselects a customer from ?customerId=", async () => {
     searchParams = new URLSearchParams({ customerId: "cust-1" });
     vi.mocked(getCustomer).mockResolvedValue({ ...CUSTOMER, addresses: [], contacts: [] } as never);
@@ -416,5 +438,114 @@ describe("BudgetForm (create)", () => {
     expect(screen.getByLabelText(/Desconto global/)).toHaveValue("");
     expect(screen.queryByText("Cliente selecionado")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Criar orçamento" })).toBeDisabled();
+  });
+
+  // ============ HT9/§10 — a REAL integration test through BudgetForm itself ============
+  // (FRONTEND-BUDGETS-01A1 §10: the original HT9 only called
+  // clearPendingBudgetItem directly — it never exercised BudgetForm at
+  // all. This drives the actual component: handoff A exists, BudgetForm A
+  // mounts, its POST is left pending, the user switches to Company B
+  // (rerender), THEN the A POST resolves 201.)
+
+  /** HT9 (real): a stale-success POST for A never navigates/renders under B, but still consumes A's own handoff — and never touches B's. */
+  it("HT9 (integration): a stale 201 for Company A consumes A's handoff, never pushes under B, and leaves B's handoff untouched", async () => {
+    setPendingBudgetItem("company-a", {
+      source: "floor",
+      title: "Piso A",
+      areaM2: 10,
+      wastePercentage: 5,
+      coveragePerBoxM2: 2,
+      boxes: 6,
+    });
+    setPendingBudgetItem("company-b", {
+      source: "slab",
+      title: "Laje B",
+      slabTypeLabel: "Maciça",
+      areaM2: 12,
+      thicknessCm: 10,
+      wastePercentage: 8,
+      concreteVolumeM3: 1.2,
+      concreteVolumeWithWasteM3: 1.3,
+      fillingName: "-",
+      fillingUnits: 0,
+      cementBags: 6,
+      sandM3: 0.5,
+      gravelM3: 0.6,
+    });
+
+    let resolveCreate: (value: Budget) => void = () => {};
+    vi.mocked(createBudget).mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Preço de venda deste item"), "300,00");
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    // Switch to Company B WHILE the A POST is still in flight.
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<BudgetForm />);
+
+    // Now the A POST resolves 201.
+    resolveCreate(CREATED_BUDGET);
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Never navigated (would have pointed at a Budget created for the
+    // Company the user has since left).
+    expect(push).not.toHaveBeenCalled();
+    // A's handoff was still consumed — business success happened.
+    expect(getPendingBudgetItem("company-a")).toBeNull();
+    // B's own, unrelated handoff was never touched by A's resolution.
+    expect(getPendingBudgetItem("company-b")).toEqual(
+      expect.objectContaining({ source: "slab", title: "Laje B" })
+    );
+  });
+
+  /** §7/HC4 through the real component: a NEW handoff A2 created after the A1 POST began must survive A1's later 201. */
+  it("integration: a newer handoff for the SAME company survives a stale POST resolving with the old one", async () => {
+    setPendingBudgetItem("company-a", {
+      source: "floor",
+      title: "Piso A1",
+      areaM2: 10,
+      wastePercentage: 5,
+      coveragePerBoxM2: 2,
+      boxes: 6,
+    });
+
+    let resolveCreate: (value: Budget) => void = () => {};
+    vi.mocked(createBudget).mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve; })
+    );
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Preço de venda deste item"), "300,00");
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    // A NEW calculator result for company-a replaces the handoff in
+    // storage while the POST that used A1 is still in flight — this
+    // simulates the user opening a second tab / going back to a
+    // calculator for the SAME company before the first request settles.
+    setPendingBudgetItem("company-a", {
+      source: "floor",
+      title: "Piso A2",
+      areaM2: 20,
+      wastePercentage: 5,
+      coveragePerBoxM2: 2,
+      boxes: 12,
+    });
+
+    resolveCreate(CREATED_BUDGET);
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orcamentos/budget-1"));
+
+    expect(getPendingBudgetItem("company-a")).toEqual(
+      expect.objectContaining({ title: "Piso A2" })
+    );
   });
 });

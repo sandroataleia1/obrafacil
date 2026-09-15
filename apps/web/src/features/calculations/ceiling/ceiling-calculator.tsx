@@ -21,6 +21,7 @@ import {
 } from "@/mocks/calculations/ceiling";
 import { FlowHeader } from "../shared/flow-header";
 import { StepFooter } from "../shared/step-footer";
+import { useAddedToBudget } from "../shared/use-added-to-budget";
 import { RoomGroup } from "./room-group";
 import { ceilingRoomAreaM2, ceilingRoomPerimeterM, type CeilingDirection, type CeilingRoom } from "./types";
 import {
@@ -98,7 +99,7 @@ export function CeilingCalculator() {
   const [step, setStep] = useState<CeilingStep>("rooms");
   const [rooms, setRooms] = useState<CeilingRoom[]>([]);
   const [waste, setWaste] = useState(10);
-  const [addedToBudget, setAddedToBudget] = useState(false);
+  const [addedToBudget, setAddedToBudget] = useAddedToBudget(auth.activeCompany?.id);
 
   const roomsValid = rooms.length > 0;
   const roomYields = rooms.map((room) => effectiveYield(room, waste));

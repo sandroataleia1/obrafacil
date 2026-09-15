@@ -29,7 +29,7 @@
  * re-triggers `loadBudget()` for the new Company).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -52,7 +52,14 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
   const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
+  // §13: synchronous, pre-paint — the instant `activeCompanyId` commits
+  // to a new value, `.current` reflects it before any async continuation
+  // (a PUT/GET callback from the OLD Company) gets a chance to read it,
+  // mirroring the same guarantee `BudgetForm`'s wrapper already relies on.
+  // A plain `useEffect` here left a window where a PUT for A resolving
+  // right after a switch to B could still read `activeCompanyIdRef.current
+  // === undefined`/stale before the effect had run.
+  useLayoutEffect(() => {
     activeCompanyIdRef.current = activeCompanyId;
   }, [activeCompanyId]);
   const isStaleRequest = useCallback(

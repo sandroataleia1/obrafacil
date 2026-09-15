@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   clearPendingBudgetItem,
+  consumePendingBudgetItem,
+  getPendingBudgetHandoff,
   getPendingBudgetItem,
   setPendingBudgetItem,
   type FloorPendingBudgetItem,
@@ -134,5 +136,107 @@ describe("pending-budget-item (FRONTEND-BUDGETS-01A §5-8 tenant-scoped handoff)
     const saved = setPendingBudgetItem(undefined, MASONRY_ITEM);
     expect(saved).toBe(false);
     expect(getPendingBudgetItem("company-a")).toBeNull();
+  });
+});
+
+describe("pending-budget-item handoff identity (FRONTEND-BUDGETS-01A1 §3-4/§19 HC1-HC8)", () => {
+  beforeEach(() => {
+    clearAllTestKeys();
+  });
+
+  /** HC1: every stored handoff gets a stable id. */
+  it("HC1: a written handoff has a non-empty, stable id", () => {
+    setPendingBudgetItem("company-a", MASONRY_ITEM);
+    const handoff = getPendingBudgetHandoff("company-a");
+    expect(handoff).not.toBeNull();
+    expect(typeof handoff?.id).toBe("string");
+    expect(handoff?.id.length).toBeGreaterThan(0);
+
+    // Stable across repeated reads without a new write.
+    const handoffAgain = getPendingBudgetHandoff("company-a");
+    expect(handoffAgain?.id).toBe(handoff?.id);
+  });
+
+  /** HC2: Company A and B get independent ids for independently-written handoffs. */
+  it("HC2: Company A and B handoffs have independent ids", () => {
+    setPendingBudgetItem("company-a", MASONRY_ITEM);
+    setPendingBudgetItem("company-b", FLOOR_ITEM);
+
+    const a = getPendingBudgetHandoff("company-a");
+    const b = getPendingBudgetHandoff("company-b");
+    expect(a?.id).not.toBe(b?.id);
+  });
+
+  /** HC3: consuming with the currently-stored id removes it. */
+  it("HC3: consumePendingBudgetItem removes the handoff when the id matches", () => {
+    setPendingBudgetItem("company-a", MASONRY_ITEM);
+    const a1 = getPendingBudgetHandoff("company-a");
+    expect(a1).not.toBeNull();
+
+    const consumed = consumePendingBudgetItem("company-a", a1!.id);
+
+    expect(consumed).toBe(true);
+    expect(getPendingBudgetItem("company-a")).toBeNull();
+  });
+
+  /** HC4: a stale id (superseded by a newer handoff) is never consumed — the newer handoff survives untouched. */
+  it("HC4: consumePendingBudgetItem does not remove a newer handoff that replaced the expected one", () => {
+    setPendingBudgetItem("company-a", MASONRY_ITEM);
+    const a1 = getPendingBudgetHandoff("company-a");
+
+    // A2 replaces A1 in storage (same company, new calculator result).
+    setPendingBudgetItem("company-a", FLOOR_ITEM);
+    const a2 = getPendingBudgetHandoff("company-a");
+    expect(a2?.id).not.toBe(a1?.id);
+
+    const consumed = consumePendingBudgetItem("company-a", a1!.id);
+
+    expect(consumed).toBe(false);
+    expect(getPendingBudgetHandoff("company-a")?.id).toBe(a2?.id);
+    expect(getPendingBudgetItem("company-a")).toEqual(FLOOR_ITEM);
+  });
+
+  /** HC5: consuming Company A's handoff (by id) never touches Company B's, regardless of id collisions in theory. */
+  it("HC5: consuming Company A's handoff never touches Company B's", () => {
+    setPendingBudgetItem("company-a", MASONRY_ITEM);
+    setPendingBudgetItem("company-b", FLOOR_ITEM);
+    const a1 = getPendingBudgetHandoff("company-a");
+    const b1 = getPendingBudgetHandoff("company-b");
+
+    consumePendingBudgetItem("company-a", a1!.id);
+
+    expect(getPendingBudgetItem("company-a")).toBeNull();
+    expect(getPendingBudgetHandoff("company-b")?.id).toBe(b1?.id);
+    expect(getPendingBudgetItem("company-b")).toEqual(FLOOR_ITEM);
+  });
+
+  /** HC6: a (possibly stale) success consumes exactly the handoff id that was used for that POST. */
+  it("HC6: consuming with the id captured at submit time removes exactly that handoff", () => {
+    setPendingBudgetItem("company-a", MASONRY_ITEM);
+    const requestHandoffId = getPendingBudgetHandoff("company-a")!.id;
+
+    // Simulates BudgetForm resolving a 201 well after the request began.
+    const consumed = consumePendingBudgetItem("company-a", requestHandoffId);
+
+    expect(consumed).toBe(true);
+    expect(getPendingBudgetItem("company-a")).toBeNull();
+  });
+
+  /** HC7: a failed POST must never consume — the id is simply never passed to consume at all in that path, and even if it were, an unrelated id doesn't match. */
+  it("HC7: the handoff used by a failed POST remains available afterwards", () => {
+    setPendingBudgetItem("company-a", MASONRY_ITEM);
+    // On failure, BudgetForm never calls consumePendingBudgetItem.
+    expect(getPendingBudgetItem("company-a")).toEqual(MASONRY_ITEM);
+  });
+
+  /** HC8: the legacy unscoped key is still never reused/attributed, even with the new envelope shape. */
+  it("HC8: the legacy unscoped key is never reused for handoff identity either", () => {
+    window.sessionStorage.setItem(
+      "obrafacil:pending-budget-item",
+      JSON.stringify({ version: 1, id: "legacy-id", item: MASONRY_ITEM })
+    );
+
+    expect(getPendingBudgetHandoff("company-a")).toBeNull();
+    expect(window.sessionStorage.getItem("obrafacil:pending-budget-item")).toBeNull();
   });
 });

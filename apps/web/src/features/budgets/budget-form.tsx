@@ -48,7 +48,7 @@ import { BudgetCustomerPicker } from "./components/budget-customer-picker";
 import { PendingItemPreview } from "./components/pending-item-preview";
 import { createBudget } from "./budgets-client";
 import { calculatorItemToBudgetItemPayload } from "./lib/calculator-item-adapter";
-import { clearPendingBudgetItem, getPendingBudgetItem, type PendingBudgetItem } from "./prototype/pending-budget-item";
+import { consumePendingBudgetItem, getPendingBudgetHandoff, type PendingBudgetItem } from "./prototype/pending-budget-item";
 import type { BudgetItemCreatePayload } from "./types";
 
 export function BudgetForm() {
@@ -79,6 +79,7 @@ function BudgetFormInner({
   );
 
   const [pendingItem, setPendingItem] = useState<PendingBudgetItem | null | undefined>(undefined);
+  const [pendingHandoffId, setPendingHandoffId] = useState<string | null>(null);
   const [calculatorItemRemoved, setCalculatorItemRemoved] = useState(false);
   const [calculatorPrice, setCalculatorPrice] = useState("");
 
@@ -97,9 +98,13 @@ function BudgetFormInner({
     // §5-9: reads ONLY this Company's own handoff — a fresh instance
     // (mounted because the key changed) always re-reads for its OWN
     // activeCompanyId, never inherits whatever the previous instance
-    // had in state.
+    // had in state. §5/FRONTEND-BUDGETS-01A1: the handoff's `id` is
+    // captured alongside the item so submit can later consume EXACTLY
+    // this handoff, never "whatever is stored at POST-resolution time".
+    const handoff = getPendingBudgetHandoff(activeCompanyId);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPendingItem(getPendingBudgetItem(activeCompanyId));
+    setPendingItem(handoff?.item ?? null);
+    setPendingHandoffId(handoff?.id ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -133,6 +138,7 @@ function BudgetFormInner({
     if (!canSubmit || !customer) return;
 
     const requestCompanyId = activeCompanyId;
+    const requestHandoffId = pendingHandoffId;
     setSubmitting(true);
     setError(null);
     setFieldErrors({});
@@ -157,17 +163,26 @@ function BudgetFormInner({
         items,
       });
 
+      // FRONTEND-BUDGETS-01A1 §5-8/HC6: a successful POST must consume
+      // the exact handoff it used FIRST — regardless of whether the
+      // active Company has since changed — because business success
+      // (the item is now safely persisted server-side in the Budget)
+      // must always be reflected in storage. `consumePendingBudgetItem`
+      // only removes it if the id currently stored still matches what
+      // this request used, so a newer handoff created for the SAME
+      // company while this request was in flight (§7/HC4) — or any
+      // other company's handoff (§8/HC5) — is never touched.
+      if (requestHandoffId) {
+        consumePendingBudgetItem(requestCompanyId, requestHandoffId);
+      }
+
       // §79/§10: never navigate into a Budget created under a Company
       // the user has since switched away from. The Budget itself is
       // still created correctly server-side — only this stale UI
-      // continuation is suppressed.
+      // continuation (and its handoff cleanup) is suppressed; the
+      // consume above already ran regardless.
       if (isStaleRequest(requestCompanyId)) return;
 
-      // §27/§10: clear ONLY the handoff belonging to the Company that
-      // actually made this request — never a different Company's
-      // (possibly newer) handoff, which the per-company key already
-      // guarantees structurally.
-      clearPendingBudgetItem(requestCompanyId);
       router.push(`/orcamentos/${created.id}`);
     } catch (caught) {
       if (isStaleRequest(requestCompanyId)) return;

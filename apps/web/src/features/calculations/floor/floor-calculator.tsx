@@ -15,6 +15,7 @@ import { areaRoomAreaM2, totalAreaM2, type AreaRoom } from "../shared/area-room"
 import { DecimalField } from "../shared/decimal-field";
 import { FlowHeader } from "../shared/flow-header";
 import { StepFooter } from "../shared/step-footer";
+import { useAddedToBudget } from "../shared/use-added-to-budget";
 
 type FloorStep = "rooms" | "box" | "waste" | "result";
 
@@ -46,7 +47,7 @@ export function FloorCalculator() {
   const [rooms, setRooms] = useState<AreaRoom[]>([]);
   const [coverage, setCoverage] = useState("");
   const [waste, setWaste] = useState(10);
-  const [addedToBudget, setAddedToBudget] = useState(false);
+  const [addedToBudget, setAddedToBudget] = useAddedToBudget(auth.activeCompany?.id);
 
   const coverageValue = parseDecimalInput(coverage);
   const roomsValid = rooms.length > 0;

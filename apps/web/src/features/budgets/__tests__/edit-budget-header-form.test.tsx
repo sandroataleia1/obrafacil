@@ -262,4 +262,104 @@ describe("EditBudgetHeaderForm", () => {
     expect(screen.queryByText("Não foi possível carregar este orçamento.")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument();
   });
+
+  // ================= ER1-ER4 (FRONTEND-BUDGETS-01A1 §13-14/§20) — PUT live-ref exact race =================
+  // §13: activeCompanyIdRef now updates via useLayoutEffect (synchronous,
+  // pre-paint) instead of useEffect, so a PUT for A resolving in the very
+  // same tick a switch to B commits can never read a stale `.current`.
+
+  /** ER1: PUT A success resolved immediately after the B commit never navigates. */
+  it("ER1: a PUT A resolving in the exact tick after switching to B never navigates", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget());
+    let resolveUpdate: (value: Budget) => void = () => {};
+    vi.mocked(updateBudget).mockImplementation(
+      () => new Promise((resolve) => { resolveUpdate = resolve; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    // Switch to B and resolve A's in-flight PUT in the SAME synchronous
+    // block, before any further await gives an effect a chance to run —
+    // this is the exact race the useLayoutEffect fix targets.
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+    resolveUpdate(draftBudget());
+
+    await waitFor(() => expect(updateBudget).toHaveBeenCalledTimes(1));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  /** ER2: PUT A error resolved in the exact same tick never surfaces as an error under B. */
+  it("ER2: a PUT A error resolving in the exact tick after switching to B never appears", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget());
+    let rejectUpdate: (reason: unknown) => void = () => {};
+    vi.mocked(updateBudget).mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectUpdate = reject; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+    rejectUpdate(new ApiError(500, "boom"));
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("boom")).not.toBeInTheDocument();
+    expect(screen.queryByText("Não foi possível salvar as alterações.")).not.toBeInTheDocument();
+  });
+
+  /** ER3: A's `finally` (submitting=false) never touches B's own, independent submitting state. */
+  it("ER3: A's finally block never alters B's own submitting state", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget());
+    let resolveUpdateA: (value: Budget) => void = () => {};
+    vi.mocked(updateBudget).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveUpdateA = resolve; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+
+    // B independently starts its own PUT — must be a real, non-disabled submit.
+    let resolveUpdateB: (value: Budget) => void = () => {};
+    vi.mocked(updateBudget).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveUpdateB = resolve; })
+    );
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+    expect(screen.getByRole("button", { name: "Salvando..." })).toBeDisabled();
+
+    // A's PUT resolves late — its `finally` must not flip B's submitting off mid-flight.
+    resolveUpdateA(draftBudget());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("button", { name: "Salvando..." })).toBeDisabled();
+
+    resolveUpdateB(draftBudget());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orcamentos/budget-1"));
+  });
+
+  /** ER4: B keeps resolving its OWN skeleton/not-found/error strictly from its own request — already covered by ET2-ET4, restated here under the ER numbering for FRONTEND-BUDGETS-01A1 traceability. */
+  it("ER4: Company B's own load outcome (not A's) governs what B renders", async () => {
+    vi.mocked(getBudget).mockRejectedValueOnce(new ApiError(404, "not found"));
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByText("Orçamento não encontrado")).toBeInTheDocument());
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    vi.mocked(getBudget).mockResolvedValueOnce(draftBudget({ title: "Orçamento B" }));
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Orçamento B")).toBeInTheDocument());
+    expect(screen.queryByText("Orçamento não encontrado")).not.toBeInTheDocument();
+  });
 });
