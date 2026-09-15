@@ -95,7 +95,21 @@ export async function ensureCsrfCookie(): Promise<void> {
 
 interface ApiRequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  /** A plain JSON-serializable value, or a `FormData` for multipart
+   * (file upload) requests — see FRONTEND-COMPANY-PROFILE-01 §6-8. */
   body?: unknown;
+}
+
+/**
+ * §8: a safe, SSR-proof way to tell a `FormData` body apart from a JSON
+ * one. `typeof FormData !== "undefined"` guards the check itself (no
+ * module-scope browser-only access — this runs inside the function, at
+ * call time, never at import time), and `instanceof` never throws even
+ * when `FormData` doesn't exist as a global (short-circuited by the
+ * `typeof` check first).
+ */
+function isFormDataBody(body: unknown): body is FormData {
+  return typeof FormData !== "undefined" && body instanceof FormData;
 }
 
 /**
@@ -108,6 +122,7 @@ interface ApiRequestOptions {
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const isMutating = method !== "GET";
+  const isFormData = isFormDataBody(options.body);
 
   if (isMutating) {
     // Throws (ApiError or ApiNetworkError) on failure, which propagates
@@ -116,7 +131,11 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   }
 
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (options.body !== undefined) {
+  // §7: a FormData body NEVER gets a manual Content-Type — the browser
+  // sets `multipart/form-data; boundary=...` itself when it sees the
+  // fetch `body` is a FormData instance. Setting it here would omit the
+  // boundary and the server could never parse the multipart body.
+  if (options.body !== undefined && !isFormData) {
     headers["Content-Type"] = "application/json";
   }
   if (isMutating) {
@@ -130,7 +149,11 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       method,
       credentials: "include",
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: isFormData
+        ? (options.body as FormData)
+        : options.body !== undefined
+          ? JSON.stringify(options.body)
+          : undefined,
     });
   } catch {
     throw new ApiNetworkError();

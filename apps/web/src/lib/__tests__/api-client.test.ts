@@ -185,4 +185,151 @@ describe("api-client", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
+
+  // ================= HTTP1-HTTP10 (FRONTEND-COMPANY-PROFILE-01 §6-9) — FormData/multipart support =================
+
+  /** HTTP1: a JSON body still gets Content-Type: application/json. */
+  it("HTTP1: a JSON body still sets Content-Type: application/json", async () => {
+    const fetchMock = routedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiRequest("/api/v1/login", { method: "POST", body: { email: "a@b.com" } });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/api/v1/login"))!;
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  /** HTTP2: a JSON body is still JSON.stringify'd. */
+  it("HTTP2: a JSON body is still JSON.stringify'd", async () => {
+    const fetchMock = routedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiRequest("/api/v1/login", { method: "POST", body: { email: "a@b.com" } });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/api/v1/login"))!;
+    expect(call[1].body).toBe(JSON.stringify({ email: "a@b.com" }));
+  });
+
+  /** HTTP3: a FormData body never gets a manually-set Content-Type. */
+  it("HTTP3: a FormData body has no manually-set Content-Type", async () => {
+    const fetchMock = routedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"], { type: "image/png" }), "logo.png");
+    await apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/logo"))!;
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBeUndefined();
+  });
+
+  /** HTTP4: a FormData body is passed directly to fetch, never stringified. */
+  it("HTTP4: a FormData body reaches fetch directly, unmodified", async () => {
+    const fetchMock = routedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"], { type: "image/png" }), "logo.png");
+    await apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/logo"))!;
+    expect(call[1].body).toBe(form);
+    expect(call[1].body).toBeInstanceOf(FormData);
+  });
+
+  /** HTTP5: a mutating FormData request still fetches the CSRF cookie first. */
+  it("HTTP5: a FormData mutating request still calls ensureCsrfCookie first", async () => {
+    const calledUrls: string[] = [];
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      calledUrls.push(url);
+      if (url.includes("csrf-cookie")) return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"]), "logo.png");
+    await apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    expect(calledUrls).toHaveLength(2);
+    expect(calledUrls[0]).toContain("/sanctum/csrf-cookie");
+    expect(calledUrls[1]).toContain("/logo");
+  });
+
+  /** HTTP6: X-XSRF-TOKEN is preserved for a FormData request. */
+  it("HTTP6: X-XSRF-TOKEN header is preserved for a FormData request", async () => {
+    document.cookie = "XSRF-TOKEN=abc123";
+    const fetchMock = routedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"]), "logo.png");
+    await apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/logo"))!;
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers["X-XSRF-TOKEN"]).toBe("abc123");
+  });
+
+  /** HTTP7: credentials: include is preserved for a FormData request. */
+  it("HTTP7: credentials: include is preserved for a FormData request", async () => {
+    const fetchMock = routedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"]), "logo.png");
+    await apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/logo"))!;
+    expect(call[1].credentials).toBe("include");
+  });
+
+  /** HTTP8: a 422 on a multipart request becomes ApiValidationError. */
+  it("HTTP8: a 422 multipart response becomes ApiValidationError", async () => {
+    const fetchMock = routedFetchMock({
+      "/logo": () =>
+        new Response(JSON.stringify({ message: "Validation failed", errors: { logo: ["Invalid file."] } }), {
+          status: 422,
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"]), "logo.svg");
+    const promise = apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    await expect(promise).rejects.toBeInstanceOf(ApiValidationError);
+    await expect(promise.catch((error: ApiValidationError) => error.errors.logo)).resolves.toEqual(["Invalid file."]);
+  });
+
+  /** HTTP9: a 500 on a multipart request becomes ApiError. */
+  it("HTTP9: a 500 multipart response becomes ApiError", async () => {
+    const fetchMock = routedFetchMock({
+      "/logo": () => new Response(JSON.stringify({ message: "boom" }), { status: 500 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"]), "logo.png");
+    const promise = apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+  });
+
+  /** HTTP10: a network failure on a multipart request becomes ApiNetworkError. */
+  it("HTTP10: a network failure on a multipart request becomes ApiNetworkError", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("csrf-cookie")) return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.reject(new TypeError("Failed to fetch"));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"]), "logo.png");
+    const promise = apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    await expect(promise).rejects.toBeInstanceOf(ApiNetworkError);
+  });
 });

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Bell, ChevronRight, Settings } from "lucide-react";
+import { Bell, Building2, ChevronRight, Settings } from "lucide-react";
 
 import { PageTitle } from "@/components/shared/page-title";
 
@@ -10,10 +10,17 @@ interface SettingsHubItem {
   icon: typeof Bell;
 }
 
-// Only one item exists this round (Gate NOTIFICATIONS-UI-01 §4) — the hub
-// exists so future settings (Empresa, Usuários, OS, ...) have a place to
-// land without reshuffling navigation again.
+// FRONTEND-COMPANY-PROFILE-01 §3/§48: Empresa first — it's the main
+// organizational setting — followed by Notificações. The hub exists so
+// future settings (Usuários, OS, ...) have a place to land without
+// reshuffling navigation again.
 const SETTINGS_HUB_ITEMS: SettingsHubItem[] = [
+  {
+    href: "/configuracoes/empresa",
+    label: "Empresa",
+    description: "Dados comerciais, endereço, logo e configurações regionais.",
+    icon: Building2,
+  },
   {
     href: "/configuracoes/notificacoes",
     label: "Notificações",
