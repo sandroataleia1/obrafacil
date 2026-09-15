@@ -1,3 +1,4 @@
+import { useEffect, useLayoutEffect } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -609,5 +610,235 @@ describe("ProposalView", () => {
     await screen.findByText("Proposta recusada");
     expect(screen.getByRole("button", { name: /visualizar pdf/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /baixar pdf/i })).toBeInTheDocument();
+  });
+
+  // ================= PO6-PO10 (PROPOSAL-DOC-01B1 §13-17/§20) — public token ownership =================
+
+  /** PO6: a normal single-token load works unchanged. */
+  it("PO6: a normal public token load renders normally", async () => {
+    vi.mocked(getPublicProposal).mockResolvedValue(pendingProposal());
+    render(<ProposalView token="tok-a" />);
+
+    await screen.findByText("Reforma de fachada");
+    expect(getPublicProposal).toHaveBeenCalledWith("tok-a");
+  });
+
+  /**
+   * PO7/§14: a GET for token A pending, the route's token switches to B,
+   * and A's GET resolves in the EXACT same synchronous block as the
+   * `rerender` that commits the switch — before any further `await` gives
+   * a passive effect a chance to run. A must never overwrite B's own,
+   * completely separate state. Mirrors the `useLayoutEffect` exact-race
+   * pattern already established for `BudgetDetail`/`EditBudgetHeaderForm`.
+   */
+  it("PO7: a late GET for token A resolving in the exact tick after switching to B never overwrites B", async () => {
+    let resolveA!: (value: PublicProposal) => void;
+    vi.mocked(getPublicProposal)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveA = resolve;
+          })
+      )
+      .mockResolvedValueOnce(pendingProposal({ title: "Proposta B" }));
+
+    const { rerender } = render(<ProposalView token="tok-a" />);
+    await waitFor(() => expect(getPublicProposal).toHaveBeenCalledWith("tok-a"));
+
+    // Switch to B and resolve A's in-flight GET in the SAME synchronous
+    // block, before any further await.
+    rerender(<ProposalView token="tok-b" />);
+    resolveA(pendingProposal({ title: "Proposta A (stale)" }));
+    await screen.findByText("Proposta B");
+
+    expect(screen.queryByText("Proposta A (stale)")).not.toBeInTheDocument();
+  });
+
+  /**
+   * PO8/§16: a PDF fetch for token A pending, token switches to B, and
+   * the Blob resolves in the exact same synchronous block as the switch.
+   * A's placeholder must close and never navigate; B never sees an error.
+   */
+  it("PO8: a late PDF response for token A resolving in the exact tick after switching to B closes A's placeholder", async () => {
+    vi.mocked(getPublicProposal)
+      .mockResolvedValueOnce(pendingProposal())
+      .mockResolvedValueOnce(pendingProposal({ title: "Proposta B" }));
+    let resolvePdf!: (value: Blob) => void;
+    vi.mocked(getPublicProposalPdf).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePdf = resolve;
+      })
+    );
+    const placeholder = { closed: false, location: { href: "" }, close: vi.fn(), opener: {} } as unknown as Window;
+    vi.spyOn(window, "open").mockReturnValue(placeholder);
+    const user = userEvent.setup();
+    const { rerender } = render(<ProposalView token="tok-a" />);
+    await screen.findByText("Reforma de fachada");
+
+    await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
+
+    rerender(<ProposalView token="tok-b" />);
+    resolvePdf(new Blob(["%PDF-fake"]));
+    await screen.findByText("Proposta B");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(placeholder.location.href).toBe("");
+    expect(placeholder.close).toHaveBeenCalled();
+    expect(screen.queryByText("Não foi possível gerar o PDF agora.")).not.toBeInTheDocument();
+  });
+
+  /** PO9/§15: a decision (approve) for token A resolving after switching to B is discarded — never applied to B, never shown as an error under B. */
+  it("PO9: a stale approve response for token A never applies under token B", async () => {
+    vi.mocked(getPublicProposal)
+      .mockResolvedValueOnce(pendingProposal())
+      .mockResolvedValueOnce(pendingProposal({ title: "Proposta B" }));
+    let resolveApprove!: (value: PublicProposal) => void;
+    vi.mocked(approvePublicProposal).mockReturnValue(
+      new Promise((resolve) => {
+        resolveApprove = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<ProposalView token="tok-a" />);
+    await screen.findByText("Reforma de fachada");
+
+    await user.type(screen.getByLabelText("Seu nome"), "Cliente A");
+    await user.click(screen.getByRole("button", { name: "Aprovar proposta" }));
+
+    rerender(<ProposalView token="tok-b" />);
+    resolveApprove(pendingProposal({ status: "approved", decision_by_name: "Cliente A" }));
+    await screen.findByText("Proposta B");
+
+    expect(screen.queryByText("Proposta aprovada")).not.toBeInTheDocument();
+  });
+
+  /** PO10: B maintains its OWN independent loading/error/action state, never inherited or clobbered by A's resolution. */
+  it("PO10: B renders its own independent state — a normal, non-disabled decision UI", async () => {
+    vi.mocked(getPublicProposal)
+      .mockResolvedValueOnce(pendingProposal())
+      .mockResolvedValueOnce(pendingProposal({ title: "Proposta B" }));
+    let resolveApprove!: (value: PublicProposal) => void;
+    vi.mocked(approvePublicProposal).mockReturnValue(
+      new Promise((resolve) => {
+        resolveApprove = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<ProposalView token="tok-a" />);
+    await screen.findByText("Reforma de fachada");
+
+    await user.type(screen.getByLabelText("Seu nome"), "Cliente A");
+    await user.click(screen.getByRole("button", { name: "Aprovar proposta" }));
+
+    rerender(<ProposalView token="tok-b" />);
+    await screen.findByText("Proposta B");
+
+    // B's own decision buttons are a fresh, non-disabled instance — not
+    // stuck in A's "deciding" state.
+    expect(screen.getByRole("button", { name: "Aprovar proposta" })).not.toBeDisabled();
+    expect(screen.getByLabelText("Seu nome")).toHaveValue("");
+
+    resolveApprove(pendingProposal({ status: "approved" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("Proposta aprovada")).not.toBeInTheDocument();
+  });
+
+  /** PP8: a blocked popup on the public page shows the same friendly orientation message, and never fetches the PDF. */
+  it("PP8: a blocked popup shows the friendly message and never fetches the PDF", async () => {
+    vi.mocked(getPublicProposal).mockResolvedValue(pendingProposal());
+    vi.spyOn(window, "open").mockReturnValue(null);
+    const user = userEvent.setup();
+    render(<ProposalView token="tok-pp8" />);
+    await screen.findByText("Reforma de fachada");
+
+    await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
+
+    await screen.findByText(
+      "Não foi possível abrir uma nova aba. Permita pop-ups para visualizar o PDF ou use Baixar PDF."
+    );
+    expect(getPublicProposalPdf).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * PROPOSAL-DOC-01B1 §7/§10/§13: the same low-level ordering proof as
+ * `budget-detail.test.tsx` (see its comment for the full rationale),
+ * applied to `tokenRef`. React Testing Library's `rerender()` flushes
+ * BOTH layout and passive effects synchronously (verified there), so the
+ * PO7/PO8 tests above are end-to-end behavioral regression proofs — this
+ * is the dedicated proof that `useLayoutEffect` genuinely commits
+ * `tokenRef.current` before any `useEffect` in the same commit could.
+ */
+describe("useLayoutEffect tokenRef ordering (PROPOSAL-DOC-01B1 §7/§10/§13)", () => {
+  it("a useLayoutEffect ref-write always commits before a useEffect in the SAME render", () => {
+    const log: string[] = [];
+
+    function LayoutWriter({ value }: { value: string }) {
+      useLayoutEffect(() => {
+        log.push(`layout:${value}`);
+      }, [value]);
+      return null;
+    }
+
+    function PassiveReader({ value }: { value: string }) {
+      useEffect(() => {
+        log.push(`passive:${value}`);
+      }, [value]);
+      return null;
+    }
+
+    function Harness({ value }: { value: string }) {
+      return (
+        <>
+          <LayoutWriter value={value} />
+          <PassiveReader value={value} />
+        </>
+      );
+    }
+
+    const { rerender } = render(<Harness value="tok-a" />);
+    expect(log).toEqual(["layout:tok-a", "passive:tok-a"]);
+
+    log.length = 0;
+    rerender(<Harness value="tok-b" />);
+    expect(log).toEqual(["layout:tok-b", "passive:tok-b"]);
+  });
+
+  it("a useEffect-based tokenRef write would NOT yet be visible to a layout-phase consumer in the SAME commit (the pre-fix hazard)", () => {
+    const observedDuringLayout: (string | undefined)[] = [];
+
+    function EffectWriter({ value, refObj }: { value: string; refObj: { current: string | undefined } }) {
+      useEffect(() => {
+        refObj.current = value;
+      }, [value, refObj]);
+      return null;
+    }
+
+    function LayoutObserver({ refObj }: { refObj: { current: string | undefined } }) {
+      useLayoutEffect(() => {
+        observedDuringLayout.push(refObj.current);
+      });
+      return null;
+    }
+
+    const refObj: { current: string | undefined } = { current: undefined };
+    const { rerender } = render(
+      <>
+        <EffectWriter value="tok-a" refObj={refObj} />
+        <LayoutObserver refObj={refObj} />
+      </>
+    );
+    expect(observedDuringLayout[0]).toBeUndefined();
+
+    observedDuringLayout.length = 0;
+    rerender(
+      <>
+        <EffectWriter value="tok-b" refObj={refObj} />
+        <LayoutObserver refObj={refObj} />
+      </>
+    );
+    // The layout-phase consumer still sees the OLD token — exactly the
+    // stale read a `useEffect`-based `tokenRef` would have produced.
+    expect(observedDuringLayout[0]).toBe("tok-a");
   });
 });

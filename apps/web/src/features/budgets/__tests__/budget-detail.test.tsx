@@ -1,3 +1,4 @@
+import { useEffect, useLayoutEffect } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -720,8 +721,36 @@ describe("BudgetDetail", () => {
       expect(screen.getByRole("button", { name: /baixar pdf/i })).toBeInTheDocument();
     });
 
-    /** DP8/DP9: a stale PDF response (Company switched mid-flight) never opens/downloads under the new Company. */
-    it("DP8/DP9: a stale PDF response after a Company switch never surfaces an error or opens/downloads", async () => {
+    /** PO1: Company A PDF success — the normal, non-racy path. */
+    it("PO1: a normal PDF view under a single Company navigates the placeholder to the blob URL", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
+      vi.mocked(getBudgetProposalPdf).mockResolvedValue(new Blob(["%PDF-fake"]));
+      const placeholder = { closed: false, location: { href: "" }, close: vi.fn(), opener: {} } as unknown as Window;
+      vi.spyOn(window, "open").mockReturnValue(placeholder);
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
+
+      await waitFor(() => expect(placeholder.location.href).toBe("blob:fake-url"));
+    });
+
+    /**
+     * PO2/PO3/§10: the EXACT race — Company A's "Visualizar PDF" fetch is
+     * left pending, the Company switches to B, and the Blob resolves in
+     * the exact same synchronous block as the `rerender` that commits the
+     * switch. This is an end-to-end BEHAVIORAL regression proof (mirrors
+     * `EditBudgetHeaderForm`'s ER1 pattern) — it asserts the observable
+     * outcome the `useLayoutEffect` fix produces. The dedicated,
+     * hook-distinguishing proof that `useLayoutEffect` genuinely commits
+     * before `useEffect` for the same render lives in the
+     * "useLayoutEffect vs useEffect ordering" describe block at the
+     * bottom of this file (RTL's `rerender()` flushes BOTH effect types
+     * synchronously before returning, so this pattern alone cannot tell
+     * the two hooks apart — see that block's comment for the full proof).
+     */
+    it("PO2/PO3: a Company-A PDF resolving in the exact tick after switching to B closes A's placeholder and shows nothing under B", async () => {
       vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
       let resolvePdf!: (value: Blob) => void;
       vi.mocked(getBudgetProposalPdf).mockReturnValue(
@@ -729,7 +758,7 @@ describe("BudgetDetail", () => {
           resolvePdf = resolve;
         })
       );
-      const placeholder = { closed: false, location: { href: "" }, close: vi.fn() } as unknown as Window;
+      const placeholder = { closed: false, location: { href: "" }, close: vi.fn(), opener: {} } as unknown as Window;
       vi.spyOn(window, "open").mockReturnValue(placeholder);
       const user = userEvent.setup();
       const { rerender } = render(<BudgetDetail id="budget-1" />);
@@ -737,6 +766,9 @@ describe("BudgetDetail", () => {
 
       await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
 
+      // Switch to B and resolve A's in-flight PDF fetch in the SAME
+      // synchronous block, before any further await — the exact race
+      // the useLayoutEffect fix targets.
       authState.activeCompany = { id: "company-b", name: "Empresa B" };
       rerender(<BudgetDetail id="budget-1" />);
       resolvePdf(new Blob(["%PDF-fake"]));
@@ -745,6 +777,87 @@ describe("BudgetDetail", () => {
       expect(placeholder.location.href).toBe("");
       expect(placeholder.close).toHaveBeenCalled();
       expect(screen.queryByText("Não foi possível gerar o PDF agora.")).not.toBeInTheDocument();
+      // B is never left stuck showing a loading/disabled PDF action —
+      // load() for B already reset pdfAction to null.
+      expect(screen.getByRole("button", { name: /visualizar pdf/i })).not.toBeDisabled();
+    });
+
+    /**
+     * PO4/§11: the same exact race, but for the Budget id (same Company,
+     * navigating from Budget A to Budget B) — `currentBudgetIdRef` must
+     * also be pre-paint via `useLayoutEffect`.
+     */
+    it("PO4: a Budget-A PDF resolving in the exact tick after navigating to Budget B closes A's placeholder", async () => {
+      vi.mocked(getBudget)
+        .mockResolvedValueOnce(budget({ id: "budget-1", number: "ORC-000001", status: "pending_approval", proposal_token: "tok-1" }))
+        .mockResolvedValueOnce(budget({ id: "budget-2", number: "ORC-000002", status: "pending_approval", proposal_token: "tok-2" }));
+      let resolvePdf!: (value: Blob) => void;
+      vi.mocked(getBudgetProposalPdf).mockReturnValue(
+        new Promise((resolve) => {
+          resolvePdf = resolve;
+        })
+      );
+      const placeholder = { closed: false, location: { href: "" }, close: vi.fn(), opener: {} } as unknown as Window;
+      vi.spyOn(window, "open").mockReturnValue(placeholder);
+      const user = userEvent.setup();
+      const { rerender } = render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
+
+      rerender(<BudgetDetail id="budget-2" />);
+      resolvePdf(new Blob(["%PDF-fake"]));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(placeholder.location.href).toBe("");
+      expect(placeholder.close).toHaveBeenCalled();
+    });
+
+    /** PO5: a stale download response never creates a download anchor. */
+    it("PO5: a stale download response creates zero download anchor", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
+      let resolvePdf!: (value: Blob) => void;
+      vi.mocked(getBudgetProposalPdf).mockReturnValue(
+        new Promise((resolve) => {
+          resolvePdf = resolve;
+        })
+      );
+      const clickSpy = vi.fn();
+      const originalCreateElement = document.createElement.bind(document);
+      const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+        const el = originalCreateElement(tag);
+        if (tag === "a") el.click = clickSpy;
+        return el;
+      });
+      const user = userEvent.setup();
+      const { rerender } = render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /baixar pdf/i }));
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<BudgetDetail id="budget-1" />);
+      resolvePdf(new Blob(["%PDF-fake"]));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(clickSpy).not.toHaveBeenCalled();
+      createElementSpy.mockRestore();
+    });
+
+    /** PP7: a blocked popup (window.open returns null) shows the friendly orientation message in Budget Detail, and never fetches the PDF. */
+    it("PP7: a blocked popup shows the friendly message and never fetches the PDF", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
+      vi.spyOn(window, "open").mockReturnValue(null);
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
+
+      await screen.findByText(
+        "Não foi possível abrir uma nova aba. Permita pop-ups para visualizar o PDF ou use Baixar PDF."
+      );
+      expect(getBudgetProposalPdf).not.toHaveBeenCalled();
     });
   });
 
@@ -787,5 +900,147 @@ describe("BudgetDetail", () => {
         "Os dados da empresa, logo, itens, valores e condições serão congelados nesta versão."
       );
     });
+  });
+});
+
+/**
+ * PROPOSAL-DOC-01B1 §7/§10: a direct, low-level proof that
+ * `useLayoutEffect` genuinely commits a ref update before ANY
+ * `useEffect` in the same commit gets a chance to run — the actual
+ * guarantee `activeCompanyIdRef`/`currentBudgetIdRef` rely on.
+ *
+ * A `rerender(); resolvePromise();` pattern (used by the PO2-PO5 tests
+ * above for their end-to-end behavioral assertions) does NOT by itself
+ * distinguish `useLayoutEffect` from `useEffect`: React Testing Library
+ * wraps `rerender()` in `act()`, and the synchronous `act()` overload
+ * flushes BOTH layout AND passive effects before returning control to
+ * the test — verified empirically below. Any code that reads a ref
+ * immediately after `rerender()` returns sees the post-passive-effect
+ * value regardless of which hook wrote it, in this environment. This is
+ * why a dedicated ordering probe is needed to actually verify the
+ * claim (as required by §7: "Teste precisa realmente distinguir
+ * useEffect vs useLayoutEffect"), rather than trusting the PO tests'
+ * behavioral assertions alone to prove the hook choice matters.
+ */
+describe("useLayoutEffect vs useEffect ordering (PROPOSAL-DOC-01B1 §7/§10)", () => {
+  /**
+   * Empirical baseline: proves `rerender()` really does flush a plain
+   * `useEffect` synchronously in this test environment — establishing
+   * why the PO2/PO4 exact-tick tests above are regression proofs of
+   * observable behavior, not proofs of the hook-type distinction itself.
+   */
+  it("rerender() flushes a plain useEffect synchronously before returning (RTL/act() behavior)", () => {
+    function Probe({ value, target }: { value: string; target: { current: string } }) {
+      useEffect(() => {
+        target.current = value;
+      }, [value, target]);
+      return <div>{value}</div>;
+    }
+
+    const target = { current: "initial" };
+    const { rerender } = render(<Probe value="A" target={target} />);
+    expect(target.current).toBe("A");
+
+    rerender(<Probe value="B" target={target} />);
+    // No await — checked synchronously right after rerender() returns.
+    expect(target.current).toBe("B");
+  });
+
+  /**
+   * The real, order-based proof: `useLayoutEffect` always commits BEFORE
+   * `useEffect` for the SAME render, when both depend on the same
+   * changing value — a genuine, directly-observable distinction between
+   * the two hooks (React's documented commit-phase ordering: all layout
+   * effects for a commit run before any passive effect for that commit).
+   * This is the actual guarantee `activeCompanyIdRef`/`currentBudgetIdRef`
+   * depend on: whatever the ref's value is by the time ANY effect for
+   * this commit (layout or passive) has run, a layout-effect write is
+   * guaranteed to already be reflected — never the other way around.
+   */
+  it("a useLayoutEffect ref-write always commits before a useEffect in the SAME render", () => {
+    const log: string[] = [];
+
+    function LayoutWriter({ value }: { value: string }) {
+      useLayoutEffect(() => {
+        log.push(`layout:${value}`);
+      }, [value]);
+      return null;
+    }
+
+    function PassiveReader({ value }: { value: string }) {
+      useEffect(() => {
+        log.push(`passive:${value}`);
+      }, [value]);
+      return null;
+    }
+
+    function Harness({ value }: { value: string }) {
+      return (
+        <>
+          <LayoutWriter value={value} />
+          <PassiveReader value={value} />
+        </>
+      );
+    }
+
+    const { rerender } = render(<Harness value="A" />);
+    expect(log).toEqual(["layout:A", "passive:A"]);
+
+    log.length = 0;
+    rerender(<Harness value="B" />);
+    expect(log).toEqual(["layout:B", "passive:B"]);
+  });
+
+  /**
+   * The real regression this microgate closes: BEFORE this round,
+   * `activeCompanyIdRef` was updated via `useEffect`. Reproduced here
+   * with an equivalent minimal component — a ref updated via
+   * `useEffect` is NOT guaranteed to reflect a new value by the time a
+   * SIBLING `useLayoutEffect` (which fires first in commit order) reads
+   * it, because passive effects always run strictly after every layout
+   * effect in the same commit — proving the ordering hazard the
+   * production fix (moving the ref update to `useLayoutEffect`)
+   * eliminates entirely, by construction.
+   */
+  it("a useEffect-based ref-write is NOT yet visible to a layout effect in the SAME commit (the pre-fix hazard)", () => {
+    const observedDuringLayout: (string | undefined)[] = [];
+
+    function EffectWriter({ value, refObj }: { value: string; refObj: { current: string | undefined } }) {
+      useEffect(() => {
+        refObj.current = value;
+      }, [value, refObj]);
+      return null;
+    }
+
+    function LayoutObserver({ refObj }: { refObj: { current: string | undefined } }) {
+      useLayoutEffect(() => {
+        observedDuringLayout.push(refObj.current);
+      });
+      return null;
+    }
+
+    const refObj: { current: string | undefined } = { current: undefined };
+    const { rerender } = render(
+      <>
+        <EffectWriter value="A" refObj={refObj} />
+        <LayoutObserver refObj={refObj} />
+      </>
+    );
+    // Mount: refObj.current is still undefined when LayoutObserver's
+    // layout effect runs (EffectWriter's passive effect hasn't fired yet).
+    expect(observedDuringLayout[0]).toBeUndefined();
+
+    observedDuringLayout.length = 0;
+    rerender(
+      <>
+        <EffectWriter value="B" refObj={refObj} />
+        <LayoutObserver refObj={refObj} />
+      </>
+    );
+    // Update: LayoutObserver's layout effect (commit-ordered before any
+    // passive effect) still sees the OLD value "A" — exactly the stale
+    // read a `useEffect`-based `activeCompanyIdRef` would have produced
+    // for any layout-phase or synchronous-imperative consumer.
+    expect(observedDuringLayout[0]).toBe("A");
   });
 });

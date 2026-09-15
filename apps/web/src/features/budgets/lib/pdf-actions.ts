@@ -13,7 +13,14 @@
 
 import { ApiError, ApiNetworkError } from "@/lib/api-client";
 
-export type PdfActionErrorKind = "not-found" | "rate-limited" | "server" | "network" | "stale" | "unknown";
+export type PdfActionErrorKind =
+  | "not-found"
+  | "rate-limited"
+  | "server"
+  | "network"
+  | "stale"
+  | "popup-blocked"
+  | "unknown";
 
 export interface PdfActionResult {
   ok: boolean;
@@ -31,15 +38,38 @@ function classifyPdfError(error: unknown): PdfActionErrorKind {
 }
 
 /**
- * §31: opens a blank placeholder tab SYNCHRONOUSLY, inside the click
- * handler, before any `await` — some browsers (notably mobile Safari)
- * block `window.open` once it's no longer directly inside a user
- * gesture's synchronous call stack. Returns `null` when the popup itself
- * was blocked (an ad-blocker, a strict popup setting); the caller falls
- * back to a controlled message rather than silently doing nothing.
+ * PROPOSAL-DOC-01B1 §1-2: opens a blank placeholder tab SYNCHRONOUSLY,
+ * inside the click handler, before any `await` — some browsers (notably
+ * mobile Safari) block `window.open` once it's no longer directly inside
+ * a user gesture's synchronous call stack.
+ *
+ * Deliberately does NOT pass `noopener` (or `noreferrer`) as a
+ * windowFeatures token: per spec, `window.open` with `noopener` is
+ * PERMITTED to return `null` even when the tab was actually created,
+ * because the caller is given no handle to it at all — exactly the
+ * WindowProxy our `resolvePdfIntoPlaceholder` needs later for
+ * `placeholder.location.href = objectUrl`. Instead, this keeps the real
+ * handle and neutralizes `window.opener` on the NEW tab's side directly
+ * (`placeholder.opener = null`) — the new tab can no longer reach back
+ * into this page via `window.opener`, but OUR reference to its
+ * WindowProxy stays valid and usable for navigation.
+ *
+ * Returns `null` only when the popup was genuinely blocked (browser
+ * popup blocker, an extension) — the caller must treat this as a real,
+ * distinct failure (`"popup-blocked"`), never as if a tab had opened.
  */
 export function openPdfPlaceholder(): Window | null {
-  return window.open("", "_blank", "noopener,noreferrer");
+  const placeholder = window.open("", "_blank");
+  if (placeholder) {
+    try {
+      placeholder.opener = null;
+    } catch {
+      // A handful of browsers make `opener` non-writable in some
+      // configurations — the WindowProxy itself remains perfectly
+      // usable for navigation even when this assignment silently fails.
+    }
+  }
+  return placeholder;
 }
 
 /**
@@ -48,6 +78,11 @@ export function openPdfPlaceholder(): Window | null {
  * `Window` `openPdfPlaceholder()` already returned — never opens its own
  * tab (that would be the exact async-`window.open` anti-pattern this is
  * built to avoid).
+ *
+ * §5: a `null` placeholder (popup blocked) is a terminal failure decided
+ * BEFORE any network activity — `fetchBlob` is never called and no
+ * `ObjectURL` is ever created in that case, so a blocked popup can never
+ * be mistaken for success.
  *
  * `isStale()` is re-checked both after the fetch resolves/rejects AND
  * (implicitly, by the caller never calling this again) before it starts —
@@ -61,6 +96,10 @@ export async function resolvePdfIntoPlaceholder(
   fetchBlob: () => Promise<Blob>,
   isStale: () => boolean
 ): Promise<PdfActionResult> {
+  if (placeholder === null) {
+    return { ok: false, error: "popup-blocked" };
+  }
+
   let blob: Blob;
   try {
     blob = await fetchBlob();
@@ -78,9 +117,21 @@ export async function resolvePdfIntoPlaceholder(
     return { ok: false, error: "stale" };
   }
 
+  if (placeholder.closed) {
+    return { ok: false, error: "unknown" };
+  }
+
+  // §6: if navigating the placeholder throws for any reason, the
+  // freshly-created ObjectURL is revoked immediately rather than left to
+  // the 60s timeout — it will never be consumed by a page that failed to
+  // navigate to it.
   const url = URL.createObjectURL(blob);
-  if (placeholder && !placeholder.closed) {
+  try {
     placeholder.location.href = url;
+  } catch (navigationError) {
+    URL.revokeObjectURL(url);
+    closePlaceholder(placeholder);
+    return { ok: false, error: classifyPdfError(navigationError) };
   }
   // §32: never revoke immediately — the placeholder tab still needs to
   // load the resource. A minute is generous for even a slow render.
@@ -136,6 +187,7 @@ const PDF_ERROR_MESSAGE: Record<PdfActionErrorKind, string> = {
   server: "Não foi possível gerar o PDF agora.",
   network: "Não foi possível gerar o PDF agora. Verifique sua conexão.",
   stale: "",
+  "popup-blocked": "Não foi possível abrir uma nova aba. Permita pop-ups para visualizar o PDF ou use Baixar PDF.",
   unknown: "Não foi possível gerar o PDF agora.",
 };
 

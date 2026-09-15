@@ -13,7 +13,7 @@
  * from "ObraFácil" (which appears only as a discreet footer credit).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import { CheckCircle2, Download, Eye, XCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -109,7 +109,45 @@ function CompanyHeader({ company }: { company: ProposalCompany }) {
   );
 }
 
+/**
+ * PROPOSAL-DOC-01B1 §13-17: the public token is this route's whole
+ * ownership axis — there is no Company/tenant here, so `token` plays the
+ * same "which context legitimately owns this render" role
+ * `activeCompanyId` plays on the authenticated side.
+ *
+ * `ProposalView` is a thin, NEVER-remounted wrapper that owns exactly
+ * one thing: `tokenRef`, kept in sync with the current `token` prop via
+ * `useLayoutEffect` (pre-paint, so an async continuation from the OLD
+ * token resolving in the exact same tick a new token commits still sees
+ * the truth — mirrors `BudgetDetail`'s `activeCompanyIdRef`/
+ * `currentBudgetIdRef`). `ProposalViewInner` is keyed by `token`, so
+ * React fully remounts it whenever the token changes — every piece of
+ * transient UI state (name/note/nameError/confirmingReject/deciding/
+ * decisionError/pdfAction/pdfError, §17) disappears for free in the same
+ * render as the switch, the same guarantee `BudgetForm`'s
+ * key={activeCompanyId} wrapper already relies on. `tokenRef` itself
+ * lives OUTSIDE the remount boundary specifically so a still-in-flight
+ * promise from the just-unmounted OLD instance can still consult it to
+ * detect its own staleness (§14-16) — an imperative side effect like
+ * closing an orphaned PDF placeholder tab must fire regardless of
+ * whether the React instance that started it is still mounted.
+ */
 export function ProposalView({ token }: { token: string }) {
+  const tokenRef = useRef(token);
+  useLayoutEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  return <ProposalViewInner key={token} token={token} tokenRef={tokenRef} />;
+}
+
+function ProposalViewInner({ token, tokenRef }: { token: string; tokenRef: MutableRefObject<string> }) {
+  // Fixed for this instance's whole lifetime (a token change always
+  // remounts a fresh instance with a new `token` prop) — comparing
+  // against `tokenRef.current` at continuation time is what actually
+  // detects a stale response, not `token` itself.
+  const isStale = useCallback(() => tokenRef.current !== token, [tokenRef, token]);
+
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   const [name, setName] = useState("");
@@ -126,15 +164,21 @@ export function ProposalView({ token }: { token: string }) {
     setState({ status: "loading" });
     try {
       const proposal = await getPublicProposal(token);
+      // §14: a token switch mid-flight (this instance's own token being
+      // superseded) means this response no longer belongs to anything on
+      // screen — the fresh instance for the NEW token owns its own,
+      // completely separate `state`, so this never overwrites it.
+      if (isStale()) return;
       setState({ status: "loaded", proposal });
     } catch (err) {
+      if (isStale()) return;
       if (err instanceof ApiError && err.status === 404) {
         setState({ status: "not-found" });
         return;
       }
       setState({ status: "error" });
     }
-  }, [token]);
+  }, [token, isStale]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -142,15 +186,19 @@ export function ProposalView({ token }: { token: string }) {
   }, [load]);
 
   async function handleDecisionError(err: unknown) {
+    if (isStale()) return;
+
     if (err instanceof ApiError && err.status === 409) {
       // Someone else already decided (e.g. a second open tab) — never
       // retry the original action; show whichever state actually won.
       try {
         const fresh = await getPublicProposal(token);
+        if (isStale()) return;
         setState({ status: "loaded", proposal: fresh });
         setConfirmingReject(false);
         setDecisionError(null);
       } catch {
+        if (isStale()) return;
         setDecisionError(GENERIC_DECISION_ERROR);
       }
       return;
@@ -179,12 +227,17 @@ export function ProposalView({ token }: { token: string }) {
         accepted: true,
         note: note.trim() === "" ? null : note.trim(),
       });
+      // §15: an approve for A resolving after a switch to B must never
+      // replace B's state, surface an error under B, or (via the
+      // `finally` below) touch B's own independent `deciding` state.
+      if (isStale()) return;
       setState({ status: "loaded", proposal: updated });
       setConfirmingReject(false);
     } catch (err) {
+      if (isStale()) return;
       await handleDecisionError(err);
     } finally {
-      setDeciding(false);
+      if (!isStale()) setDeciding(false);
     }
   }
 
@@ -214,25 +267,33 @@ export function ProposalView({ token }: { token: string }) {
         name: trimmedName,
         note: note.trim() === "" ? null : note.trim(),
       });
+      if (isStale()) return;
       setState({ status: "loaded", proposal: updated });
       setConfirmingReject(false);
     } catch (err) {
+      if (isStale()) return;
       await handleDecisionError(err);
     } finally {
-      setDeciding(false);
+      if (!isStale()) setDeciding(false);
     }
   }
 
+  /**
+   * §16: `isStale` (backed by `tokenRef`, which survives this instance's
+   * own unmount) is what actually closes an orphaned placeholder tab when
+   * the token changes while the fetch is in flight — never the hardcoded
+   * `() => false` this used to pass, which made every PDF response look
+   * permanently "current" even after navigating away to a different
+   * proposal (e.g. the token in the URL changing without a full page
+   * reload).
+   */
   async function handleViewPdf(proposalNumber: string) {
     if (pdfAction) return;
     const placeholder = openPdfPlaceholder();
     setPdfAction("view");
     setPdfError(null);
-    const result = await resolvePdfIntoPlaceholder(
-      placeholder,
-      () => getPublicProposalPdf(token),
-      () => false
-    );
+    const result = await resolvePdfIntoPlaceholder(placeholder, () => getPublicProposalPdf(token), isStale);
+    if (isStale()) return;
     setPdfAction(null);
     if (!result.ok && result.error) {
       setPdfError(result.error === "rate-limited" ? RATE_LIMIT_MESSAGE : pdfActionErrorMessage(result.error));
@@ -244,11 +305,8 @@ export function ProposalView({ token }: { token: string }) {
     if (pdfAction) return;
     setPdfAction("download");
     setPdfError(null);
-    const result = await downloadPdfBlob(
-      () => getPublicProposalPdf(token),
-      `${proposalNumber}.pdf`,
-      () => false
-    );
+    const result = await downloadPdfBlob(() => getPublicProposalPdf(token), `${proposalNumber}.pdf`, isStale);
+    if (isStale()) return;
     setPdfAction(null);
     if (!result.ok && result.error) {
       setPdfError(result.error === "rate-limited" ? RATE_LIMIT_MESSAGE : pdfActionErrorMessage(result.error));

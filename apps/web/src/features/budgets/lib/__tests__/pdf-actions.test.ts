@@ -16,6 +16,7 @@ function fakeWindow(): Window {
     closed: false,
     location: { href: "" },
     close: vi.fn(),
+    opener: {},
   } as unknown as Window;
 }
 
@@ -37,14 +38,29 @@ describe("pdf-actions", () => {
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 
-  /** PB2: the placeholder tab is opened synchronously via window.open, before any fetch. */
-  it("PB2: openPdfPlaceholder calls window.open synchronously with a blank placeholder", () => {
-    const openSpy = vi.fn().mockReturnValue(fakeWindow());
+  /**
+   * PB2 (PROPOSAL-DOC-01B1 §7): corrected — this no longer merely checks
+   * that `window.open("", "_blank", "noopener,noreferrer")` "returns
+   * whatever the mock decided to return". It proves OUR actual contract:
+   * `window.open` is called WITHOUT a `noopener`/`noreferrer` windowFeatures
+   * string (which is legally permitted to return `null` even on success —
+   * exactly the incompatibility this microgate fixes), and the handle
+   * `openPdfPlaceholder()` returns is the SAME object `window.open` gave
+   * back (so it stays usable for the later `placeholder.location.href`
+   * navigation in `resolvePdfIntoPlaceholder`).
+   */
+  it("PB2: openPdfPlaceholder calls window.open without a noopener windowFeatures string, and returns window.open's own handle", () => {
+    const handle = fakeWindow();
+    const openSpy = vi.fn().mockReturnValue(handle);
     vi.stubGlobal("window", { open: openSpy });
 
-    openPdfPlaceholder();
+    const result = openPdfPlaceholder();
 
-    expect(openSpy).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    const call = openSpy.mock.calls[0]!;
+    expect(call).not.toContain("noopener");
+    expect(call).not.toContain("noopener,noreferrer");
+    expect(result).toBe(handle);
   });
 
   /** PB3: on success, the placeholder navigates to the created object URL. */
@@ -124,5 +140,111 @@ describe("pdf-actions", () => {
     );
 
     expect(result).toEqual({ ok: false, error: "network" });
+  });
+
+  // ================= PP1-PP8 (PROPOSAL-DOC-01B1 §19) — real popup semantics =================
+
+  /** PP1: openPdfPlaceholder returns a usable WindowProxy handle — the same one window.open gave back. */
+  it("PP1: open returns a usable WindowProxy handle", () => {
+    const handle = fakeWindow();
+    const openSpy = vi.fn().mockReturnValue(handle);
+    vi.stubGlobal("window", { open: openSpy });
+
+    const result = openPdfPlaceholder();
+
+    expect(result).not.toBeNull();
+    expect(result).toBe(handle);
+  });
+
+  /** PP2: opener is anulled on the handle when possible. */
+  it("PP2: opener is nulled out on the returned handle", () => {
+    const handle = fakeWindow();
+    vi.stubGlobal("window", { open: vi.fn().mockReturnValue(handle) });
+
+    openPdfPlaceholder();
+
+    expect(handle.opener).toBeNull();
+  });
+
+  /** PP2b: a handle where `opener` assignment throws (read-only in some browsers) is still returned usable, never swallowed into null. */
+  it("PP2b: a handle whose opener assignment throws is still returned as a usable handle", () => {
+    const handle = fakeWindow();
+    Object.defineProperty(handle, "opener", {
+      set() {
+        throw new Error("opener is read-only in this environment");
+      },
+      get() {
+        return {};
+      },
+    });
+    vi.stubGlobal("window", { open: vi.fn().mockReturnValue(handle) });
+
+    const result = openPdfPlaceholder();
+
+    expect(result).toBe(handle);
+  });
+
+  /** PP3: window.open is never called with a noopener/noreferrer windowFeatures string, which would legally permit a null return even on success. */
+  it("PP3: window.open is never called with noopener windowFeatures", () => {
+    const openSpy = vi.fn().mockReturnValue(fakeWindow());
+    vi.stubGlobal("window", { open: openSpy });
+
+    openPdfPlaceholder();
+
+    const args = openSpy.mock.calls[0]!;
+    expect(args).toHaveLength(2);
+    expect(args[0]).toBe("");
+    expect(args[1]).toBe("_blank");
+  });
+
+  /** PP4: a genuinely blocked popup (window.open returns null) is reported as "popup-blocked". */
+  it("PP4: a null placeholder resolves to popup-blocked", async () => {
+    const result = await resolvePdfIntoPlaceholder(null, async () => fakeBlob(), () => false);
+
+    expect(result).toEqual({ ok: false, error: "popup-blocked" });
+  });
+
+  /** PP5: a blocked popup never triggers a PDF fetch. */
+  it("PP5: a null placeholder never calls fetchBlob", async () => {
+    const fetchBlob = vi.fn(async () => fakeBlob());
+
+    await resolvePdfIntoPlaceholder(null, fetchBlob, () => false);
+
+    expect(fetchBlob).not.toHaveBeenCalled();
+  });
+
+  /** PP6: a blocked popup never creates an ObjectURL. */
+  it("PP6: a null placeholder never creates an ObjectURL", async () => {
+    await resolvePdfIntoPlaceholder(null, async () => fakeBlob(), () => false);
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  /** PP7/PP8: the popup-blocked message is the exact friendly copy shown in both Budget Detail and the public Proposal page. */
+  it("PP7/PP8: pdfActionErrorMessage('popup-blocked') is the exact friendly copy", async () => {
+    const { pdfActionErrorMessage } = await import("../pdf-actions");
+    expect(pdfActionErrorMessage("popup-blocked")).toBe(
+      "Não foi possível abrir uma nova aba. Permita pop-ups para visualizar o PDF ou use Baixar PDF."
+    );
+  });
+
+  /** Object URL leak guard: a navigation failure after the ObjectURL was created still revokes it, never leaving it dangling. */
+  it("a navigation failure after ObjectURL creation revokes it immediately, not after the 60s timeout", async () => {
+    const placeholder = fakeWindow();
+    Object.defineProperty(placeholder, "location", {
+      get() {
+        return {
+          set href(_value: string) {
+            throw new Error("cannot navigate a closed/inaccessible window");
+          },
+        };
+      },
+    });
+
+    const result = await resolvePdfIntoPlaceholder(placeholder, async () => fakeBlob(), () => false);
+
+    expect(result.ok).toBe(false);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:fake-url");
   });
 });

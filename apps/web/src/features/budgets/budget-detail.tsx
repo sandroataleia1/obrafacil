@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Copy, Download, ExternalLink, Eye, FileText, Pencil, Plus, Send, Trash2 } from "lucide-react";
 
@@ -145,7 +145,15 @@ export function BudgetDetail({ id }: { id: string }) {
 
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
+  // PROPOSAL-DOC-01B1 §9/§10: synchronous, pre-paint — the instant
+  // `activeCompanyId` commits to a new value, `.current` reflects it
+  // before any async continuation (a PDF fetch resolving from the OLD
+  // Company) gets a chance to read it, mirroring the same guarantee
+  // already hardened in `EditBudgetHeaderForm`/`BudgetForm`. A plain
+  // `useEffect` here left a window where a PDF fetch for A resolving
+  // right after a switch to B could still read `activeCompanyIdRef.current`
+  // as stale/A before the effect had run — the exact race §10 tests for.
+  useLayoutEffect(() => {
     activeCompanyIdRef.current = activeCompanyId;
   }, [activeCompanyId]);
 
@@ -164,7 +172,11 @@ export function BudgetDetail({ id }: { id: string }) {
   // Budget X to Budget Y within the same company.
   const budgetReadSequenceRef = useRef(0);
   const currentBudgetIdRef = useRef(id);
-  useEffect(() => {
+  // §9/§11: same pre-paint guarantee as `activeCompanyIdRef` above, for
+  // the Budget id — a PDF fetch for Budget A resolving in the exact tick
+  // after navigating to Budget B must see `currentBudgetIdRef.current`
+  // already updated to B.
+  useLayoutEffect(() => {
     currentBudgetIdRef.current = id;
   }, [id]);
 
