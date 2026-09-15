@@ -58,6 +58,10 @@ const CREATED_BUDGET: Budget = {
   title: "Reforma",
   reference: null,
   notes: null,
+  valid_until: null,
+  payment_terms: null,
+  execution_terms: null,
+  proposal_terms: null,
   customer: { name: "Maria Cliente", document: null, phone: null, email: null },
   sale_subtotal: "0.00",
   cost_subtotal: null,
@@ -67,6 +71,8 @@ const CREATED_BUDGET: Budget = {
   total: "0.00",
   proposal_token: null,
   submitted_at: null,
+  proposal_template_version: null,
+  proposal_company: null,
   decision_source: null,
   decision_by_user_id: null,
   decision_by_name: null,
@@ -547,5 +553,169 @@ describe("BudgetForm (create)", () => {
     expect(getPendingBudgetItem("company-a")).toEqual(
       expect.objectContaining({ title: "Piso A2" })
     );
+  });
+
+  // ================= CC1-CC10 (PROPOSAL-DOC-01B §69) — create conditions =================
+
+  /** CC1: leaving all four condition fields blank sends null for each, never empty strings. */
+  it("CC1: blank conditions send null, never empty strings", async () => {
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(createBudget).mock.calls[0]![0];
+    expect(payload.valid_until).toBeNull();
+    expect(payload.payment_terms).toBeNull();
+    expect(payload.execution_terms).toBeNull();
+    expect(payload.proposal_terms).toBeNull();
+  });
+
+  /** CC2: the date input sends a plain "YYYY-MM-DD" string, never a Date/ISO instant. */
+  it("CC2: valid_until is sent as a plain YYYY-MM-DD string", async () => {
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    const dateInput = screen.getByLabelText(/Validade/);
+    await user.type(dateInput, "2026-10-01");
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(createBudget).mock.calls[0]![0];
+    expect(payload.valid_until).toBe("2026-10-01");
+  });
+
+  /** CC3: payment_terms is sent trimmed. */
+  it("CC3: payment_terms is sent trimmed", async () => {
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.type(screen.getByLabelText(/Condições de pagamento/), "  50% na aprovação  ");
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createBudget).mock.calls[0]![0].payment_terms).toBe("50% na aprovação");
+  });
+
+  /** CC4: execution_terms is sent trimmed. */
+  it("CC4: execution_terms is sent trimmed", async () => {
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.type(screen.getByLabelText(/Prazo e condições de execução/), "10 dias úteis");
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createBudget).mock.calls[0]![0].execution_terms).toBe("10 dias úteis");
+  });
+
+  /** CC5: proposal_terms is sent trimmed. */
+  it("CC5: proposal_terms is sent trimmed", async () => {
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.type(screen.getByLabelText(/Condições gerais/), "Materiais extras à parte");
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createBudget).mock.calls[0]![0].proposal_terms).toBe("Materiais extras à parte");
+  });
+
+  /** CC6: notes remains a wholly separate field from the four conditions. */
+  it("CC6: notes stays a separate field from the four proposal conditions", async () => {
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.type(screen.getByLabelText(/Observações internas/), "Nota interna");
+    await user.type(screen.getByLabelText(/Condições gerais/), "Condição pública");
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(createBudget).mock.calls[0]![0];
+    expect(payload.notes).toBe("Nota interna");
+    expect(payload.proposal_terms).toBe("Condição pública");
+  });
+
+  /** CC7: the notes field is labeled "Observações internas" with a helper explaining it's never client-facing. */
+  it("CC7: notes field is labeled 'Observações internas' with the privacy helper text", () => {
+    render(<BudgetForm />);
+
+    expect(screen.getByLabelText(/Observações internas/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Visível somente para sua equipe. Não aparece na proposta do cliente.")
+    ).toBeInTheDocument();
+  });
+
+  /** CC8: a 422 on valid_until maps to that field. */
+  it("CC8: a 422 on valid_until maps to that field's error", async () => {
+    vi.mocked(createBudget).mockRejectedValue(new ApiValidationError({ valid_until: ["Data inválida."] }));
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(screen.getByText("Data inválida.")).toBeInTheDocument());
+  });
+
+  /** CC9: a 422 on a condition field (e.g. payment_terms) maps to that field's error. */
+  it("CC9: a 422 on payment_terms maps to that field's error", async () => {
+    vi.mocked(createBudget).mockRejectedValue(
+      new ApiValidationError({ payment_terms: ["Texto muito longo."] })
+    );
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(screen.getByText("Texto muito longo.")).toBeInTheDocument());
+  });
+
+  /** CC10: the calculator handoff atomic-create regression still works alongside the new conditions fields. */
+  it("CC10: calculator handoff create still works unchanged with the conditions section present", async () => {
+    setPendingBudgetItem("company-a", {
+      source: "masonry",
+      title: "Parede externa",
+      materialId: "mat-1",
+      materialName: "Bloco cerâmico",
+      quantity: 500,
+      unit: "un",
+      netAreaM2: 20,
+      wastePercentage: 10,
+      auxiliaryMaterials: { cementBags: 5, limeBags: 2, sandM3: 1 },
+    });
+    vi.mocked(createBudget).mockResolvedValue(CREATED_BUDGET);
+    const user = userEvent.setup();
+    render(<BudgetForm />);
+
+    await user.type(screen.getByLabelText("Preço de venda deste item"), "500,00");
+    await user.type(screen.getByLabelText("Título"), "Reforma");
+    await selectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Criar orçamento" }));
+
+    await waitFor(() => expect(createBudget).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createBudget).mock.calls[0]![0].items).toHaveLength(1);
   });
 });

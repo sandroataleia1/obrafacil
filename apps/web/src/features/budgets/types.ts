@@ -43,6 +43,49 @@ export interface BudgetListCustomer {
   name: string;
 }
 
+/**
+ * The Company's address, as embedded in `company_snapshot` (PROPOSAL-DOC-01A
+ * `CompanyProposalSnapshotBuilder`) — mirrors `CompanyProfileResource`'s
+ * address shape field-for-field. Individual fields may be `null`; the
+ * object itself is always present whenever the surrounding company block
+ * is (never `null` on its own).
+ */
+export interface ProposalCompanyAddress {
+  postal_code: string | null;
+  street: string | null;
+  number: string | null;
+  complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  reference_point: string | null;
+}
+
+/**
+ * The frozen Company identity/contact/address block — built once from
+ * `company_snapshot` + `proposal_logo_path` at submit time (or, for a
+ * draft preview, from the LIVE Company on the fly, never persisted).
+ * Deliberately excludes `company_id` and any raw storage path — only
+ * `logo_url` (already a public URL), matching `CompanyProfileResource`'s
+ * `logo_path`/`logo_url` split.
+ */
+export interface ProposalCompany {
+  name: string;
+  legal_name: string | null;
+  trade_name: string | null;
+  document: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  email: string | null;
+  address: ProposalCompanyAddress;
+  logo_url: string | null;
+}
+
+/** `BudgetResource.proposal_company` — additionally carries `timezone` (authenticated-only; never exposed on the public contract). */
+export interface BudgetProposalCompany extends ProposalCompany {
+  timezone: string | null;
+}
+
 /** A row of `BudgetItemResource` — full authenticated item shape. */
 export interface BudgetItem {
   id: string;
@@ -79,7 +122,14 @@ export interface Budget {
   customer_id: string;
   title: string;
   reference: string | null;
+  /** Internal-only ("Observações internas") — never shown on the public proposal. */
   notes: string | null;
+
+  /** Client-facing proposal conditions — editable while draft, frozen forever once submitted. */
+  valid_until: string | null;
+  payment_terms: string | null;
+  execution_terms: string | null;
+  proposal_terms: string | null;
 
   customer: BudgetCustomerSnapshot;
 
@@ -92,6 +142,10 @@ export interface Budget {
 
   proposal_token: string | null;
   submitted_at: string | null;
+  /** `null` while draft. Frozen at submit — `1` renders template v1; never shown to the end user. */
+  proposal_template_version: number | null;
+  /** The frozen Company snapshot + derived logo — `null` while draft, present once submitted. */
+  proposal_company: BudgetProposalCompany | null;
 
   decision_source: BudgetDecisionSource | null;
   decision_by_user_id: string | null;
@@ -184,13 +238,21 @@ export interface BudgetItemCreatePayload {
  * `created_by_user_id`/`created_at`/`updated_at`/`project_id`/
  * `subtotal`/`sale_subtotal`/`cost_subtotal`/`margin_amount`/
  * `margin_percentage`/`total`/`proposal_token`/`calculation_snapshot`/
- * any `customer_*` snapshot field.
+ * any `customer_*` snapshot field. NEVER `proposal_company`/
+ * `company_snapshot`/`proposal_logo_path`/`proposal_template_version` —
+ * those are server-derived exclusively at submit time
+ * (`StoreBudgetRequest` rejects them outright).
  */
 export interface BudgetCreatePayload {
   customer_id: string;
   title: string;
   reference?: string | null;
   notes?: string | null;
+  /** Client-facing proposal conditions — plain civil date "YYYY-MM-DD" or `null`, never a JS Date. */
+  valid_until?: string | null;
+  payment_terms?: string | null;
+  execution_terms?: string | null;
+  proposal_terms?: string | null;
   discount_amount?: string;
   items?: BudgetItemCreatePayload[];
 }
@@ -205,6 +267,10 @@ export interface BudgetUpdatePayload {
   title: string;
   reference?: string | null;
   notes?: string | null;
+  valid_until?: string | null;
+  payment_terms?: string | null;
+  execution_terms?: string | null;
+  proposal_terms?: string | null;
   discount_amount?: string;
 }
 
@@ -274,6 +340,15 @@ export interface PublicProposal {
   sale_subtotal: string;
   discount_amount: string;
   total: string;
+
+  /** Civil date "YYYY-MM-DD" — never parse via `new Date()` (§25/§50), use `civilDateToBrDisplay`. */
+  valid_until: string | null;
+  payment_terms: string | null;
+  execution_terms: string | null;
+  proposal_terms: string | null;
+
+  /** The frozen Company identity/contact/address, from `company_snapshot` — `null` only if the Budget somehow lacks one (never expected for a submitted proposal reachable by token). */
+  company: ProposalCompany | null;
 
   submitted_at: string | null;
   decided_at: string | null;

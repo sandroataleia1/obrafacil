@@ -78,3 +78,19 @@ export function decimalStringToQuantityInputValue(value: string | null): string 
   if (!Number.isFinite(numeric)) return "";
   return numeric.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
 }
+
+/**
+ * PROPOSAL-DOC-01B §47: the public proposal's quantity display, done
+ * WITHOUT ever calling `Number()` on the decimal string — pure string
+ * manipulation, matching the decimal-string discipline already applied
+ * to every money field. "1.000" -> "1", "1.500" -> "1,5", "12.750" ->
+ * "12,75". `null`/malformed input is returned verbatim (never silently
+ * blanked) so a caller notices something is wrong instead of losing data.
+ */
+export function decimalStringToQuantityDisplay(value: string): string {
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) return value;
+  const [, integerPart, fractionPartRaw = ""] = match;
+  const trimmedFraction = fractionPartRaw.replace(/0+$/, "");
+  return trimmedFraction === "" ? integerPart : `${integerPart},${trimmedFraction}`;
+}

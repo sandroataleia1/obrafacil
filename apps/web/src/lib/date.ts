@@ -36,6 +36,22 @@ export function daysBetweenDateOnly(from: string, to: string): number {
 }
 
 /**
+ * PROPOSAL-DOC-01B §25/§50: "2026-10-01" -> "01/10/2026" for a date-only
+ * value (`Budget.valid_until`/`PublicProposal.valid_until`) — pure string
+ * splitting, never `new Date()`. A date-only string is a calendar day,
+ * not an instant; parsing it through `Date` risks the UTC-midnight/local
+ * display-timezone shift that already motivates `dateOnlyToDayNumber`
+ * above. `null`/malformed -> `null` (caller decides the "—"/omit copy).
+ */
+export function civilDateToBrDisplay(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year}`;
+}
+
+/**
  * ISO instant (e.g. "2026-09-10T13:00:00.000000Z") -> the `YYYY-MM-DDTHH:mm`
  * shape a `datetime-local` input expects, in the VIEWER'S LOCAL time.
  * Deliberately builds the string from `Date`'s local getters

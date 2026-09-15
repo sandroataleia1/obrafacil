@@ -35,6 +35,7 @@ vi.mock("../budgets-client", () => ({
   addBudgetItem: vi.fn(),
   updateBudgetItem: vi.fn(),
   deleteBudgetItem: vi.fn(),
+  getBudgetProposalPdf: vi.fn(),
 }));
 
 vi.mock("@/features/catalog/catalog-client", () => ({
@@ -46,6 +47,7 @@ import {
   approveBudgetManually,
   deleteBudgetItem,
   getBudget,
+  getBudgetProposalPdf,
   rejectBudgetManually,
   submitBudget,
   updateBudgetItem,
@@ -92,6 +94,10 @@ function budget(overrides: Partial<Budget> = {}): Budget {
     title: "Reforma cozinha",
     reference: null,
     notes: null,
+    valid_until: null,
+    payment_terms: null,
+    execution_terms: null,
+    proposal_terms: null,
     customer: { name: "Cliente Teste", document: null, phone: null, email: null },
     sale_subtotal: "60.00",
     cost_subtotal: "40.00",
@@ -101,6 +107,8 @@ function budget(overrides: Partial<Budget> = {}): Budget {
     total: "60.00",
     proposal_token: null,
     submitted_at: null,
+    proposal_template_version: null,
+    proposal_company: null,
     decision_source: null,
     decision_by_user_id: null,
     decision_by_name: null,
@@ -122,8 +130,13 @@ describe("BudgetDetail", () => {
     vi.mocked(rejectBudgetManually).mockReset();
     vi.mocked(updateBudgetItem).mockReset();
     vi.mocked(deleteBudgetItem).mockReset();
+    vi.mocked(getBudgetProposalPdf).mockReset();
     vi.mocked(listCatalogItems).mockReset().mockResolvedValue(emptyCatalogPage);
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
+    vi.stubGlobal(
+      "URL",
+      { createObjectURL: vi.fn(() => "blob:fake-url"), revokeObjectURL: vi.fn() }
+    );
   });
 
   afterEach(() => {
@@ -542,6 +555,237 @@ describe("BudgetDetail", () => {
 
       resolveRefetch(budget({ items: [budgetItem()] }));
       await waitFor(() => expect(screen.queryByText("Cimento CP-II")).not.toBeInTheDocument());
+    });
+  });
+
+  // ================= DP1-DP14 (PROPOSAL-DOC-01B §75-78/§27-37) =================
+
+  describe("Proposal conditions display", () => {
+    /** DP10: shows the conditions card when at least one field is set. */
+    it("DP10: shows the Condições da proposta card when at least one condition is set", async () => {
+      vi.mocked(getBudget).mockResolvedValue(
+        budget({ valid_until: "2026-10-01", payment_terms: "50% na aprovação e 50% na conclusão." })
+      );
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      expect(screen.getByText("Condições da proposta")).toBeInTheDocument();
+      expect(screen.getByText("01/10/2026")).toBeInTheDocument();
+      expect(screen.getByText("50% na aprovação e 50% na conclusão.")).toBeInTheDocument();
+    });
+
+    it("never shows an empty Condições da proposta card when all four fields are null", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget());
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      expect(screen.queryByText("Condições da proposta")).not.toBeInTheDocument();
+    });
+
+    /** DP11: internal notes render under their own distinct heading, separate from proposal conditions. */
+    it("DP11: internal notes render under 'Observações internas', separate from conditions", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ notes: "Cliente pediu desconto", valid_until: "2026-10-01" }));
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      expect(screen.getByText("Observações internas")).toBeInTheDocument();
+      expect(screen.getByText("Cliente pediu desconto")).toBeInTheDocument();
+    });
+
+    /** DP12: the frozen Company snapshot is shown discreetly once submitted. */
+    it("DP12: shows 'Emitida por' with the snapshot's trade_name once proposal_company is present", async () => {
+      vi.mocked(getBudget).mockResolvedValue(
+        budget({
+          status: "pending_approval",
+          proposal_token: "tok-1",
+          proposal_template_version: 1,
+          proposal_company: {
+            name: "Construtora Legal LTDA",
+            legal_name: "Construtora Legal LTDA",
+            trade_name: "Construtora Legal",
+            document: "12345678000199",
+            phone: null,
+            whatsapp: null,
+            email: null,
+            address: {
+              postal_code: null,
+              street: null,
+              number: null,
+              complement: null,
+              neighborhood: null,
+              city: null,
+              state: null,
+              reference_point: null,
+            },
+            timezone: "America/Sao_Paulo",
+            logo_url: null,
+          },
+        })
+      );
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      expect(screen.getByText("Emitida por: Construtora Legal")).toBeInTheDocument();
+    });
+
+    /** §61: the template version is never rendered anywhere for a normal user. */
+    it("never renders the raw proposal_template_version anywhere", async () => {
+      vi.mocked(getBudget).mockResolvedValue(
+        budget({ status: "pending_approval", proposal_token: "tok-1", proposal_template_version: 1 })
+      );
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      expect(screen.queryByText(/template/i)).not.toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/\btemplate\b/i);
+    });
+  });
+
+  describe("PDF actions", () => {
+    /** DP1/DP3: a draft shows 'Visualizar prévia PDF' and it never submits. */
+    it("DP1/DP3: draft shows 'Visualizar prévia PDF' and clicking it never calls submitBudget", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget());
+      vi.mocked(getBudgetProposalPdf).mockResolvedValue(new Blob(["%PDF-fake"]));
+      vi.spyOn(window, "open").mockReturnValue({ closed: false, location: { href: "" }, close: vi.fn() } as unknown as Window);
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      const previewButton = screen.getByRole("button", { name: /visualizar prévia pdf/i });
+      await user.click(previewButton);
+
+      await waitFor(() => expect(getBudgetProposalPdf).toHaveBeenCalledWith("budget-1"));
+      expect(submitBudget).not.toHaveBeenCalled();
+    });
+
+    /** DP2: the preview action calls the authenticated PDF endpoint (via getBudgetProposalPdf), never the public one. */
+    it("DP2: preview calls getBudgetProposalPdf (authenticated), not a public endpoint", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget());
+      vi.mocked(getBudgetProposalPdf).mockResolvedValue(new Blob(["%PDF-fake"]));
+      vi.spyOn(window, "open").mockReturnValue({ closed: false, location: { href: "" }, close: vi.fn() } as unknown as Window);
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /visualizar prévia pdf/i }));
+
+      await waitFor(() => expect(getBudgetProposalPdf).toHaveBeenCalledTimes(1));
+    });
+
+    /** DP4: pending shows 'Visualizar PDF'. */
+    it("DP4: pending_approval shows a 'Visualizar PDF' button", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      expect(screen.getByRole("button", { name: /visualizar pdf/i })).toBeInTheDocument();
+    });
+
+    /** DP5: pending shows 'Baixar PDF' and clicking it fetches the blob and creates a download anchor. */
+    it("DP5: pending_approval download fetches the PDF and triggers a download", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
+      vi.mocked(getBudgetProposalPdf).mockResolvedValue(new Blob(["%PDF-fake"]));
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /baixar pdf/i }));
+
+      await waitFor(() => expect(getBudgetProposalPdf).toHaveBeenCalledWith("budget-1"));
+    });
+
+    /** DP7: a 500 on the PDF request shows a clear feedback message, never a full-page replacement. */
+    it("DP7: a PDF 500 shows a clear message without replacing the whole page", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
+      vi.mocked(getBudgetProposalPdf).mockRejectedValue(new ApiError(500, "boom"));
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
+
+      await screen.findByText("Não foi possível gerar o PDF agora.");
+      expect(screen.getByText("Aguardando aprovação")).toBeInTheDocument();
+    });
+
+    /** DP6: a decided (approved/rejected) Budget still shows PDF view/download actions. */
+    it("DP6: a decided Budget still shows 'Visualizar PDF' and 'Baixar PDF'", async () => {
+      vi.mocked(getBudget).mockResolvedValue(
+        budget({ status: "approved", proposal_token: "tok-1", decided_at: "2026-09-03T00:00:00Z" })
+      );
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      expect(screen.getByRole("button", { name: /visualizar pdf/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /baixar pdf/i })).toBeInTheDocument();
+    });
+
+    /** DP8/DP9: a stale PDF response (Company switched mid-flight) never opens/downloads under the new Company. */
+    it("DP8/DP9: a stale PDF response after a Company switch never surfaces an error or opens/downloads", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval", proposal_token: "tok-1" }));
+      let resolvePdf!: (value: Blob) => void;
+      vi.mocked(getBudgetProposalPdf).mockReturnValue(
+        new Promise((resolve) => {
+          resolvePdf = resolve;
+        })
+      );
+      const placeholder = { closed: false, location: { href: "" }, close: vi.fn() } as unknown as Window;
+      vi.spyOn(window, "open").mockReturnValue(placeholder);
+      const user = userEvent.setup();
+      const { rerender } = render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /visualizar pdf/i }));
+
+      authState.activeCompany = { id: "company-b", name: "Empresa B" };
+      rerender(<BudgetDetail id="budget-1" />);
+      resolvePdf(new Blob(["%PDF-fake"]));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(placeholder.location.href).toBe("");
+      expect(placeholder.close).toHaveBeenCalled();
+      expect(screen.queryByText("Não foi possível gerar o PDF agora.")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Submit logo-missing error (§64)", () => {
+    /** DP14: a 422 with no field errors and the specific logo message shows it verbatim, with a link to fix the Company profile. */
+    it("DP14: a 422 logo-missing message is shown verbatim with a link to Configurações → Empresa", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget());
+      vi.mocked(submitBudget).mockRejectedValue(
+        new ApiValidationError(
+          {},
+          "A logo cadastrada da empresa não está disponível. Reenvie a logo antes de disponibilizar a proposta."
+        )
+      );
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /disponibilizar para aprovação/i }));
+      await user.click(screen.getByRole("button", { name: "Disponibilizar" }));
+
+      await screen.findByText(
+        "A logo cadastrada da empresa não está disponível. Reenvie a logo antes de disponibilizar a proposta."
+      );
+      const link = screen.getByRole("link", { name: "Atualizar perfil da empresa" });
+      expect(link).toHaveAttribute("href", "/configuracoes/empresa");
+      // Status remains draft — the CTA to submit is still available.
+      expect(screen.getByRole("button", { name: /disponibilizar para aprovação/i })).toBeInTheDocument();
+    });
+
+    /** DP13: the submit confirm dialog mentions the freeze consequence. */
+    it("DP13: the submit confirm dialog explicitly mentions freezing company/logo/items/values/conditions", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget());
+      const user = userEvent.setup();
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+
+      await user.click(screen.getByRole("button", { name: /disponibilizar para aprovação/i }));
+
+      await screen.findByText(
+        "Os dados da empresa, logo, itens, valores e condições serão congelados nesta versão."
+      );
     });
   });
 });

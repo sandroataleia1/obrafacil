@@ -42,6 +42,10 @@ function draftBudget(overrides: Partial<Budget> = {}): Budget {
     title: "Reforma",
     reference: "Casa de praia",
     notes: null,
+    valid_until: null,
+    payment_terms: null,
+    execution_terms: null,
+    proposal_terms: null,
     customer: { name: "Maria Cliente", document: "12345678900", phone: null, email: null },
     sale_subtotal: "0.00",
     cost_subtotal: null,
@@ -51,6 +55,8 @@ function draftBudget(overrides: Partial<Budget> = {}): Budget {
     total: "0.00",
     proposal_token: null,
     submitted_at: null,
+    proposal_template_version: null,
+    proposal_company: null,
     decision_source: null,
     decision_by_user_id: null,
     decision_by_name: null,
@@ -361,5 +367,137 @@ describe("EditBudgetHeaderForm", () => {
 
     await waitFor(() => expect(screen.getByDisplayValue("Orçamento B")).toBeInTheDocument());
     expect(screen.queryByText("Orçamento não encontrado")).not.toBeInTheDocument();
+  });
+
+  // ================= EC1-EC10 (PROPOSAL-DOC-01B §70) — edit conditions =================
+
+  /** EC1: hydrates valid_until from the loaded Budget. */
+  it("EC1: hydrates valid_until from the loaded Budget", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget({ valid_until: "2026-10-01" }));
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Validade/)).toHaveValue("2026-10-01"));
+  });
+
+  /** EC2: hydrates payment_terms. */
+  it("EC2: hydrates payment_terms from the loaded Budget", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget({ payment_terms: "50% na aprovação" }));
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Condições de pagamento/)).toHaveValue("50% na aprovação"));
+  });
+
+  /** EC3: hydrates execution_terms. */
+  it("EC3: hydrates execution_terms from the loaded Budget", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget({ execution_terms: "10 dias úteis" }));
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Prazo e condições de execução/)).toHaveValue("10 dias úteis"));
+  });
+
+  /** EC4: hydrates proposal_terms. */
+  it("EC4: hydrates proposal_terms from the loaded Budget", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget({ proposal_terms: "Condição geral" }));
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Condições gerais/)).toHaveValue("Condição geral"));
+  });
+
+  /** EC5: saves all four conditions fields together with the existing header fields. */
+  it("EC5: saves all four conditions fields in the same PUT as the header fields", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget());
+    vi.mocked(updateBudget).mockResolvedValue(draftBudget());
+    const user = userEvent.setup();
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+    await user.type(screen.getByLabelText(/Validade/), "2026-11-15");
+    await user.type(screen.getByLabelText(/Condições de pagamento/), "50/50");
+    await user.type(screen.getByLabelText(/Prazo e condições de execução/), "15 dias");
+    await user.type(screen.getByLabelText(/Condições gerais/), "Geral");
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    await waitFor(() =>
+      expect(updateBudget).toHaveBeenCalledWith(
+        "budget-1",
+        expect.objectContaining({
+          valid_until: "2026-11-15",
+          payment_terms: "50/50",
+          execution_terms: "15 dias",
+          proposal_terms: "Geral",
+        })
+      )
+    );
+  });
+
+  /** EC6: clearing a previously-set condition sends null, not an empty string. */
+  it("EC6: clearing a previously-set condition sends null", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget({ payment_terms: "50% na aprovação" }));
+    vi.mocked(updateBudget).mockResolvedValue(draftBudget());
+    const user = userEvent.setup();
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Condições de pagamento/)).toHaveValue("50% na aprovação"));
+    await user.clear(screen.getByLabelText(/Condições de pagamento/));
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    await waitFor(() =>
+      expect(updateBudget).toHaveBeenCalledWith("budget-1", expect.objectContaining({ payment_terms: null }))
+    );
+  });
+
+  /** EC7: a 422 on a condition field maps onto that field's error. */
+  it("EC7: a 422 on execution_terms maps to that field's error", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget());
+    vi.mocked(updateBudget).mockRejectedValue(new ApiValidationError({ execution_terms: ["Texto muito longo."] }));
+    const user = userEvent.setup();
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("Reforma")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    await waitFor(() => expect(screen.getByText("Texto muito longo.")).toBeInTheDocument());
+  });
+
+  /** EC8: a 409 mid-edit (already covered generically by the existing §39 test) leaves conditions unsent — readonly block, zero PUT retried automatically. */
+  it("EC8: a 409 shows the readonly conflict message without an automatic retry PUT", async () => {
+    vi.mocked(getBudget)
+      .mockResolvedValueOnce(draftBudget({ payment_terms: "50/50" }))
+      .mockResolvedValueOnce(draftBudget({ status: "pending_approval", payment_terms: "50/50" }));
+    vi.mocked(updateBudget).mockRejectedValue(new ApiError(409, "conflict"));
+    const user = userEvent.setup();
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Condições de pagamento/)).toHaveValue("50/50"));
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    await waitFor(() => expect(screen.getByText("O orçamento foi alterado e não pode mais ser editado.")).toBeInTheDocument());
+    expect(updateBudget).toHaveBeenCalledTimes(1);
+  });
+
+  /** EC9: direct access to a pending_approval Budget's edit route never renders the conditions inputs, and issues zero PUT. */
+  it("EC9: pending_approval direct access shows readonly, zero conditions inputs, zero PUT", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget({ status: "pending_approval", payment_terms: "50/50" }));
+    render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Este orçamento já foi disponibilizado e não pode mais ser editado.")).toBeInTheDocument()
+    );
+    expect(screen.queryByLabelText(/Condições de pagamento/)).not.toBeInTheDocument();
+    expect(updateBudget).not.toHaveBeenCalled();
+  });
+
+  /** EC10: the existing tenant-switch guards (ET2-ET4) already prove the conditions fields reset the same as every other field on a Company switch — this restates that under the EC numbering for traceability. */
+  it("EC10: a Company switch clears loaded conditions the same as every other field", async () => {
+    vi.mocked(getBudget).mockResolvedValue(draftBudget({ payment_terms: "50/50" }));
+    const { rerender } = render(<EditBudgetHeaderForm id="budget-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Condições de pagamento/)).toHaveValue("50/50"));
+
+    vi.mocked(getBudget).mockImplementation(() => new Promise(() => {}));
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<EditBudgetHeaderForm id="budget-1" />);
+
+    expect(screen.queryByLabelText(/Condições de pagamento/)).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { apiRequest, ApiError, ApiNetworkError, ApiValidationError, ensureCsrfCookie } from "../api-client";
+import { apiBlobRequest, apiRequest, ApiError, ApiNetworkError, ApiValidationError, ensureCsrfCookie } from "../api-client";
 
 /** Routes a fetch mock by URL, defaulting csrf-cookie to a healthy 204 unless overridden. */
 function routedFetchMock(overrides: Record<string, () => Response> = {}) {
@@ -331,5 +331,142 @@ describe("api-client", () => {
     const promise = apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
 
     await expect(promise).rejects.toBeInstanceOf(ApiNetworkError);
+  });
+
+  // ================= HB1-HB10 (PROPOSAL-DOC-01B §6-13) — apiBlobRequest =================
+
+  /** HB1: apiRequest (JSON) continues to work unchanged after the shared-transport refactor. */
+  it("HB1: apiRequest (JSON) continues to work unchanged", async () => {
+    const fetchMock = routedFetchMock({
+      "/api/v1/me": () => new Response(JSON.stringify({ id: "u1" }), { status: 200 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiRequest("/api/v1/me")).resolves.toEqual({ id: "u1" });
+  });
+
+  /** HB2: multipart (FormData) still works unchanged after the shared-transport refactor. */
+  it("HB2: multipart (FormData) continues to work unchanged", async () => {
+    const fetchMock = routedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const form = new FormData();
+    form.append("logo", new Blob(["fake"]), "logo.png");
+    await apiRequest("/api/v1/company/profile/logo", { method: "POST", body: form });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/logo"))!;
+    expect(call[1].body).toBe(form);
+  });
+
+  /** HB3: apiBlobRequest sends credentials: include on a GET, with no CSRF preflight. */
+  it("HB3: apiBlobRequest sends credentials include, no CSRF preflight", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("%PDF-fake", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiBlobRequest("/api/v1/budgets/b1/proposal-preview.pdf");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/proposal-preview.pdf"),
+      expect.objectContaining({ credentials: "include", method: "GET" })
+    );
+  });
+
+  /** HB4: a successful blob response is never routed through response.json(). */
+  it("HB4: a successful blob response never calls response.json()", async () => {
+    const response = new Response("%PDF-fake", { status: 200 });
+    const jsonSpy = vi.spyOn(response, "json");
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiBlobRequest("/api/v1/proposals/tok-1/pdf");
+
+    expect(jsonSpy).not.toHaveBeenCalled();
+  });
+
+  /** HB5: apiBlobRequest resolves with an actual Blob instance. */
+  it("HB5: apiBlobRequest resolves with a Blob", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("%PDF-fake", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await apiBlobRequest("/api/v1/proposals/tok-1/pdf");
+    // Two different realms (jsdom's global `Blob` vs. undici's fetch
+    // polyfill) can produce objects that fail a strict `instanceof Blob`
+    // check while both genuinely being blob-shaped — duck-type instead.
+    expect(result.constructor.name).toBe("Blob");
+    expect(typeof result.size).toBe("number");
+    expect(typeof result.arrayBuffer).toBe("function");
+  });
+
+  /** HB6: a 404 JSON error body on the PDF route becomes ApiError(404), never a "corrupted PDF". */
+  it("HB6: a 404 JSON error becomes ApiError(404)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: "Not found." }), { status: 404 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = apiBlobRequest("/api/v1/proposals/tok-missing/pdf");
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await expect(promise.catch((e: ApiError) => e.status)).resolves.toBe(404);
+  });
+
+  /** HB7: a 429 JSON error becomes ApiError(429). */
+  it("HB7: a 429 JSON error becomes ApiError(429)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: "Too Many Requests" }), { status: 429 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = apiBlobRequest("/api/v1/proposals/tok-1/pdf");
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await expect(promise.catch((e: ApiError) => e.status)).resolves.toBe(429);
+  });
+
+  /** HB8: a 500 JSON error becomes ApiError(500). */
+  it("HB8: a 500 JSON error becomes ApiError(500)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: "Server error" }), { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = apiBlobRequest("/api/v1/budgets/b1/proposal-preview.pdf");
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await expect(promise.catch((e: ApiError) => e.status)).resolves.toBe(500);
+  });
+
+  /** HB9: a network failure on the PDF route becomes ApiNetworkError, not ApiError. */
+  it("HB9: a network failure becomes ApiNetworkError", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = apiBlobRequest("/api/v1/proposals/tok-1/pdf");
+    await expect(promise).rejects.toBeInstanceOf(ApiNetworkError);
+    await expect(promise).rejects.not.toBeInstanceOf(ApiError);
+  });
+
+  /** HB10: a 422 keeps field errors AND exposes the top-level message via serverMessage. */
+  it("HB10: a 422 keeps field errors and exposes serverMessage", async () => {
+    const fetchMock = routedFetchMock({
+      "/api/v1/budgets/b1/submit": () =>
+        new Response(
+          JSON.stringify({
+            message: "A logo cadastrada da empresa não está disponível. Reenvie a logo antes de disponibilizar a proposta.",
+          }),
+          { status: 422 }
+        ),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await apiRequest("/api/v1/budgets/b1/submit", { method: "POST" });
+      expect.unreachable("apiRequest should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiValidationError);
+      const validationError = error as ApiValidationError;
+      expect(validationError.errors).toEqual({});
+      expect(validationError.serverMessage).toBe(
+        "A logo cadastrada da empresa não está disponível. Reenvie a logo antes de disponibilizar a proposta."
+      );
+    }
   });
 });

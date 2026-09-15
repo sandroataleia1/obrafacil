@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Copy, ExternalLink, FileText, Pencil, Plus, Send, Trash2 } from "lucide-react";
+import { Copy, Download, ExternalLink, Eye, FileText, Pencil, Plus, Send, Trash2 } from "lucide-react";
 
 import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ResponsiveDialog } from "@/components/shared/responsive-dialog";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
+import { civilDateToBrDisplay } from "@/lib/date";
 import { decimalStringToBrlDisplay } from "@/lib/currency";
 import { decimalStringToQuantityInputValue } from "@/lib/quantity";
 import { formatCpfCnpj, formatE164PhoneForDisplay } from "@/lib/document";
@@ -22,10 +23,17 @@ import {
   approveBudgetManually,
   deleteBudgetItem,
   getBudget,
+  getBudgetProposalPdf,
   rejectBudgetManually,
   submitBudget,
 } from "./budgets-client";
 import { StatusBadge } from "./components/status-badge";
+import {
+  downloadPdfBlob,
+  openPdfPlaceholder,
+  pdfActionErrorMessage,
+  resolvePdfIntoPlaceholder,
+} from "./lib/pdf-actions";
 import type { Budget, BudgetItem } from "./types";
 
 const SOURCE_TYPE_LABEL: Record<BudgetItem["source_type"], string> = {
@@ -112,6 +120,17 @@ export function BudgetDetail({ id }: { id: string }) {
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // §64: a 422 with a top-level `serverMessage` and no field errors is a
+  // controlled business-rule failure (e.g. the Company's registered logo
+  // file is missing) — shown verbatim, plus a link to fix it, instead of
+  // the generic fallback message.
+  const [submitErrorIsLogoMissing, setSubmitErrorIsLogoMissing] = useState(false);
+
+  // §36: a single action slot — while any PDF action is in flight, every
+  // PDF button (preview/view/download) is disabled, preventing a repeat
+  // click from firing a second overlapping request.
+  const [pdfAction, setPdfAction] = useState<"preview" | "download" | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const [pendingDecision, setPendingDecision] = useState<DecisionKind | null>(null);
   const [decisionNote, setDecisionNote] = useState("");
@@ -172,6 +191,9 @@ export function BudgetDetail({ id }: { id: string }) {
     setSubmitConfirmOpen(false);
     setSubmitting(false);
     setSubmitError(null);
+    setSubmitErrorIsLogoMissing(false);
+    setPdfAction(null);
+    setPdfError(null);
     setPendingDecision(null);
     setDecisionNote("");
     setDecisionSubmitting(false);
@@ -259,6 +281,7 @@ export function BudgetDetail({ id }: { id: string }) {
     const myReadId = nextBudgetReadContext();
     setSubmitting(true);
     setSubmitError(null);
+    setSubmitErrorIsLogoMissing(false);
     try {
       const updated = await submitBudget(budget.id);
       if (isActionStale(requestCompanyId, requestBudgetId)) return;
@@ -266,11 +289,70 @@ export function BudgetDetail({ id }: { id: string }) {
         setBudget(updated);
       }
       setSubmitConfirmOpen(false);
-    } catch {
+    } catch (error) {
       if (isActionStale(requestCompanyId, requestBudgetId)) return;
-      setSubmitError("Não foi possível disponibilizar este orçamento agora.");
+      // §64/§11: closes the confirm dialog on ANY failure — not just
+      // success — so the error message (and, for the logo-missing case,
+      // its fix-it link) is actually visible/interactive instead of
+      // sitting inert behind a still-open modal.
+      setSubmitConfirmOpen(false);
+      // A controlled business-rule 422 (no field errors, just a
+      // top-level message — e.g. the Company logo is missing) is shown
+      // verbatim instead of the generic fallback, with a link to fix it.
+      if (error instanceof ApiValidationError && error.serverMessage) {
+        setSubmitError(error.serverMessage);
+        setSubmitErrorIsLogoMissing(true);
+      } else {
+        setSubmitError("Não foi possível disponibilizar este orçamento agora.");
+      }
     } finally {
       if (!isActionStale(requestCompanyId, requestBudgetId)) setSubmitting(false);
+    }
+  }
+
+  /**
+   * §27-29/§35: used both for the draft "Visualizar prévia PDF" action
+   * (GET only — never submits, never generates a token, never changes
+   * status) and for the pending/decided "Visualizar PDF" action (the
+   * same authenticated endpoint renders from the frozen historical
+   * snapshot once submitted). Tenant-safe: a stale response (Company or
+   * Budget changed while the request was in flight) never opens/repaints
+   * anything and closes the now-orphaned placeholder tab.
+   */
+  async function handleViewPdf() {
+    if (!budget || pdfAction) return;
+    const requestCompanyId = activeCompanyId;
+    const requestBudgetId = budget.id;
+    const placeholder = openPdfPlaceholder();
+    setPdfAction("preview");
+    setPdfError(null);
+    const result = await resolvePdfIntoPlaceholder(
+      placeholder,
+      () => getBudgetProposalPdf(requestBudgetId),
+      () => isActionStale(requestCompanyId, requestBudgetId)
+    );
+    if (isActionStale(requestCompanyId, requestBudgetId)) return;
+    setPdfAction(null);
+    if (!result.ok && result.error) {
+      setPdfError(pdfActionErrorMessage(result.error));
+    }
+  }
+
+  async function handleDownloadPdf() {
+    if (!budget || pdfAction) return;
+    const requestCompanyId = activeCompanyId;
+    const requestBudgetId = budget.id;
+    setPdfAction("download");
+    setPdfError(null);
+    const result = await downloadPdfBlob(
+      () => getBudgetProposalPdf(requestBudgetId),
+      `${budget.number}.pdf`,
+      () => isActionStale(requestCompanyId, requestBudgetId)
+    );
+    if (isActionStale(requestCompanyId, requestBudgetId)) return;
+    setPdfAction(null);
+    if (!result.ok && result.error) {
+      setPdfError(pdfActionErrorMessage(result.error));
     }
   }
 
@@ -402,8 +484,18 @@ export function BudgetDetail({ id }: { id: string }) {
       {budget.reference ? <p className="-mt-4 text-sm text-muted-foreground">{budget.reference}</p> : null}
 
       {submitError ? (
+        <div role="alert" className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <p>{submitError}</p>
+          {submitErrorIsLogoMissing ? (
+            <Link href="/configuracoes/empresa" className="font-medium underline">
+              Atualizar perfil da empresa
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+      {pdfError ? (
         <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-          {submitError}
+          {pdfError}
         </p>
       ) : null}
       {decisionError ? (
@@ -547,9 +639,34 @@ export function BudgetDetail({ id }: { id: string }) {
         </div>
       </section>
 
+      {budget.valid_until || budget.payment_terms || budget.execution_terms || budget.proposal_terms ? (
+        <section className="space-y-2 rounded-xl border border-border bg-card p-4">
+          <h2 className="pb-1 text-sm font-semibold text-foreground">Condições da proposta</h2>
+          {budget.valid_until ? <InfoRow label="Validade" value={civilDateToBrDisplay(budget.valid_until) ?? "—"} /> : null}
+          {budget.payment_terms ? (
+            <div className="py-1">
+              <p className="text-sm text-muted-foreground">Condições de pagamento</p>
+              <p className="whitespace-pre-line text-sm text-foreground">{budget.payment_terms}</p>
+            </div>
+          ) : null}
+          {budget.execution_terms ? (
+            <div className="py-1">
+              <p className="text-sm text-muted-foreground">Prazo e condições de execução</p>
+              <p className="whitespace-pre-line text-sm text-foreground">{budget.execution_terms}</p>
+            </div>
+          ) : null}
+          {budget.proposal_terms ? (
+            <div className="py-1">
+              <p className="text-sm text-muted-foreground">Condições gerais</p>
+              <p className="whitespace-pre-line text-sm text-foreground">{budget.proposal_terms}</p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       {budget.notes ? (
         <section className="space-y-1 rounded-xl border border-border bg-card p-4">
-          <h2 className="pb-2 text-sm font-semibold text-foreground">Observações</h2>
+          <h2 className="pb-2 text-sm font-semibold text-foreground">Observações internas</h2>
           <p className="text-sm text-foreground">{budget.notes}</p>
         </section>
       ) : null}
@@ -595,37 +712,89 @@ export function BudgetDetail({ id }: { id: string }) {
         {budget.submitted_at ? <InfoRow label="Disponibilizado em" value={dateTimeDisplay(budget.submitted_at)} /> : null}
       </section>
 
-      {budget.proposal_token !== null ? (
-        <div className="grid grid-cols-2 gap-2">
+      {/* §59: every proposal-related action lives in this ONE card,
+          instead of a scattered list of independent buttons at the
+          bottom of the page. */}
+      <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+        <h2 className="text-sm font-semibold text-foreground">Proposta</h2>
+
+        {budget.proposal_company ? (
+          <p className="text-xs text-muted-foreground">
+            Emitida por: {budget.proposal_company.trade_name || budget.proposal_company.name}
+          </p>
+        ) : null}
+
+        {isDraft ? (
           <Button
+            type="button"
             variant="outline"
-            nativeButton={false}
-            render={<Link href={`/proposta/${budget.proposal_token}`}>Visualizar proposta</Link>}
-          />
-          <Button type="button" variant="outline" onClick={() => void handleCopyLink()}>
-            <Copy className="size-4" aria-hidden="true" />
-            {linkCopied ? "Link copiado" : "Copiar link"}
+            className="w-full"
+            onClick={() => void handleViewPdf()}
+            disabled={pdfAction !== null}
+            aria-busy={pdfAction === "preview"}
+          >
+            <Eye className="size-4" aria-hidden="true" />
+            {pdfAction === "preview" ? "Gerando prévia..." : "Visualizar prévia PDF"}
           </Button>
-        </div>
-      ) : null}
+        ) : null}
 
-      {isDraft ? (
-        <Button type="button" size="lg" className="w-full" onClick={() => setSubmitConfirmOpen(true)}>
-          <Send className="size-4" aria-hidden="true" />
-          Disponibilizar para aprovação
-        </Button>
-      ) : null}
+        {budget.proposal_token !== null ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/proposta/${budget.proposal_token}`}>Visualizar proposta</Link>}
+            />
+            <Button type="button" variant="outline" onClick={() => void handleCopyLink()}>
+              <Copy className="size-4" aria-hidden="true" />
+              {linkCopied ? "Link copiado" : "Copiar link"}
+            </Button>
+          </div>
+        ) : null}
 
-      {isPendingApproval ? (
-        <div className="grid grid-cols-2 gap-2">
-          <Button type="button" onClick={() => setPendingDecision("approve")}>
-            Registrar aprovação
+        {!isDraft && budget.proposal_token !== null ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleViewPdf()}
+              disabled={pdfAction !== null}
+              aria-busy={pdfAction === "preview"}
+            >
+              <Eye className="size-4" aria-hidden="true" />
+              {pdfAction === "preview" ? "Gerando..." : "Visualizar PDF"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleDownloadPdf()}
+              disabled={pdfAction !== null}
+              aria-busy={pdfAction === "download"}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {pdfAction === "download" ? "Baixando..." : "Baixar PDF"}
+            </Button>
+          </div>
+        ) : null}
+
+        {isDraft ? (
+          <Button type="button" size="lg" className="w-full" onClick={() => setSubmitConfirmOpen(true)}>
+            <Send className="size-4" aria-hidden="true" />
+            Disponibilizar para aprovação
           </Button>
-          <Button type="button" variant="destructive" onClick={() => setPendingDecision("reject")}>
-            Registrar recusa
-          </Button>
-        </div>
-      ) : null}
+        ) : null}
+
+        {isPendingApproval ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" onClick={() => setPendingDecision("approve")}>
+              Registrar aprovação
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => setPendingDecision("reject")}>
+              Registrar recusa
+            </Button>
+          </div>
+        ) : null}
+      </section>
 
       <ConfirmActionDialog
         open={submitConfirmOpen}
@@ -637,6 +806,7 @@ export function BudgetDetail({ id }: { id: string }) {
       >
         <div className="space-y-1 text-sm text-muted-foreground">
           <p>Depois de disponibilizado, este orçamento não poderá mais ser editado.</p>
+          <p>Os dados da empresa, logo, itens, valores e condições serão congelados nesta versão.</p>
           <p>Para alterar a proposta depois, será necessário criar um novo orçamento.</p>
         </div>
       </ConfirmActionDialog>

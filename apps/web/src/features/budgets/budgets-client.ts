@@ -10,7 +10,7 @@
  * for a Budget (§56).
  */
 
-import { apiRequest } from "@/lib/api-client";
+import { apiBlobRequest, apiRequest } from "@/lib/api-client";
 import type {
   ApproveBudgetManuallyPayload,
   Budget,
@@ -58,6 +58,16 @@ export function updateBudget(id: string, payload: BudgetUpdatePayload): Promise<
     method: "PUT",
     body: payload,
   });
+}
+
+/**
+ * GET /api/v1/budgets/{id}/proposal-preview.pdf — works for a draft
+ * (built fresh from the live Company) and for a submitted Budget (built
+ * from the frozen historical snapshot). Never a POST, never touches
+ * status/token (§27/§29).
+ */
+export function getBudgetProposalPdf(id: string): Promise<Blob> {
+  return apiBlobRequest(`/api/v1/budgets/${encodeURIComponent(id)}/proposal-preview.pdf`);
 }
 
 export function submitBudget(id: string): Promise<Budget> {

@@ -46,6 +46,7 @@ import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { brlInputToDecimalString } from "@/lib/currency";
 import { BudgetCustomerPicker } from "./components/budget-customer-picker";
 import { PendingItemPreview } from "./components/pending-item-preview";
+import { ProposalConditionsFields } from "./components/proposal-conditions-fields";
 import { createBudget } from "./budgets-client";
 import { calculatorItemToBudgetItemPayload } from "./lib/calculator-item-adapter";
 import { consumePendingBudgetItem, getPendingBudgetHandoff, type PendingBudgetItem } from "./prototype/pending-budget-item";
@@ -88,6 +89,10 @@ function BudgetFormInner({
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [discountInput, setDiscountInput] = useState("");
+  const [validUntil, setValidUntil] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [executionTerms, setExecutionTerms] = useState("");
+  const [proposalTerms, setProposalTerms] = useState("");
 
   const [preselectError, setPreselectError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
@@ -159,6 +164,10 @@ function BudgetFormInner({
         title: title.trim(),
         reference: reference.trim() || null,
         notes: notes.trim() || null,
+        valid_until: validUntil || null,
+        payment_terms: paymentTerms.trim() || null,
+        execution_terms: executionTerms.trim() || null,
+        proposal_terms: proposalTerms.trim() || null,
         discount_amount: discountDecimal,
         items,
       });
@@ -274,7 +283,7 @@ function BudgetFormInner({
 
         <div className="space-y-1.5">
           <label htmlFor="budget-notes" className="text-sm font-medium text-foreground">
-            Observações <span className="text-muted-foreground">(opcional)</span>
+            Observações internas <span className="text-muted-foreground">(opcional)</span>
           </label>
           <textarea
             id="budget-notes"
@@ -283,6 +292,7 @@ function BudgetFormInner({
             rows={3}
             className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
           />
+          <p className="text-xs text-muted-foreground">Visível somente para sua equipe. Não aparece na proposta do cliente.</p>
           {fieldErrors.notes ? <p className="text-sm text-destructive">{fieldErrors.notes[0]}</p> : null}
         </div>
 
@@ -291,6 +301,19 @@ function BudgetFormInner({
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
+
+      <ProposalConditionsFields
+        idPrefix="budget-create"
+        validUntil={validUntil}
+        onValidUntilChange={setValidUntil}
+        paymentTerms={paymentTerms}
+        onPaymentTermsChange={setPaymentTerms}
+        executionTerms={executionTerms}
+        onExecutionTermsChange={setExecutionTerms}
+        proposalTerms={proposalTerms}
+        onProposalTermsChange={setProposalTerms}
+        fieldErrors={fieldErrors}
+      />
 
       <Button type="button" size="lg" onClick={handleSubmit} disabled={!canSubmit} className="w-full">
         {submitting ? "Criando..." : "Criar orçamento"}

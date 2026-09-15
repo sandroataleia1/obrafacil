@@ -7,11 +7,16 @@
  * them through the same client is safe — never a raw `fetch` (§11/§63).
  */
 
-import { apiRequest } from "@/lib/api-client";
+import { apiBlobRequest, apiRequest } from "@/lib/api-client";
 import type { ApproveProposalPayload, PublicProposal, RejectProposalPayload } from "./types";
 
 export function getPublicProposal(token: string): Promise<PublicProposal> {
   return apiRequest<PublicProposal>(`/api/v1/proposals/${encodeURIComponent(token)}`);
+}
+
+/** GET /api/v1/proposals/{token}/pdf — no auth, works logged out. */
+export function getPublicProposalPdf(token: string): Promise<Blob> {
+  return apiBlobRequest(`/api/v1/proposals/${encodeURIComponent(token)}/pdf`);
 }
 
 export function approvePublicProposal(

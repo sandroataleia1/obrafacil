@@ -32,11 +32,22 @@ const API_URL = resolveApiUrl();
 export class ApiValidationError extends Error {
   readonly status = 422 as const;
   readonly errors: Record<string, string[]>;
+  /**
+   * PROPOSAL-DOC-01B §10: the raw top-level `message` Laravel sent
+   * alongside this 422 — e.g. "A logo cadastrada da empresa não está
+   * disponível...". `errors` alone loses this whenever the 422 carries
+   * no per-field validation errors (a controlled business-rule 422, not
+   * a form validation failure). `null` when the response had no
+   * top-level `message` at all. Existing callers that only read
+   * `errors` are unaffected — this is purely additive.
+   */
+  readonly serverMessage: string | null;
 
-  constructor(errors: Record<string, string[]>) {
+  constructor(errors: Record<string, string[]>, serverMessage: string | null = null) {
     super("Validation failed");
     this.name = "ApiValidationError";
     this.errors = errors;
+    this.serverMessage = serverMessage;
   }
 }
 
@@ -101,6 +112,65 @@ interface ApiRequestOptions {
 }
 
 /**
+ * PROPOSAL-DOC-01B §6-7: the ONE transport both `apiRequest` (JSON) and
+ * `apiBlobRequest` (binary) go through — same `API_URL`, `credentials:
+ * "include"`, and network-error mapping, so the two can never diverge.
+ * Never throws an `ApiError`/`ApiValidationError` itself — callers
+ * inspect the returned `Response` and decide how to parse a non-2xx
+ * body (JSON error body either way, even for a PDF endpoint — §9).
+ */
+async function sendRequest(
+  path: string,
+  options: { method: string; headers: Record<string, string>; body?: BodyInit }
+): Promise<Response> {
+  try {
+    return await fetch(`${API_URL}${path}`, {
+      method: options.method,
+      credentials: "include",
+      headers: options.headers,
+      body: options.body,
+    });
+  } catch {
+    throw new ApiNetworkError();
+  }
+}
+
+function parseValidationErrorBody(data: unknown): ApiValidationError {
+  const errors =
+    typeof data === "object" && data !== null && "errors" in data
+      ? ((data as { errors?: Record<string, string[]> }).errors ?? {})
+      : {};
+  const message =
+    typeof data === "object" && data !== null && "message" in data
+      ? String((data as { message?: unknown }).message ?? "") || null
+      : null;
+  return new ApiValidationError(errors, message);
+}
+
+function parseApiErrorMessage(data: unknown, status: number): string {
+  const message =
+    typeof data === "object" && data !== null && "message" in data
+      ? String((data as { message?: unknown }).message ?? "")
+      : "";
+  return message || `Request failed with status ${status}`;
+}
+
+/**
+ * Shared non-2xx handling for both `apiRequest` and `apiBlobRequest`
+ * (§9): even on a binary (PDF) endpoint, Laravel's error responses
+ * (404/429/500/...) are JSON — this always parses the body as JSON
+ * error data, never attempts to treat it as the binary payload.
+ */
+async function throwForNonOkResponse(response: Response): Promise<never> {
+  if (response.status === 422) {
+    const data: unknown = await response.json().catch(() => ({}));
+    throw parseValidationErrorBody(data);
+  }
+  const data: unknown = await response.json().catch(() => ({}));
+  throw new ApiError(response.status, parseApiErrorMessage(data, response.status));
+}
+
+/**
  * §8: a safe, SSR-proof way to tell a `FormData` body apart from a JSON
  * one. `typeof FormData !== "undefined"` guards the check itself (no
  * module-scope browser-only access — this runs inside the function, at
@@ -143,43 +213,54 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     if (token) headers["X-XSRF-TOKEN"] = token;
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${API_URL}${path}`, {
-      method,
-      credentials: "include",
-      headers,
-      body: isFormData
-        ? (options.body as FormData)
-        : options.body !== undefined
-          ? JSON.stringify(options.body)
-          : undefined,
-    });
-  } catch {
-    throw new ApiNetworkError();
-  }
+  const response = await sendRequest(path, {
+    method,
+    headers,
+    body: isFormData
+      ? (options.body as FormData)
+      : options.body !== undefined
+        ? JSON.stringify(options.body)
+        : undefined,
+  });
 
   if (response.status === 204) {
     return undefined as T;
   }
 
-  if (response.status === 422) {
-    const data: unknown = await response.json().catch(() => ({}));
-    const errors =
-      typeof data === "object" && data !== null && "errors" in data
-        ? ((data as { errors?: Record<string, string[]> }).errors ?? {})
-        : {};
-    throw new ApiValidationError(errors);
-  }
-
   if (!response.ok) {
-    const data: unknown = await response.json().catch(() => ({}));
-    const message =
-      typeof data === "object" && data !== null && "message" in data
-        ? String((data as { message?: unknown }).message ?? "")
-        : "";
-    throw new ApiError(response.status, message || `Request failed with status ${response.status}`);
+    await throwForNonOkResponse(response);
   }
 
   return response.json() as Promise<T>;
+}
+
+interface ApiBlobRequestOptions {
+  method?: "GET";
+}
+
+/**
+ * PROPOSAL-DOC-01B §6-9: the binary counterpart of `apiRequest`, for the
+ * PDF endpoints (authenticated preview and public token-based). Both are
+ * GET, so this never calls `ensureCsrfCookie()` (§8 — GET needs no CSRF)
+ * and never sends a Bearer token or any auth header of its own —
+ * authenticated access relies solely on `credentials: "include"` (the
+ * session cookie), exactly like every other request through this client;
+ * the public PDF endpoint simply doesn't require a session at all.
+ *
+ * @throws {ApiValidationError} on 422 (never expected for a GET, kept
+ *   for symmetry with `apiRequest`'s error contract)
+ * @throws {ApiError} on 404/429/5xx/... — the response body is JSON
+ *   even here (§9): a Laravel error page for a binary route is never
+ *   mistaken for a corrupted PDF blob.
+ * @throws {ApiNetworkError} when the request never reached the server
+ */
+export async function apiBlobRequest(path: string, options: ApiBlobRequestOptions = {}): Promise<Blob> {
+  const method = options.method ?? "GET";
+  const response = await sendRequest(path, { method, headers: { Accept: "application/pdf" } });
+
+  if (!response.ok) {
+    await throwForNonOkResponse(response);
+  }
+
+  return response.blob();
 }

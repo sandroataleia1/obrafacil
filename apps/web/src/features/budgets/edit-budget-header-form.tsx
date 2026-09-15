@@ -43,6 +43,7 @@ import type { Customer, CustomerListItem } from "@/features/customers/types";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { brlInputToDecimalString, decimalStringToMoneyInputValue } from "@/lib/currency";
 import { BudgetCustomerPicker } from "./components/budget-customer-picker";
+import { ProposalConditionsFields } from "./components/proposal-conditions-fields";
 import { getBudget, updateBudget } from "./budgets-client";
 import type { Budget } from "./types";
 
@@ -77,6 +78,10 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [discountInput, setDiscountInput] = useState("");
+  const [validUntil, setValidUntil] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [executionTerms, setExecutionTerms] = useState("");
+  const [proposalTerms, setProposalTerms] = useState("");
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +124,10 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
         setReference(found.reference ?? "");
         setNotes(found.notes ?? "");
         setDiscountInput(decimalStringToMoneyInputValue(found.discount_amount));
+        setValidUntil(found.valid_until ?? "");
+        setPaymentTerms(found.payment_terms ?? "");
+        setExecutionTerms(found.execution_terms ?? "");
+        setProposalTerms(found.proposal_terms ?? "");
         setStatus("success");
       })
       .catch((caught) => {
@@ -163,6 +172,10 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
         title: title.trim(),
         reference: reference.trim() || null,
         notes: notes.trim() || null,
+        valid_until: validUntil || null,
+        payment_terms: paymentTerms.trim() || null,
+        execution_terms: executionTerms.trim() || null,
+        proposal_terms: proposalTerms.trim() || null,
         discount_amount: brlInputToDecimalString(discountInput) ?? "0.00",
       });
       // §17: a PUT for A resolving after a switch to B must never
@@ -296,7 +309,7 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
 
         <div className="space-y-1.5">
           <label htmlFor="edit-budget-notes" className="text-sm font-medium text-foreground">
-            Observações <span className="text-muted-foreground">(opcional)</span>
+            Observações internas <span className="text-muted-foreground">(opcional)</span>
           </label>
           <textarea
             id="edit-budget-notes"
@@ -305,6 +318,7 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
             rows={3}
             className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
           />
+          <p className="text-xs text-muted-foreground">Visível somente para sua equipe. Não aparece na proposta do cliente.</p>
           {fieldErrors.notes ? <p className="text-sm text-destructive">{fieldErrors.notes[0]}</p> : null}
         </div>
 
@@ -313,6 +327,19 @@ export function EditBudgetHeaderForm({ id }: { id: string }) {
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
+
+      <ProposalConditionsFields
+        idPrefix="budget-edit"
+        validUntil={validUntil}
+        onValidUntilChange={setValidUntil}
+        paymentTerms={paymentTerms}
+        onPaymentTermsChange={setPaymentTerms}
+        executionTerms={executionTerms}
+        onExecutionTermsChange={setExecutionTerms}
+        proposalTerms={proposalTerms}
+        onProposalTermsChange={setProposalTerms}
+        fieldErrors={fieldErrors}
+      />
 
       <Button type="button" size="lg" onClick={handleSubmit} disabled={!canSubmit} className="w-full">
         {submitting ? "Salvando..." : "Salvar alterações"}
