@@ -5,6 +5,8 @@ use App\Http\Controllers\Api\V1\BudgetItemController;
 use App\Http\Controllers\Api\V1\BudgetStatusController;
 use App\Http\Controllers\Api\V1\CatalogItemController;
 use App\Http\Controllers\Api\V1\CompanyActivationController;
+use App\Http\Controllers\Api\V1\CompanyProfileController;
+use App\Http\Controllers\Api\V1\CompanyProfileLogoController;
 use App\Http\Controllers\Api\V1\CompanyRegistryLookupController;
 use App\Http\Controllers\Api\V1\CustomerAddressController;
 use App\Http\Controllers\Api\V1\CustomerContactController;
@@ -56,6 +58,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('resolve-current-company')->group(function () {
         Route::get('/v1/notifications/settings', [NotificationSettingsController::class, 'show']);
         Route::put('/v1/notifications/settings', [NotificationSettingsController::class, 'update']);
+
+        Route::get('/v1/company/profile', [CompanyProfileController::class, 'show']);
+        Route::put('/v1/company/profile', [CompanyProfileController::class, 'update']);
+        Route::post('/v1/company/profile/logo', [CompanyProfileLogoController::class, 'store']);
+        Route::delete('/v1/company/profile/logo', [CompanyProfileLogoController::class, 'destroy']);
 
         Route::get('/v1/customers', [CustomerController::class, 'index']);
         Route::post('/v1/customers', [CustomerController::class, 'store']);
