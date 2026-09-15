@@ -145,44 +145,56 @@ class BudgetService
      * draft -> lock the Company row too (`lockForUpdate`) so a concurrent
      * `PUT /company/profile` either fully commits before this read or
      * fully after it — this snapshot can never mix pre- and post-update
-     * Company fields. §8: the logo copy happens on the filesystem, which
-     * isn't transactional — if `save()` fails after the copy, the
-     * just-copied file is deleted so it never becomes an orphan and the
-     * Budget genuinely stays draft with `proposal_logo_path` still null.
+     * Company fields.
+     *
+     * PROPOSAL-DOC-01A1 §1-3/§11: the filesystem copy isn't transactional,
+     * so the compensating cleanup MUST cover the ENTIRE `DB::transaction()`
+     * call, not just `Model::save()` — a failure generating the unique
+     * token, a failure in `fresh(['items'])`, or even a failed COMMIT are
+     * all real ways the transaction can fail AFTER the file was already
+     * written, and the original `try/catch` around `save()` alone missed
+     * every one of them. `$copiedProposalLogoPath` is captured by
+     * reference from inside the transaction closure and only read in the
+     * `catch` that wraps the closure's own return — if `DB::transaction()`
+     * returns successfully, this `catch` never runs and the copy is never
+     * touched again (§3: it belongs to the Budget permanently once
+     * committed).
      */
     public function submit(Budget|string $budget): Budget
     {
-        return DB::transaction(function () use ($budget) {
-            $lockedBudget = $this->locker->lock($budget);
+        $copiedProposalLogoPath = null;
 
-            if (! $lockedBudget->status->isMutable()) {
-                throw new BudgetStatusConflictException('Este orçamento já foi enviado e não pode ser enviado novamente.');
-            }
+        try {
+            return DB::transaction(function () use ($budget, &$copiedProposalLogoPath) {
+                $lockedBudget = $this->locker->lock($budget);
 
-            $company = Company::query()->whereKey($lockedBudget->company_id)->lockForUpdate()->firstOrFail();
-
-            $companySnapshot = $this->companySnapshotBuilder->build($company);
-            $proposalLogoPath = $this->proposalLogoService->copyFromCompany($lockedBudget, $company);
-
-            $lockedBudget->status = BudgetStatus::PendingApproval;
-            $lockedBudget->submitted_at = now();
-            $lockedBudget->proposal_token ??= $this->generateUniqueToken();
-            $lockedBudget->company_snapshot = $companySnapshot;
-            $lockedBudget->proposal_logo_path = $proposalLogoPath;
-            $lockedBudget->proposal_template_version = 1;
-
-            try {
-                $lockedBudget->save();
-            } catch (Throwable $e) {
-                if ($proposalLogoPath !== null) {
-                    $this->proposalLogoService->deleteCopy($proposalLogoPath);
+                if (! $lockedBudget->status->isMutable()) {
+                    throw new BudgetStatusConflictException('Este orçamento já foi enviado e não pode ser enviado novamente.');
                 }
 
-                throw $e;
+                $company = Company::query()->whereKey($lockedBudget->company_id)->lockForUpdate()->firstOrFail();
+
+                $companySnapshot = $this->companySnapshotBuilder->build($company);
+                $proposalLogoPath = $this->proposalLogoService->copyFromCompany($lockedBudget, $company);
+                $copiedProposalLogoPath = $proposalLogoPath;
+
+                $lockedBudget->status = BudgetStatus::PendingApproval;
+                $lockedBudget->submitted_at = now();
+                $lockedBudget->proposal_token ??= $this->generateUniqueToken();
+                $lockedBudget->company_snapshot = $companySnapshot;
+                $lockedBudget->proposal_logo_path = $proposalLogoPath;
+                $lockedBudget->proposal_template_version = 1;
+                $lockedBudget->save();
+
+                return $lockedBudget->fresh(['items']);
+            });
+        } catch (Throwable $e) {
+            if ($copiedProposalLogoPath !== null) {
+                $this->proposalLogoService->deleteCopy($copiedProposalLogoPath);
             }
 
-            return $lockedBudget->fresh(['items']);
-        });
+            throw $e;
+        }
     }
 
     /**

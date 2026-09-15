@@ -31,6 +31,7 @@ final class ProposalDocumentData
      * @param  array<int, array{
      *     name: string,
      *     code: ?string,
+     *     description: ?string,
      *     unit: ?string,
      *     quantity: string,
      *     unit_price: string,

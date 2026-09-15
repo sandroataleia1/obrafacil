@@ -248,4 +248,83 @@ class ProposalPdfTest extends TestCase
         $this->assertStringStartsWith('%PDF-', $response->getContent());
         $this->assertGreaterThan(5000, strlen($response->getContent()));
     }
+
+    // ================= PD1-PD5 (PROPOSAL-DOC-01A1 §21) — item description =================
+
+    /** PD1: item description enters ProposalDocumentData. */
+    public function test_pd1_item_description_enters_document_data(): void
+    {
+        [, , $budget] = $this->submittedBudget([], [], [
+            'name' => 'Pintura de paredes',
+            'description' => 'Preparação, selador e duas demãos de tinta acrílica.',
+        ]);
+
+        $data = app(ProposalDocumentDataBuilder::class)->forSubmitted($budget);
+
+        $this->assertSame('Pintura de paredes', $data->items[0]['name']);
+        $this->assertSame('Preparação, selador e duas demãos de tinta acrílica.', $data->items[0]['description']);
+    }
+
+    /** PD2: description appears in the rendered HTML. */
+    public function test_pd2_description_appears_in_html(): void
+    {
+        [, , $budget] = $this->submittedBudget([], [], [
+            'name' => 'Pintura de paredes',
+            'description' => 'Preparação, selador e duas demãos de tinta acrílica.',
+        ]);
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringContainsString('Pintura de paredes', $html);
+        $this->assertStringContainsString('Preparação, selador e duas demãos de tinta acrílica.', $html);
+    }
+
+    /** PD3: a null description never creates an empty block. */
+    public function test_pd3_null_description_creates_no_empty_block(): void
+    {
+        [, , $budget] = $this->submittedBudget([], [], ['name' => 'Item sem descrição']);
+
+        $data = app(ProposalDocumentDataBuilder::class)->forSubmitted($budget);
+        $this->assertNull($data->items[0]['description']);
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringNotContainsString('item-description', $this->extractLineWithoutCss($html));
+    }
+
+    /** PD4: BudgetItem.notes remains absent from the document — description is never notes. */
+    public function test_pd4_item_notes_remains_absent(): void
+    {
+        [, , $budget] = $this->submittedBudget([], [], [
+            'name' => 'Item com nota interna',
+            'notes' => 'NOTA-INTERNA-ITEM-SEGREDO',
+        ]);
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringNotContainsString('NOTA-INTERNA-ITEM-SEGREDO', $html);
+    }
+
+    /** PD5: calculation_snapshot remains absent regardless of the description addition. */
+    public function test_pd5_calculation_snapshot_remains_absent(): void
+    {
+        [$company, $user] = $this->actingAsNewCompanyMember();
+        $this->viewCompany = $company;
+        $customer = $this->makeCustomer();
+        $budgetId = $this->postJson('/api/v1/budgets', $this->validBudgetPayload(['customer_id' => $customer->id]))->json('id');
+        $this->postJson("/api/v1/budgets/{$budgetId}/items", $this->calculatorItemPayload([
+            'description' => 'Descrição comercial do item calculado.',
+            'calculation_snapshot' => ['segredo_interno' => 'PD5-SEGREDO'],
+        ]));
+        $this->postJson("/api/v1/budgets/{$budgetId}/submit");
+        $budget = $this->currentCompanyContext()->run($company, fn () => Budget::query()->with('items')->findOrFail($budgetId));
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringContainsString('Descrição comercial do item calculado.', $html);
+        $this->assertStringNotContainsString('PD5-SEGREDO', $html);
+        $this->assertStringNotContainsString('calculation_snapshot', $html);
+    }
+
+    /** Helper: strips the <style> block so a plain substring check for a CSS class name proves it's not used as an element attribute either. */
+    private function extractLineWithoutCss(string $html): string
+    {
+        return preg_replace('/<style>.*?<\/style>/s', '', $html) ?? $html;
+    }
 }

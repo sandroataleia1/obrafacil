@@ -39,6 +39,7 @@
     table.items th { background: #f2f2f2; text-align: left; font-size: 8.5px; text-transform: uppercase; padding: 5px 6px; border-bottom: 1px solid #cccccc; }
     table.items td { padding: 5px 6px; border-bottom: 1px solid #eeeeee; font-size: 9.5px; vertical-align: top; }
     table.items td.num, table.items th.num { text-align: right; }
+    table.items .item-description { font-size: 8px; color: #666666; margin-top: 1px; }
 
     table.summary { width: 260px; margin-left: auto; margin-top: 8px; border-collapse: collapse; }
     table.summary td { padding: 3px 6px; font-size: 10px; }
@@ -132,7 +133,12 @@
     <tbody>
         @foreach ($data->items as $item)
             <tr>
-                <td>{{ $item['name'] }}</td>
+                <td>
+                    {{ $item['name'] }}
+                    @if (! empty($item['description']))
+                        <div class="item-description">{{ $item['description'] }}</div>
+                    @endif
+                </td>
                 <td class="num">{{ $item['quantity'] }}</td>
                 <td>{{ $item['unit'] ?? '—' }}</td>
                 <td class="num">{{ $item['unit_price'] }}</td>

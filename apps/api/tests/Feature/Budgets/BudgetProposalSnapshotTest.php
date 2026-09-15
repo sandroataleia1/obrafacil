@@ -204,14 +204,14 @@ class BudgetProposalSnapshotTest extends TestCase
     }
 
     /**
-     * PSN11: if submit fails AFTER the logo was copied, the copied file
-     * is removed (§8 rollback). `BudgetService::submit()`'s catch block
-     * calls exactly `BudgetProposalLogoService::deleteCopy()` on the
-     * just-copied path — this proves that compensating action directly
-     * and deterministically (forcing a genuine mid-submit exception via
-     * HTTP is not reliably reproducible), then confirms via a real
-     * `copyFromCompany()` + `deleteCopy()` round trip that the "no
-     * orphan" guarantee actually holds against the real Storage disk.
+     * PSN11: low-level sanity check of the compensating primitive itself
+     * (`copyFromCompany()` + `deleteCopy()` round trip against the real
+     * Storage disk). PROPOSAL-DOC-01A1 §9/§25: this does NOT exercise
+     * `BudgetService::submit()` and is no longer the proof that submit's
+     * own rollback works — see `BudgetProposalFileIntegrityTest::
+     * test_fi5_.../test_fi6_...` for a genuine `submit()`-level proof
+     * (a real post-copy failure injected via an Eloquent `saving` event,
+     * asserting the actual DB rollback AND the actual file removal).
      */
     public function test_psn11_submit_failure_removes_copied_file(): void
     {
