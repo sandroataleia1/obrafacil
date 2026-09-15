@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\BudgetController;
 use App\Http\Controllers\Api\V1\BudgetItemController;
+use App\Http\Controllers\Api\V1\BudgetProposalPreviewController;
 use App\Http\Controllers\Api\V1\BudgetStatusController;
 use App\Http\Controllers\Api\V1\CatalogItemController;
 use App\Http\Controllers\Api\V1\CompanyActivationController;
@@ -18,6 +19,7 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\NotificationSettingsController;
 use App\Http\Controllers\Api\V1\PostalCodeLookupController;
 use App\Http\Controllers\Api\V1\ProposalController;
+use App\Http\Controllers\Api\V1\PublicProposalPdfController;
 use App\Http\Controllers\Api\V1\RegisterController;
 use App\Http\Controllers\Api\V1\ServiceOrderController;
 use App\Http\Controllers\Api\V1\ServiceOrderItemController;
@@ -48,6 +50,11 @@ Route::get('/v1/proposals/{token}', [ProposalController::class, 'show']);
 Route::middleware('throttle:proposal-decisions')->group(function () {
     Route::post('/v1/proposals/{token}/approve', [ProposalController::class, 'approve']);
     Route::post('/v1/proposals/{token}/reject', [ProposalController::class, 'reject']);
+});
+// PROPOSAL-DOC-01A §43-44: same public/token resolution, own (lower)
+// rate limiter since PDF rendering is CPU-heavy.
+Route::middleware('throttle:proposal-pdf')->group(function () {
+    Route::get('/v1/proposals/{token}/pdf', [PublicProposalPdfController::class, 'show']);
 });
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -110,6 +117,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/v1/budgets/{budget}/submit', [BudgetStatusController::class, 'submit']);
         Route::post('/v1/budgets/{budget}/approve-manually', [BudgetStatusController::class, 'approveManually']);
         Route::post('/v1/budgets/{budget}/reject-manually', [BudgetStatusController::class, 'rejectManually']);
+
+        // PROPOSAL-DOC-01A §41-42: authenticated preview — draft uses the
+        // live Company, a submitted Budget uses its own frozen snapshot.
+        Route::get('/v1/budgets/{budget}/proposal-preview.pdf', [BudgetProposalPreviewController::class, 'show']);
 
         Route::post('/v1/budgets/{budget}/items', [BudgetItemController::class, 'store']);
         Route::put('/v1/budgets/{budget}/items/{item}', [BudgetItemController::class, 'update']);

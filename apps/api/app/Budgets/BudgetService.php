@@ -6,12 +6,14 @@ use App\Budgets\Exceptions\BudgetStatusConflictException;
 use App\Enums\BudgetDecisionSource;
 use App\Enums\BudgetStatus;
 use App\Models\Budget;
+use App\Models\Company;
 use App\Models\Customer;
 use App\Models\User;
 use App\Support\CurrentCompanyContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * BUDGET-API-01. The single place a Budget header is created/updated/
@@ -34,6 +36,8 @@ class BudgetService
         private readonly BudgetNumberAllocator $numberAllocator,
         private readonly BudgetItemService $itemService,
         private readonly BudgetLocker $locker,
+        private readonly CompanyProposalSnapshotBuilder $companySnapshotBuilder,
+        private readonly BudgetProposalLogoService $proposalLogoService,
     ) {}
 
     /**
@@ -57,6 +61,10 @@ class BudgetService
                     'title' => $validated['title'],
                     'reference' => $validated['reference'] ?? null,
                     'notes' => $validated['notes'] ?? null,
+                    'valid_until' => $validated['valid_until'] ?? null,
+                    'payment_terms' => $validated['payment_terms'] ?? null,
+                    'execution_terms' => $validated['execution_terms'] ?? null,
+                    'proposal_terms' => $validated['proposal_terms'] ?? null,
                     'sale_subtotal' => '0.00',
                     'discount_amount' => '0.00',
                     'total' => '0.00',
@@ -104,6 +112,10 @@ class BudgetService
                     'title' => $validated['title'],
                     'reference' => $validated['reference'] ?? null,
                     'notes' => $validated['notes'] ?? null,
+                    'valid_until' => $validated['valid_until'] ?? null,
+                    'payment_terms' => $validated['payment_terms'] ?? null,
+                    'execution_terms' => $validated['execution_terms'] ?? null,
+                    'proposal_terms' => $validated['proposal_terms'] ?? null,
                     'discount_amount' => $discountAmount,
                     'total' => BudgetCalculator::total((string) $lockedBudget->sale_subtotal, $discountAmount),
                 ],
@@ -121,7 +133,22 @@ class BudgetService
      * before this point), sets `submitted_at`. Header/items are already
      * frozen from this point on purely by `status` no longer being
      * `draft` — every mutation route re-checks `isMutable()` on the
-     * freshly-locked row, so there is no separate snapshot to maintain.
+     * freshly-locked row, so there is no separate snapshot to maintain
+     * for those fields.
+     *
+     * PROPOSAL-DOC-01A §2/§7: everything the customer will ever see in
+     * the proposal document must become historical at this exact moment
+     * — Company identity/address/contact (`company_snapshot`) and the
+     * Company's CURRENT logo (copied to an immutable, Budget-owned file,
+     * `proposal_logo_path`) are captured here, never re-derived from the
+     * live Company later. §7's exact ordering: lock Budget row -> assert
+     * draft -> lock the Company row too (`lockForUpdate`) so a concurrent
+     * `PUT /company/profile` either fully commits before this read or
+     * fully after it — this snapshot can never mix pre- and post-update
+     * Company fields. §8: the logo copy happens on the filesystem, which
+     * isn't transactional — if `save()` fails after the copy, the
+     * just-copied file is deleted so it never becomes an orphan and the
+     * Budget genuinely stays draft with `proposal_logo_path` still null.
      */
     public function submit(Budget|string $budget): Budget
     {
@@ -132,10 +159,27 @@ class BudgetService
                 throw new BudgetStatusConflictException('Este orçamento já foi enviado e não pode ser enviado novamente.');
             }
 
+            $company = Company::query()->whereKey($lockedBudget->company_id)->lockForUpdate()->firstOrFail();
+
+            $companySnapshot = $this->companySnapshotBuilder->build($company);
+            $proposalLogoPath = $this->proposalLogoService->copyFromCompany($lockedBudget, $company);
+
             $lockedBudget->status = BudgetStatus::PendingApproval;
             $lockedBudget->submitted_at = now();
             $lockedBudget->proposal_token ??= $this->generateUniqueToken();
-            $lockedBudget->save();
+            $lockedBudget->company_snapshot = $companySnapshot;
+            $lockedBudget->proposal_logo_path = $proposalLogoPath;
+            $lockedBudget->proposal_template_version = 1;
+
+            try {
+                $lockedBudget->save();
+            } catch (Throwable $e) {
+                if ($proposalLogoPath !== null) {
+                    $this->proposalLogoService->deleteCopy($proposalLogoPath);
+                }
+
+                throw $e;
+            }
 
             return $lockedBudget->fresh(['items']);
         });

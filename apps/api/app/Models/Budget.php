@@ -18,9 +18,17 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * commercial quote for a Customer, independent of any Obra (same
  * discipline as ServiceOrder/ADR-011).
  */
+/**
+ * PROPOSAL-DOC-01A: `company_snapshot`/`proposal_logo_path`/
+ * `proposal_template_version` are deliberately NOT fillable — they are
+ * only ever set by explicit assignment inside `BudgetService::submit()`
+ * (§53: "snapshot fields NÃO vêm de mass-assignment de Request"), never
+ * accepted from any request payload.
+ */
 #[Fillable([
     'number', 'status',
     'customer_id', 'title', 'reference', 'notes',
+    'valid_until', 'payment_terms', 'execution_terms', 'proposal_terms',
     'customer_name', 'customer_document', 'customer_phone', 'customer_email',
     'sale_subtotal', 'cost_subtotal', 'margin_amount', 'margin_percentage', 'discount_amount', 'total',
     'proposal_token', 'submitted_at',
@@ -52,6 +60,9 @@ class Budget extends Model
             'total' => 'decimal:2',
             'submitted_at' => 'datetime',
             'decided_at' => 'datetime',
+            'valid_until' => 'date',
+            'company_snapshot' => 'array',
+            'proposal_template_version' => 'integer',
         ];
     }
 

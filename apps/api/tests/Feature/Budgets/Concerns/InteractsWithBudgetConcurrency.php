@@ -17,6 +17,44 @@ use Symfony\Component\Process\Process;
 trait InteractsWithBudgetConcurrency
 {
     /**
+     * PROPOSAL-DOC-01A §58: same harness discipline, for the
+     * Company-profile-update-vs-submit race
+     * (App\Console\Commands\ProposalSnapshotConcurrencyProbe).
+     *
+     * @param  array<string, mixed>  $options
+     */
+    protected function startProposalSnapshotConcurrencyProbe(Company $company, string $target, string $action, array $options = []): Process
+    {
+        $command = ['php', 'artisan', 'concurrency:proposal-snapshot', $company->id, $target, $action];
+        foreach ($options as $key => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+            $command[] = "--{$key}={$value}";
+        }
+
+        $env = [
+            'APP_ENV' => 'testing',
+            'DB_CONNECTION' => 'pgsql',
+            'DB_HOST' => (string) config('database.connections.pgsql.host'),
+            'DB_PORT' => (string) config('database.connections.pgsql.port'),
+            'DB_DATABASE' => (string) config('database.connections.pgsql.database'),
+            'DB_USERNAME' => (string) config('database.connections.pgsql.username'),
+            'DB_PASSWORD' => (string) config('database.connections.pgsql.password'),
+            'CACHE_STORE' => 'array',
+            'SESSION_DRIVER' => 'array',
+            'QUEUE_CONNECTION' => 'sync',
+            'FILESYSTEM_DISK' => 'public',
+        ];
+
+        $process = new Process($command, base_path(), $env);
+        $process->setTimeout(30);
+        $process->start();
+
+        return $process;
+    }
+
+    /**
      * @param  array<string, mixed>  $options
      */
     protected function startBudgetConcurrencyProbe(Company $company, Budget|string $budget, string $action, array $options = []): Process

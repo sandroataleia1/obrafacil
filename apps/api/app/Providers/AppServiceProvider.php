@@ -97,5 +97,16 @@ class AppServiceProvider extends ServiceProvider
 
             return Limit::perMinute(10)->by($key);
         });
+
+        // PROPOSAL-DOC-01A §44: PDF generation is CPU-heavy and this
+        // route is public/unauthenticated — same IP+token keying
+        // rationale as 'proposal-decisions' above, but a lower ceiling
+        // since rendering a PDF costs meaningfully more than a JSON
+        // decision.
+        RateLimiter::for('proposal-pdf', function (Request $request) {
+            $key = $request->ip().'|'.$request->route('token');
+
+            return Limit::perMinute(6)->by($key);
+        });
     }
 }

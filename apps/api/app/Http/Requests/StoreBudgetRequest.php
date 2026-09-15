@@ -54,11 +54,24 @@ class StoreBudgetRequest extends FormRequest
             'customer_document' => ['prohibited'],
             'customer_phone' => ['prohibited'],
             'customer_email' => ['prohibited'],
+            // PROPOSAL-DOC-01A §14: never accepted from the client — set
+            // exclusively by BudgetService::submit() from the server-side
+            // Company row, never from the browser.
+            'company_snapshot' => ['prohibited'],
+            'proposal_logo_path' => ['prohibited'],
+            'proposal_template_version' => ['prohibited'],
 
             'customer_id' => ['required', 'string'],
             'title' => ['required', 'string', 'max:255'],
             'reference' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string'],
+            // PROPOSAL-DOC-01A §11/§14: client-facing commercial
+            // conditions — distinct from `notes`, which stays internal
+            // (§13) and is never shown to the customer.
+            'valid_until' => ['nullable', 'date_format:Y-m-d'],
+            'payment_terms' => ['nullable', 'string', 'max:5000'],
+            'execution_terms' => ['nullable', 'string', 'max:5000'],
+            'proposal_terms' => ['nullable', 'string', 'max:5000'],
             'discount_amount' => ['nullable', 'numeric', 'min:0'],
 
             'items' => ['sometimes', 'array'],

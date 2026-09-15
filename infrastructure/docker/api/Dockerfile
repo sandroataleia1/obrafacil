@@ -4,8 +4,13 @@ RUN apk add --no-cache \
     git \
     unzip \
     postgresql-dev \
+    libpng-dev \
+    libjpeg-turbo-dev \
+    libwebp-dev \
+    freetype-dev \
     $PHPIZE_DEPS \
-    && docker-php-ext-install pdo_pgsql pgsql bcmath \
+    && docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
+    && docker-php-ext-install pdo_pgsql pgsql bcmath gd \
     && apk del $PHPIZE_DEPS
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer

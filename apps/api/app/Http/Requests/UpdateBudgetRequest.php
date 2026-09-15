@@ -48,11 +48,22 @@ class UpdateBudgetRequest extends FormRequest
             'customer_document' => ['prohibited'],
             'customer_phone' => ['prohibited'],
             'customer_email' => ['prohibited'],
+            // PROPOSAL-DOC-01A §14: never accepted from the client.
+            'company_snapshot' => ['prohibited'],
+            'proposal_logo_path' => ['prohibited'],
+            'proposal_template_version' => ['prohibited'],
 
             'customer_id' => ['required', 'string'],
             'title' => ['required', 'string', 'max:255'],
             'reference' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string'],
+            // PROPOSAL-DOC-01A §11/§12: client-facing conditions, editable
+            // only while draft (enforced by BudgetLocker/assertMutable
+            // like every other header field on this same endpoint).
+            'valid_until' => ['nullable', 'date_format:Y-m-d'],
+            'payment_terms' => ['nullable', 'string', 'max:5000'],
+            'execution_terms' => ['nullable', 'string', 'max:5000'],
+            'proposal_terms' => ['nullable', 'string', 'max:5000'],
             'discount_amount' => ['nullable', 'numeric', 'min:0'],
         ];
     }
