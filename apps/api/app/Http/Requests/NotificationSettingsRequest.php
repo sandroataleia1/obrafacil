@@ -88,7 +88,7 @@ class NotificationSettingsRequest extends FormRequest
         // §10: start == end is semantically ambiguous (24h silent vs. no
         // silent period at all) — rejected outright rather than guessing.
         if ($start !== null && $end !== null && $start === $end) {
-            $validator->errors()->add('quiet_start', 'The quiet hours window cannot start and end at the same time.');
+            $validator->errors()->add('quiet_start', 'O período de silêncio não pode começar e terminar no mesmo horário.');
         }
     }
 
@@ -104,7 +104,7 @@ class NotificationSettingsRequest extends FormRequest
         if ($phoneValidator->fails()) {
             $validator->errors()->add(
                 'whatsapp_enabled',
-                'WhatsApp cannot be enabled without a valid phone number on file.'
+                'O WhatsApp não pode ser habilitado sem um telefone válido cadastrado.'
             );
         }
     }

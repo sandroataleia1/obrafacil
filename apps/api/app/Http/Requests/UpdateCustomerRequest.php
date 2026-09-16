@@ -68,11 +68,11 @@ class UpdateCustomerRequest extends FormRequest
             $kind = CustomerKind::tryFrom((string) $this->input('kind'));
 
             if ($kind === CustomerKind::Individual && ! Document::isValidCpf($document)) {
-                $validator->errors()->add('document', 'The document must be a valid CPF for an individual customer.');
+                $validator->errors()->add('document', 'O documento deve ser um CPF válido para um cliente pessoa física.');
             }
 
             if ($kind === CustomerKind::Company && ! Document::isValidCnpj($document)) {
-                $validator->errors()->add('document', 'The document must be a valid CNPJ for a company customer.');
+                $validator->errors()->add('document', 'O documento deve ser um CNPJ válido para um cliente pessoa jurídica.');
             }
 
             $exists = Customer::query()
@@ -81,7 +81,7 @@ class UpdateCustomerRequest extends FormRequest
                 ->exists();
 
             if ($exists) {
-                $validator->errors()->add('document', 'A customer with this document already exists.');
+                $validator->errors()->add('document', 'Já existe um cliente com este documento.');
             }
         });
     }

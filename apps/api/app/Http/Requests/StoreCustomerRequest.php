@@ -119,11 +119,11 @@ class StoreCustomerRequest extends FormRequest
         $kind = CustomerKind::tryFrom((string) $this->input('kind'));
 
         if ($kind === CustomerKind::Individual && ! Document::isValidCpf($document)) {
-            $validator->errors()->add('document', 'The document must be a valid CPF for an individual customer.');
+            $validator->errors()->add('document', 'O documento deve ser um CPF válido para um cliente pessoa física.');
         }
 
         if ($kind === CustomerKind::Company && ! Document::isValidCnpj($document)) {
-            $validator->errors()->add('document', 'The document must be a valid CNPJ for a company customer.');
+            $validator->errors()->add('document', 'O documento deve ser um CNPJ válido para um cliente pessoa jurídica.');
         }
     }
 
@@ -141,7 +141,7 @@ class StoreCustomerRequest extends FormRequest
         }
 
         if (Customer::query()->where('document', $document)->exists()) {
-            $validator->errors()->add('document', 'A customer with this document already exists.');
+            $validator->errors()->add('document', 'Já existe um cliente com este documento.');
         }
     }
 
@@ -160,7 +160,8 @@ class StoreCustomerRequest extends FormRequest
         $primaryCount = collect($items)->filter(fn ($item) => (bool) ($item['is_primary'] ?? false))->count();
 
         if ($primaryCount !== 1) {
-            $validator->errors()->add($field, "Exactly one {$field} entry must be marked as primary when providing more than one.");
+            $label = $field === 'addresses' ? 'endereço' : 'contato';
+            $validator->errors()->add($field, "Exatamente um {$label} deve ser marcado como principal ao informar mais de um.");
         }
     }
 

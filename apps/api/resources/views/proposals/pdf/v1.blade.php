@@ -16,11 +16,11 @@
 <meta charset="UTF-8">
 <title>Proposta {{ $data->number }}</title>
 <style>
-    @page { margin: 90px 40px 60px 40px; }
+    @page { margin: 120px 40px 60px 40px; }
 
     body { font-family: 'DejaVu Sans', sans-serif; font-size: 10px; color: #1a1a1a; }
 
-    .header { position: fixed; top: -70px; left: 0; right: 0; height: 70px; }
+    .header { position: fixed; top: -100px; left: 0; right: 0; height: 100px; }
     .header table { width: 100%; border-collapse: collapse; }
     .header .logo-cell { width: 70px; vertical-align: top; }
     .header .logo-cell img { max-width: 60px; max-height: 60px; }

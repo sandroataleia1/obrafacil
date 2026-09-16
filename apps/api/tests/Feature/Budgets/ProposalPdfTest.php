@@ -327,4 +327,162 @@ class ProposalPdfTest extends TestCase
     {
         return preg_replace('/<style>.*?<\/style>/s', '', $html) ?? $html;
     }
+
+    // ================= PH1-PH8 (UX-HARDENING-01 F1) — PDF header envelope =================
+
+    /** PH1: a full Company profile renders every identity line in the HTML. */
+    public function test_ph1_full_company_profile_renders_in_html(): void
+    {
+        [, , $budget] = $this->submittedBudget([
+            'name' => 'Construtora Horizonte Empreendimentos e Engenharia Ltda',
+            'trade_name' => 'Construtora Horizonte',
+            'legal_name' => 'Horizonte Empreendimentos e Engenharia Civil Sociedade Limitada',
+            'document' => '12345678000199',
+            'phone' => '+551140028922',
+            'whatsapp' => '+5511987654321',
+            'email' => 'contato@horizonteengenharia.com.br',
+            'street' => 'Avenida Presidente Juscelino Kubitschek de Oliveira',
+            'number' => '2041',
+            'complement' => 'Conjunto 1105, Torre Norte',
+            'neighborhood' => 'Vila Nova Conceição',
+            'city' => 'São Paulo',
+            'state' => 'SP',
+            'postal_code' => '04543011',
+            'reference_point' => 'Próximo ao metrô Vila Olímpia',
+        ]);
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringContainsString('Construtora Horizonte', $html);
+        $this->assertStringContainsString('Horizonte Empreendimentos e Engenharia Civil Sociedade Limitada', $html);
+        $this->assertStringContainsString('12.345.678/0001-99', $html);
+        $this->assertStringContainsString('contato@horizonteengenharia.com.br', $html);
+        $this->assertStringContainsString('Vila Nova Conceição', $html);
+    }
+
+    /** PH2: a minimal Company (only name) still renders a valid header, no broken markup. */
+    public function test_ph2_minimal_company_profile_renders(): void
+    {
+        [, , $budget] = $this->submittedBudget(['name' => 'Empresa Simples', 'document' => null]);
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringContainsString('Empresa Simples', $html);
+        $this->assertStringContainsString('PROPOSTA COMERCIAL', $html);
+    }
+
+    /** PH3: a long legal/trade name renders fully, without truncation markers. */
+    public function test_ph3_long_legal_and_trade_name_renders(): void
+    {
+        $longTradeName = 'Construtora e Incorporadora Horizonte Verde Sustentável';
+        $longLegalName = 'Horizonte Verde Sustentável Construções, Incorporações e Engenharia Civil Sociedade Empresária Limitada';
+
+        [, , $budget] = $this->submittedBudget([
+            'trade_name' => $longTradeName,
+            'legal_name' => $longLegalName,
+        ]);
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringContainsString($longTradeName, $html);
+        $this->assertStringContainsString($longLegalName, $html);
+    }
+
+    /** PH4: a long address is allowed to wrap — never forced onto one unbreakable line. */
+    public function test_ph4_long_address_can_wrap(): void
+    {
+        [, , $budget] = $this->submittedBudget([
+            'street' => 'Avenida Presidente Juscelino Kubitschek de Oliveira Salgado Filho',
+            'number' => '2041',
+            'complement' => 'Conjunto 1105, Torre Norte, Bloco B',
+            'neighborhood' => 'Vila Nova Conceição',
+            'city' => 'São Paulo',
+            'state' => 'SP',
+            'postal_code' => '04543011',
+            'reference_point' => 'Próximo ao metrô Vila Olímpia, em frente ao parque',
+        ]);
+
+        $html = $this->renderHtml($budget);
+        $this->assertStringNotContainsString('white-space: nowrap', $html);
+        $this->assertStringNotContainsString('nowrap;', $html);
+        $this->assertStringContainsString('Vila Nova Conceição', $html);
+    }
+
+    /** PH5: the header envelope (@page margin + .header height) reserves enough space for a full profile. */
+    public function test_ph5_header_envelope_has_sufficient_top_space(): void
+    {
+        $template = file_get_contents(base_path('resources/views/proposals/pdf/v1.blade.php'));
+
+        $this->assertMatchesRegularExpression('/@page\s*\{\s*margin:\s*(\d+)px/', $template);
+        preg_match('/@page\s*\{\s*margin:\s*(\d+)px/', $template, $pageMatch);
+        preg_match('/\.header\s*\{[^}]*height:\s*(\d+)px/', $template, $headerMatch);
+
+        $pageTopMargin = (int) $pageMatch[1];
+        $headerHeight = (int) $headerMatch[1];
+
+        // §4/§8: envelope must comfortably fit 6 identity lines (name, legal
+        // name, document, phone/whatsapp, email, address) at the template's
+        // own font sizes — verified empirically against a real rendered PDF.
+        $this->assertGreaterThanOrEqual(95, $headerHeight);
+        $this->assertGreaterThan($headerHeight, $pageTopMargin);
+    }
+
+    /** PH6: the document title is not part of the fixed, repeating header block. */
+    public function test_ph6_doc_title_is_outside_fixed_header(): void
+    {
+        $template = file_get_contents(base_path('resources/views/proposals/pdf/v1.blade.php'));
+
+        $headerBlockEnd = strpos($template, '</div>', (int) strpos($template, 'class="header"'));
+        $titlePosition = strpos($template, '<h1 class="doc-title">');
+
+        $this->assertNotFalse($headerBlockEnd);
+        $this->assertNotFalse($titlePosition);
+        $this->assertGreaterThan($headerBlockEnd, $titlePosition);
+    }
+
+    /** PH7: a multi-page PDF (60 items) still generates successfully with the new envelope. */
+    public function test_ph7_multi_page_pdf_generates_successfully(): void
+    {
+        [$company, $user] = $this->actingAsNewCompanyMember([
+            'trade_name' => 'Construtora Horizonte',
+            'legal_name' => 'Horizonte Empreendimentos e Engenharia Civil Sociedade Limitada',
+            'document' => '12345678000199',
+            'phone' => '+551140028922',
+            'whatsapp' => '+5511987654321',
+            'email' => 'contato@horizonteengenharia.com.br',
+            'street' => 'Avenida Presidente Juscelino Kubitschek de Oliveira',
+            'number' => '2041',
+            'neighborhood' => 'Vila Nova Conceição',
+            'city' => 'São Paulo',
+            'state' => 'SP',
+            'postal_code' => '04543011',
+        ]);
+        $customer = $this->makeCustomer();
+        $budgetId = $this->postJson('/api/v1/budgets', $this->validBudgetPayload(['customer_id' => $customer->id]))->json('id');
+        for ($i = 0; $i < 60; $i++) {
+            $this->postJson("/api/v1/budgets/{$budgetId}/items", $this->manualItemPayload([
+                'name' => "Item {$i} de um orçamento longo para forçar múltiplas páginas",
+            ]))->assertStatus(201);
+        }
+        $token = $this->postJson("/api/v1/budgets/{$budgetId}/submit")->json('proposal_token');
+
+        $response = $this->get("/api/v1/proposals/{$token}/pdf");
+        $response->assertOk();
+        $this->assertStringStartsWith('%PDF-', $response->getContent());
+    }
+
+    /** PH8: privacy regression holds under the new header markup — still zero cost/margin/internal notes/ids. */
+    public function test_ph8_privacy_regression_holds_with_new_header(): void
+    {
+        [, , $budget] = $this->submittedBudget([
+            'trade_name' => 'Construtora Horizonte',
+            'legal_name' => 'Horizonte Empreendimentos e Engenharia Civil Sociedade Limitada',
+            'document' => '12345678000199',
+            'phone' => '+551140028922',
+            'whatsapp' => '+5511987654321',
+            'email' => 'contato@horizonteengenharia.com.br',
+        ]);
+
+        $html = $this->renderHtml($budget);
+        foreach (['unit_cost', 'line_cost_total', 'cost_subtotal', 'margin_amount', 'margin_percentage', 'company_id', 'customer_id', 'calculation_snapshot'] as $needle) {
+            $this->assertStringNotContainsString($needle, $html);
+        }
+    }
 }

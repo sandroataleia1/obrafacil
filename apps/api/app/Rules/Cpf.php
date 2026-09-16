@@ -15,7 +15,7 @@ class Cpf implements ValidationRule
     public function validate(string $attribute, mixed $value, Closure $fail): void
     {
         if (! is_string($value) || ! Document::isValidCpf($value)) {
-            $fail('The :attribute must be a valid CPF.');
+            $fail('O campo :attribute deve conter um CPF válido.');
         }
     }
 }

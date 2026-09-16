@@ -15,7 +15,7 @@ class Cnpj implements ValidationRule
     public function validate(string $attribute, mixed $value, Closure $fail): void
     {
         if (! is_string($value) || ! Document::isValidCnpj($value)) {
-            $fail('The :attribute must be a valid CNPJ.');
+            $fail('O campo :attribute deve conter um CNPJ válido.');
         }
     }
 }
