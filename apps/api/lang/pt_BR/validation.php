@@ -219,6 +219,12 @@ return [
         'code' => 'código',
         'is_primary' => 'principal',
         'logo' => 'logotipo',
+        'customer_address_id' => 'endereço do cliente',
+        'source_budget_id' => 'orçamento de origem',
+        'expected_start_date' => 'início previsto',
+        'expected_end_date' => 'conclusão prevista',
+        'status' => 'status',
+        'updated_at' => 'data de atualização',
     ],
 
 ];

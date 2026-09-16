@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\LogoutController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\NotificationSettingsController;
 use App\Http\Controllers\Api\V1\PostalCodeLookupController;
+use App\Http\Controllers\Api\V1\ProjectController;
 use App\Http\Controllers\Api\V1\ProposalController;
 use App\Http\Controllers\Api\V1\PublicProposalPdfController;
 use App\Http\Controllers\Api\V1\RegisterController;
@@ -125,6 +126,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/v1/budgets/{budget}/items', [BudgetItemController::class, 'store']);
         Route::put('/v1/budgets/{budget}/items/{item}', [BudgetItemController::class, 'update']);
         Route::delete('/v1/budgets/{budget}/items/{item}', [BudgetItemController::class, 'destroy']);
+
+        // PROJECT-API-01 §47-48: no DELETE — no delete semantics exist for
+        // Project in v1.
+        Route::get('/v1/projects', [ProjectController::class, 'index']);
+        Route::post('/v1/projects', [ProjectController::class, 'store']);
+        Route::get('/v1/projects/{project}', [ProjectController::class, 'show']);
+        Route::put('/v1/projects/{project}', [ProjectController::class, 'update']);
 
         Route::middleware('throttle:lookups')->group(function () {
             Route::get('/v1/lookups/cep', [PostalCodeLookupController::class, 'show']);
