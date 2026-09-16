@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Enums\ProjectStatus;
 use App\Http\Requests\Concerns\ValidatesProjectRelations;
+use App\Models\Budget;
 use App\Models\Project;
 use App\Support\BrazilianStates;
 use App\Support\Document;
@@ -87,7 +88,36 @@ class UpdateProjectRequest extends FormRequest
         $validator->after(function (ValidatorContract $validator) {
             $this->validateCustomer($validator);
             $this->validateCustomerAddress($validator, $this->effectiveCustomerId());
+            $this->validateSourceBudgetCustomerCoherence($validator);
         });
+    }
+
+    /**
+     * PROJECT-API-01A §8/§16: fast HTTP-level feedback for the same
+     * invariant ProjectService::update() re-enforces as the real domain
+     * boundary. A Project with a source_budget_id can never have its
+     * customer_id changed away from sourceBudget.customer_id.
+     */
+    private function validateSourceBudgetCustomerCoherence(ValidatorContract $validator): void
+    {
+        $newCustomerId = $this->input('customer_id');
+        if (! is_string($newCustomerId) || $newCustomerId === '') {
+            return;
+        }
+
+        $projectId = $this->route('project');
+        $project = is_string($projectId) ? Project::query()->find($projectId) : null;
+        if ($project === null || $project->source_budget_id === null || $newCustomerId === $project->customer_id) {
+            return;
+        }
+
+        $budget = Budget::query()->find($project->source_budget_id);
+        if ($budget?->customer_id !== $newCustomerId) {
+            $validator->errors()->add(
+                'customer_id',
+                'Não é possível alterar o cliente desta obra porque ela foi criada a partir de um orçamento de outro cliente.'
+            );
+        }
     }
 
     /**

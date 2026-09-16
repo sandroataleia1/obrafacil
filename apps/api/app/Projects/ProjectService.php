@@ -2,7 +2,9 @@
 
 namespace App\Projects;
 
+use App\Enums\BudgetStatus;
 use App\Enums\ProjectStatus;
+use App\Models\Budget;
 use App\Models\Customer;
 use App\Models\CustomerAddress;
 use App\Models\Project;
@@ -10,6 +12,7 @@ use App\Projects\Exceptions\ProjectConcurrencyConflictException;
 use App\Support\CurrentCompanyContext;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * PROJECT-API-01 §39-40. The single place a Project header is created/
@@ -22,6 +25,18 @@ use Illuminate\Support\Facades\DB;
  * UPDATE`) and compares the client-supplied `updated_at` precondition
  * against the LOCKED row's real value before anything else — this is
  * what makes the optimistic-concurrency check race-safe (§38).
+ *
+ * PROJECT-API-01A §1-2/§7/§13-15: the domain invariant "whenever
+ * source_budget_id is set, that Budget belongs to the active Company, is
+ * approved, and its customer_id equals the Project's customer_id" is
+ * enforced HERE, not only in StoreProjectRequest/UpdateProjectRequest.
+ * FormRequest validation stays for fast feedback, but this Service is the
+ * real domain boundary — a direct call (from a future internal caller,
+ * a console command, a test) gets the exact same guarantee an HTTP
+ * request does. Every lookup goes through the tenant-scoped Budget model
+ * (CompanyScope via BelongsToCompany), so a cross-tenant id and a
+ * genuinely nonexistent id fail identically, same discipline as
+ * ValidatesProjectRelations.
  */
 class ProjectService
 {
@@ -44,6 +59,11 @@ class ProjectService
             $customerAddress = $customerAddressId !== null
                 ? CustomerAddress::query()->where('customer_id', $customer->id)->findOrFail($customerAddressId)
                 : null;
+
+            // §18/SBI8: validated BEFORE the number allocator runs — a
+            // rejected source_budget_id must never burn a sequence number.
+            $sourceBudgetId = $validated['source_budget_id'] ?? null;
+            $this->assertSourceBudgetInvariant($sourceBudgetId, $customer->id);
 
             if (array_key_exists('address', $validated)) {
                 // §24: an explicitly-sent address always wins, even when a
@@ -70,7 +90,7 @@ class ProjectService
                     'customer_address_id' => $customerAddress?->id,
                     'expected_start_date' => $validated['expected_start_date'] ?? null,
                     'expected_end_date' => $validated['expected_end_date'] ?? null,
-                    'source_budget_id' => $validated['source_budget_id'] ?? null,
+                    'source_budget_id' => $sourceBudgetId,
                 ],
                 $addressFields
             ));
@@ -91,6 +111,12 @@ class ProjectService
 
             $customerChanged = array_key_exists('customer_id', $validated) && $validated['customer_id'] !== $locked->customer_id;
             $targetCustomerId = $customerChanged ? $validated['customer_id'] : $locked->customer_id;
+
+            // §8/§13-14: re-checked against the LOCKED row's own
+            // source_budget_id, inside the same transaction — never
+            // trusts that UpdateProjectRequest already caught this.
+            $this->assertSourceBudgetCustomerCoherence($locked, $targetCustomerId);
+
             $customer = Customer::query()->findOrFail($targetCustomerId);
 
             [$resolvedCustomerAddressId, $addressFields] = $this->resolveUpdateAddress($locked, $customer, $customerChanged, $validated);
@@ -109,6 +135,56 @@ class ProjectService
 
             return $locked->fresh(['customer', 'sourceBudget']);
         });
+    }
+
+    /**
+     * PROJECT-API-01A §1-2/§18. Domain-level defense — repeats what
+     * StoreProjectRequest already validates, but as the real boundary a
+     * direct Service call (not only HTTP) must also go through.
+     */
+    private function assertSourceBudgetInvariant(?string $sourceBudgetId, string $customerId): void
+    {
+        if ($sourceBudgetId === null) {
+            return;
+        }
+
+        // Tenant-scoped via CompanyScope — a cross-Company id and a
+        // genuinely nonexistent id fail identically here.
+        $budget = Budget::query()->find($sourceBudgetId);
+
+        if ($budget === null) {
+            throw ValidationException::withMessages(['source_budget_id' => 'Orçamento inválido.']);
+        }
+
+        if ($budget->status !== BudgetStatus::Approved) {
+            throw ValidationException::withMessages(['source_budget_id' => 'Este orçamento não está aprovado.']);
+        }
+
+        if ($budget->customer_id !== $customerId) {
+            throw ValidationException::withMessages(['source_budget_id' => 'O orçamento selecionado pertence a outro cliente.']);
+        }
+    }
+
+    /**
+     * PROJECT-API-01A §8/§13-15. Whenever the LOCKED Project has a
+     * source_budget_id, the target customer_id of this update must stay
+     * exactly sourceBudget.customer_id — source_budget_id itself is
+     * immutable (prohibited in UpdateProjectRequest), so this is the only
+     * way the §1 invariant could otherwise be broken after creation.
+     */
+    private function assertSourceBudgetCustomerCoherence(Project $locked, string $targetCustomerId): void
+    {
+        if ($locked->source_budget_id === null) {
+            return;
+        }
+
+        $budget = Budget::query()->find($locked->source_budget_id);
+
+        if ($budget?->customer_id !== $targetCustomerId) {
+            throw ValidationException::withMessages([
+                'customer_id' => 'Não é possível alterar o cliente desta obra porque ela foi criada a partir de um orçamento de outro cliente.',
+            ]);
+        }
     }
 
     private function assertNotStale(Project $locked, string $providedUpdatedAt): void

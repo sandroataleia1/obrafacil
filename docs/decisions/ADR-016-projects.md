@@ -60,6 +60,15 @@ patterns.
    Obra originated from this Budget" without reintroducing the
    bidirectional coupling the product deliberately removed from Budget.
 
+   **PROJECT-API-01A clarification:** this coherence — `sourceBudget`
+   approved, same Company, same Customer as the Project — is not just a
+   creation-time check, it holds for the entire lifetime of the Project.
+   A Project originated from a Budget can never be reassigned to a
+   different Customer without an explicit future de-linking operation (not
+   built in this gate); `ProjectService::update()` enforces this as a
+   domain invariant, independent of `UpdateProjectRequest`, so any future
+   internal caller gets the same guarantee an HTTP request does.
+
 4. **No delete semantics in v1.** No `deleted_at`, no DELETE route.
    Project is already a hub other domains depend on by ID (Materiais,
    Estoque, Compras, Custos da obra, Equipe, Contas a pagar/receber all
