@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { parseCurrencyInput } from "@/lib/currency";
 import { resolveAllocationPeriodRoute } from "@/features/employees/prototype/period-allocation";
-import { useProject } from "@/features/projects/prototype/use-project";
+import { useProject } from "@/features/projects/use-project";
 import {
   createProjectCostId,
   deleteManualProjectCost,

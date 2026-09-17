@@ -12,7 +12,7 @@ import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
 import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
-import { getProject } from "@/features/projects/prototype/project-store";
+import { useProject } from "@/features/projects/use-project";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { listPayablesByOrigin } from "@/features/payables/prototype/payable-store";
 import { getPayableStatus } from "@/features/payables/payable-status";
@@ -54,6 +54,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 export function PurchaseOrderDetail({ id }: { id: string }) {
   const router = useRouter();
   const { purchaseOrder, items, refresh } = usePurchaseOrder(id);
+  const { project } = useProject(purchaseOrder?.projectId ?? "");
   const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[] | undefined>(undefined);
   const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
   const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
@@ -92,7 +93,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   }
 
   const supplier = getSupplier(purchaseOrder.supplierId);
-  const project = getProject(purchaseOrder.projectId);
   const total = calculatePurchaseOrderTotal(items);
   const status = purchaseOrder.commercialStatus;
   const hasGoodsReceipts = receiptItems.length > 0;

@@ -31,9 +31,9 @@ import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-total
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
 import { StatusBadge } from "@/features/budgets/components/status-badge";
 import type { Budget } from "@/features/budgets/prototype/legacy-types";
-import { listProjectsByCustomer } from "@/features/projects/prototype/project-store";
+import { listAllProjectsFromApi } from "@/features/projects/projects-client";
 import { ProjectStatusBadge } from "@/features/projects/components/status-badge";
-import type { Project } from "@/features/projects/types";
+import type { ProjectListItem } from "@/features/projects/types";
 import { toE164BR } from "@/features/auth/phone-e164";
 import { AddressFields, EMPTY_ADDRESS_FIELDS, type AddressFieldsValue } from "./address-fields";
 import { ContactFields, EMPTY_CONTACT_FIELDS, type ContactFieldsValue } from "./contact-fields";
@@ -75,7 +75,7 @@ function BudgetRow({ budget }: { budget: Budget }) {
   );
 }
 
-function ProjectRow({ project }: { project: Project }) {
+function ProjectRow({ project }: { project: ProjectListItem }) {
   return (
     <Link href={`/obras/${project.id}`} className="flex items-center gap-3 p-3.5 transition-colors hover:bg-muted/50">
       <div className="min-w-0 flex-1 space-y-1">
@@ -124,7 +124,7 @@ export function CustomerDetail({ id }: { id: string }) {
   // forever and the loading skeleton masks the error state permanently.
   const [resolvedCompanyId, setResolvedCompanyId] = useState<string | undefined>(undefined);
   const [budgets, setBudgets] = useState<Budget[] | null>(null);
-  const [projects, setProjects] = useState<Project[] | null>(null);
+  const [projects, setProjects] = useState<ProjectListItem[] | null>(null);
 
   const [addressDialog, setAddressDialog] = useState<{ address: CustomerAddress | null } | null>(null);
   const [addressDraft, setAddressDraft] = useState<AddressFieldsValue>(EMPTY_ADDRESS_FIELDS);
@@ -212,12 +212,32 @@ export function CustomerDetail({ id }: { id: string }) {
   // loading skeleton, not "resolved").
   const isResolvedForCurrentTenant = resolvedCompanyId !== undefined && resolvedCompanyId === activeCompanyId;
 
+  // §48: Project now lives in the real API, which has no `customer_id`
+  // filter — `listAllProjectsFromApi()` (pages internally) + a
+  // client-side filter on `project.customer.id` is the correct
+  // transitional approach; `search=` is deliberately never used as a
+  // substitute (a Customer's own name can false-positive-match another
+  // Customer's Project via the backend's name/customer search).
+  const projectFetchSequence = useRef(0);
   useEffect(() => {
-    // §11 transitional: Budget/Project stay localStorage prototypes for now.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setBudgets(listAllBudgets().filter((budget) => budget.customerId === id));
-    setProjects(listProjectsByCustomer(id));
-  }, [id]);
+
+    const requestId = ++projectFetchSequence.current;
+    const requestCompanyId = activeCompanyId;
+    setProjects(null);
+    listAllProjectsFromApi()
+      .then((allProjects) => {
+        if (projectFetchSequence.current !== requestId) return;
+        if (activeCompanyIdRef.current !== requestCompanyId) return;
+        setProjects(allProjects.filter((project) => project.customer.id === id));
+      })
+      .catch(() => {
+        if (projectFetchSequence.current !== requestId) return;
+        if (activeCompanyIdRef.current !== requestCompanyId) return;
+        setProjects([]);
+      });
+  }, [id, activeCompanyId]);
 
   function openAddAddress() {
     setAddressError(null);

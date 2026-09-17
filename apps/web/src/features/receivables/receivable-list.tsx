@@ -21,7 +21,7 @@ import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
+import { useAllProjects } from "@/features/projects/use-all-projects";
 import { listAllCustomers } from "@/features/customers/prototype/customer-store";
 import {
   calculateReceivableFinancials,
@@ -265,9 +265,10 @@ export function ReceivableList() {
   const [desktopPage, setDesktopPage] = useState(0);
   const searchParams = useSearchParams();
   const projectId = searchParams.get("projectId");
-  const projects = listAllProjects();
+  const { projects: allProjects } = useAllProjects();
+  const projects = allProjects ?? [];
   const customers = listAllCustomers();
-  const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
+  const project = projectId ? (projects ?? []).find((item) => item.id === projectId) : undefined;
   const [deletingReceivable, setDeletingReceivable] = useState<Receivable | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 

@@ -9,7 +9,7 @@
 
 import type { Payable } from "@/features/payables/types";
 import { isProjectLate, isProjectStartLate, projectDaysLate } from "@/features/projects/project-schedule";
-import type { Project, ProjectStatus } from "@/features/projects/types";
+import type { ProjectListItem, ProjectStatus } from "@/features/projects/types";
 import type { ProjectManagementSummary } from "@/features/projects/prototype/project-summary";
 import type { Receipt } from "@/features/receivables/types";
 
@@ -59,7 +59,7 @@ export function summarizeMonthlyCashMovement(
 }
 
 export interface ProjectSummaryEntry {
-  project: Project;
+  project: ProjectListItem;
   summary: ProjectManagementSummary;
 }
 
@@ -149,7 +149,7 @@ export interface ProjectHealthEntry {
    * the budget, `null` when there is no reference amount. This is NOT
    * physical/executed progress. */
   budgetUsage: number | null;
-  expectedEndDate?: string;
+  expectedEndDate: string | null;
   isLate: boolean;
   daysLate: number;
   isStartLate: boolean;
@@ -177,7 +177,7 @@ export function buildProjectHealth(entries: ProjectSummaryEntry[], today: string
       realizedCost: summary.realizedCost,
       committedCost: summary.committedCost,
       budgetUsage,
-      expectedEndDate: project.expectedEndDate,
+      expectedEndDate: project.expected_end_date,
       isLate: late,
       daysLate: projectDaysLate(project, today),
       isStartLate: startLate,

@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
-import { getProject } from "@/features/projects/prototype/project-store";
+import { useProject } from "@/features/projects/use-project";
 import { getEmployee } from "@/features/employees/prototype/employee-store";
 import { getWorkPeriod } from "@/features/employees/prototype/work-period-store";
 import { formatPeriodShort } from "@/features/employees/prototype/period-label";
@@ -36,6 +36,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 export function PayableDetail({ id }: { id: string }) {
   const router = useRouter();
   const { payable, refresh } = usePayable(id);
+  const { project } = useProject(payable?.projectId ?? "");
   const [payingOpen, setPayingOpen] = useState(false);
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -54,7 +55,6 @@ export function PayableDetail({ id }: { id: string }) {
   }
 
   const status = getPayableStatus(payable);
-  const project = payable.projectId ? getProject(payable.projectId) : null;
   const dueHint = status !== "paid" ? describeDueDate(payable.dueDate) : null;
   const originWorkPeriod =
     payable.originType === "employee-period" && payable.originId

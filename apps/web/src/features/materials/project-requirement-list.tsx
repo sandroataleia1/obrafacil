@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
-import { useProject } from "@/features/projects/prototype/use-project";
+import { useProject } from "@/features/projects/use-project";
 import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
 import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
 import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";

@@ -22,7 +22,7 @@ import { calculateReceivableFinancials } from "@/features/receivables/receivable
 import type { Receipt, Receivable } from "@/features/receivables/types";
 import { isProjectLate, isProjectStartLate, projectDaysLate } from "@/features/projects/project-schedule";
 import { buildProjectManagementSummary } from "@/features/projects/prototype/project-summary";
-import type { Project } from "@/features/projects/types";
+import type { ProjectListItem } from "@/features/projects/types";
 import type { ProjectCost } from "@/features/project-costs/types";
 import {
   buildFinancialComparison,
@@ -69,9 +69,9 @@ export interface DashboardAttentionItem {
 
 export interface DashboardSummary {
   projectsInProgress: number;
-  /** Σ referenceAmount across all Projects — excludes approved Budgets
-   * not yet linked to a Project (those surface as `budget-unlinked`
-   * attention items instead). Never "Σ all approved budgets". */
+  /** Σ referenceAmount across all Projects that have a `source_budget`
+   * — never "Σ all approved budgets" (an approved Budget with no
+   * Project yet is not counted here). */
   budgetedInProjects: number;
   totalRealizedCost: number;
   /** Σ overdue Payable.amount, including Payables with no projectId
@@ -161,7 +161,7 @@ export function buildDashboardSummary({
   receivables,
   receipts,
 }: {
-  projects: Project[];
+  projects: ProjectListItem[];
   budgets: Budget[];
   costs: ProjectCost[];
   payables: Payable[];
@@ -169,18 +169,20 @@ export function buildDashboardSummary({
   receipts: Receipt[];
 }): DashboardSummary {
   const today = todayIso();
-  const budgetById = new Map(budgets.map((budget) => [budget.id, budget]));
 
   const projectsInProgress = projects.filter((project) => project.status === "in_progress").length;
 
   // One buildProjectManagementSummary call per project, reused for
   // every project-derived figure below — never recomputed per section.
+  // §44: referenceAmount now comes straight from the real Project's own
+  // `source_budget.total` (already guaranteed `approved` by the
+  // backend) — never the legacy Budget prototype.
   const projectEntries: ProjectSummaryEntry[] = projects.map((project) => {
-    const budget = project.budgetId ? (budgetById.get(project.budgetId) ?? null) : null;
+    const referenceAmount = project.source_budget ? Number(project.source_budget.total) : null;
     const projectCosts = costs.filter((cost) => cost.projectId === project.id);
     const summary = buildProjectManagementSummary({
-      project,
-      budget,
+      projectId: project.id,
+      referenceAmount,
       costs: projectCosts,
       payables,
       receivables,
@@ -231,7 +233,7 @@ export function buildDashboardSummary({
         type: "project-start-late",
         title: `${project.name} ainda não começou`,
         description: "Início previsto já passou",
-        dueDate: project.expectedStartDate,
+        dueDate: project.expected_start_date ?? undefined,
         href: `/obras/${project.id}`,
       });
     }
@@ -306,6 +308,16 @@ export function buildDashboardSummary({
     }
   }
 
+  // §44/§49: "budget-unlinked" (an approved legacy Budget with no
+  // Project pointing back at it) depended entirely on the dead
+  // pending-project hand-off (`legacy Budget.projectId`, never actually
+  // populated by any live flow — see PROJECT-API-00's audit) and is
+  // removed along with it. The real "Criar obra a partir deste
+  // orçamento" flow (§10) links Project -> source Budget one way only;
+  // there is no reliable way to detect "unlinked" from the Project side
+  // (the legacy Budget list and the real Project.source_budget.id live
+  // in two different id spaces), so this attention item is dropped
+  // rather than faked.
   let pendingApprovalBudgetsCount = 0;
   let pendingApprovalBudgetsAmount = 0;
   for (const budget of budgets) {
@@ -317,15 +329,6 @@ export function buildDashboardSummary({
         type: "budget-pending",
         title: budget.name,
         description: budget.customerName,
-        amount: calculateBudgetTotals(budget).total,
-        href: `/orcamentos/${budget.id}`,
-      });
-    } else if (budget.status === "approved" && !budget.projectId) {
-      attentionItems.push({
-        id: `budget-unlinked:${budget.id}`,
-        type: "budget-unlinked",
-        title: "Orçamento aprovado aguardando criação de obra",
-        description: budget.name,
         amount: calculateBudgetTotals(budget).total,
         href: `/orcamentos/${budget.id}`,
       });

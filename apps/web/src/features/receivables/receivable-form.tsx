@@ -16,8 +16,8 @@ import {
 import { parseCurrencyInput } from "@/lib/currency";
 import { listAllCustomers } from "@/features/customers/prototype/customer-store";
 import type { LegacyCustomer as Customer } from "@/features/customers/prototype/legacy-types";
-import { getProject, listProjectsByCustomer } from "@/features/projects/prototype/project-store";
-import type { Project } from "@/features/projects/types";
+import { useAllProjects } from "@/features/projects/use-all-projects";
+import type { ProjectListItem } from "@/features/projects/types";
 import { createReceivable, updateReceivable } from "./prototype/receivable";
 import { listReceiptsByReceivable } from "./prototype/receipt-store";
 import { useReceivable } from "./prototype/use-receivable";
@@ -33,8 +33,9 @@ export function ReceivableForm({ receivableId }: { receivableId?: string }) {
   const isEditing = Boolean(receivableId);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [lockedProject, setLockedProject] = useState<Project | null | undefined>(undefined);
+  const { projects: allProjects } = useAllProjects();
   const [hasReceipts, setHasReceipts] = useState(false);
+  const [lockedProjectSeeded, setLockedProjectSeeded] = useState(false);
 
   const [description, setDescription] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -47,17 +48,28 @@ export function ReceivableForm({ receivableId }: { receivableId?: string }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCustomers(listAllCustomers());
-    if (lockedProjectId) {
-      const project = getProject(lockedProjectId);
-      setLockedProject(project);
-      if (project) {
-        setCustomerId(project.customerId);
-        setProjectId(project.id);
-      }
-    } else {
-      setLockedProject(null);
+  }, []);
+
+  // Seed customer/project from `?projectId=` once the real Project list
+  // has loaded — never before, so a lockedProjectId isn't prematurely
+  // treated as invalid while `allProjects` is still `undefined`.
+  useEffect(() => {
+    if (!lockedProjectId || allProjects === undefined || lockedProjectSeeded) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLockedProjectSeeded(true);
+    const project = allProjects.find((item) => item.id === lockedProjectId) ?? null;
+    if (project) {
+      setCustomerId(project.customer.id);
+      setProjectId(project.id);
     }
-  }, [lockedProjectId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedProjectId, allProjects]);
+
+  const lockedProject: ProjectListItem | null | undefined = !lockedProjectId
+    ? null
+    : allProjects === undefined
+      ? undefined
+      : (allProjects.find((item) => item.id === lockedProjectId) ?? null);
 
   useEffect(() => {
     if (!existingReceivable) return;
@@ -76,14 +88,16 @@ export function ReceivableForm({ receivableId }: { receivableId?: string }) {
 
   const isProjectLocked = Boolean(lockedProject);
   const fieldsLockedByReceipts = isEditing && hasReceipts;
-  const projectsForCustomer = customerId ? listProjectsByCustomer(customerId) : [];
+  const projectsForCustomer = customerId
+    ? (allProjects ?? []).filter((project) => project.customer.id === customerId)
+    : [];
 
   function handleCustomerChange(value: string) {
     setCustomerId(value);
     // Reset the Obra selection if it no longer belongs to the newly
     // chosen customer, so an inconsistent pair can never be submitted.
     if (projectId !== NO_PROJECT) {
-      const stillValid = listProjectsByCustomer(value).some((project) => project.id === projectId);
+      const stillValid = (allProjects ?? []).some((project) => project.id === projectId && project.customer.id === value);
       if (!stillValid) setProjectId(NO_PROJECT);
     }
   }

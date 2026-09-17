@@ -11,7 +11,7 @@ import { formatQuantity } from "@/lib/quantity";
 import { formatDate } from "@/lib/date";
 import { getMaterial } from "@/features/materials/prototype/material-store";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { getProject } from "@/features/projects/prototype/project-store";
+import { useProject } from "@/features/projects/use-project";
 import { getGoodsReceipt } from "@/features/purchases/prototype/goods-receipt-store";
 import { useStockDetail } from "./prototype/use-stock-detail";
 import { getProjectMaterialSupplyMetrics } from "./prototype/supply-metrics";
@@ -73,8 +73,10 @@ function MovementRow({ movement, unitLabel }: { movement: StockMovement; unitLab
 export function StockDetail({ projectId, materialId }: { projectId: string; materialId: string }) {
   const { movements, totals } = useStockDetail(projectId, materialId);
 
-  const project = getProject(projectId);
+  const { project } = useProject(projectId);
   const material = getMaterial(materialId);
+
+  if (project === undefined) return null;
 
   if (!project || !material) {
     return (

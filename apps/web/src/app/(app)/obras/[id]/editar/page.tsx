@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 
-import { ProjectForm } from "@/features/projects/project-form";
+import { ProjectEditForm } from "@/features/projects/project-edit-form";
 
 export default async function EditarObraPage({
   params,
@@ -10,7 +10,7 @@ export default async function EditarObraPage({
   const { id } = await params;
   return (
     <Suspense fallback={null}>
-      <ProjectForm projectId={id} />
+      <ProjectEditForm id={id} />
     </Suspense>
   );
 }

@@ -23,7 +23,6 @@
 
 import { formatCurrency, toCents } from "@/lib/currency";
 import { todayIso } from "@/lib/date";
-import { getProject } from "@/features/projects/prototype/project-store";
 import { calculateReceivableFinancials } from "../receivable-status";
 import type { Receipt, Receivable } from "../types";
 import {
@@ -51,24 +50,19 @@ export interface ReceivableInput {
   notes?: string;
 }
 
-function validateCustomerProject(customerId: string, projectId: string | undefined): string | null {
-  if (!projectId) return null;
-  const project = getProject(projectId);
-  if (!project) return "Obra não encontrada.";
-  if (project.customerId !== customerId) {
-    return "A obra selecionada pertence a outro cliente.";
-  }
-  return null;
-}
+// §46: the Cliente<->Obra invariant this used to enforce synchronously
+// (`getProject`/`project.customerId`) can no longer run here — Project
+// now lives exclusively in the real API, not a local store.
+// `ReceivableForm`'s own Obra selector already only ever offers Projects
+// belonging to the selected Customer (filtered client-side from
+// `useAllProjects()`), so this defense-in-depth check is dropped rather
+// than faked.
 
 export function createReceivable(input: ReceivableInput): ReceivableResult {
   if (input.description.trim() === "") return { ok: false, error: "Informe uma descrição." };
   if (input.customerId.trim() === "") return { ok: false, error: "Selecione um cliente." };
   if (!(input.amount > 0)) return { ok: false, error: "Informe um valor maior que zero." };
   if (input.dueDate.trim() === "") return { ok: false, error: "Informe o vencimento." };
-
-  const invariantError = validateCustomerProject(input.customerId, input.projectId);
-  if (invariantError) return { ok: false, error: invariantError };
 
   const now = todayIso();
   const receivable: Receivable = {
@@ -108,8 +102,6 @@ export function updateReceivable(existing: Receivable, changes: ReceivableInput)
   } else {
     if (changes.customerId.trim() === "") return { ok: false, error: "Selecione um cliente." };
     if (!(changes.amount > 0)) return { ok: false, error: "Informe um valor maior que zero." };
-    const invariantError = validateCustomerProject(changes.customerId, changes.projectId);
-    if (invariantError) return { ok: false, error: invariantError };
   }
 
   const updated: Receivable = {

@@ -13,7 +13,7 @@
 import { daysBetweenDateOnly } from "@/lib/date";
 import type { Project } from "./types";
 
-type ScheduleProject = Pick<Project, "status" | "expectedStartDate" | "expectedEndDate">;
+type ScheduleProject = Pick<Project, "status" | "expected_start_date" | "expected_end_date">;
 
 /**
  * A Project is "late" only while it's actually underway — `completed`
@@ -23,22 +23,22 @@ type ScheduleProject = Pick<Project, "status" | "expectedStartDate" | "expectedE
  */
 export function isProjectLate(project: ScheduleProject, today: string): boolean {
   if (project.status !== "in_progress" && project.status !== "paused") return false;
-  if (!project.expectedEndDate) return false;
-  return project.expectedEndDate < today;
+  if (!project.expected_end_date) return false;
+  return project.expected_end_date < today;
 }
 
 /** 0 when the project isn't late — never negative, never used to mean
  * "not applicable" (see `DashboardSummary.maxProjectDaysLate` for the
  * separate null-vs-zero distinction at the aggregate level). */
 export function projectDaysLate(project: ScheduleProject, today: string): number {
-  if (!isProjectLate(project, today) || !project.expectedEndDate) return 0;
-  return daysBetweenDateOnly(project.expectedEndDate, today);
+  if (!isProjectLate(project, today) || !project.expected_end_date) return 0;
+  return daysBetweenDateOnly(project.expected_end_date, today);
 }
 
 /** A `planning` Project whose expected start date has already passed —
  * never counted as `isProjectLate`, which only judges an end date. */
 export function isProjectStartLate(project: ScheduleProject, today: string): boolean {
   if (project.status !== "planning") return false;
-  if (!project.expectedStartDate) return false;
-  return project.expectedStartDate < today;
+  if (!project.expected_start_date) return false;
+  return project.expected_start_date < today;
 }

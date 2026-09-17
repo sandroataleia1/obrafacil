@@ -11,7 +11,7 @@ import { PeriodDetail } from "@/features/employees/period-detail";
 import { getEmployee } from "@/features/employees/prototype/employee-store";
 import { formatPeriodLabel } from "@/features/employees/prototype/period-label";
 import { findWorkPeriod } from "@/features/employees/prototype/work-period-store";
-import { useProject } from "@/features/projects/prototype/use-project";
+import { useProject } from "@/features/projects/use-project";
 import { assignmentIntersectsMonth, monthRange } from "./project-team";
 import { listAssignmentsByEmployee } from "./project-team-assignment-store";
 

@@ -13,7 +13,6 @@
 
 import { customers as seedCustomers } from "@/mocks/customers";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
 import { demoDataEnabled } from "@/lib/pilot-config";
 import type { LegacyCustomer as Customer } from "./legacy-types";
 
@@ -89,13 +88,16 @@ export function saveCustomer(customer: Customer): void {
 export type CustomerResult = { ok: true } | { ok: false; error: string };
 
 export function removeCustomer(customer: Customer): CustomerResult {
+  // §46: Project existence/linkage is no longer synchronously checkable
+  // here — it now lives exclusively in the real API. This legacy store
+  // is already superseded by the real Clientes API (see
+  // `features/customers/customers-client.ts`'s own delete flow, which
+  // performs its own async link check); this function is dead-path for
+  // any live delete UI, so only the Budget-side check remains.
   const budgetsCount = listAllBudgets().filter(
     (budget) => budget.customerId === customer.id
   ).length;
-  const projectsCount = listAllProjects().filter(
-    (project) => project.customerId === customer.id
-  ).length;
-  if (budgetsCount > 0 || projectsCount > 0) {
+  if (budgetsCount > 0) {
     return {
       ok: false,
       error: "Este cliente possui orçamentos ou obras vinculados e não pode ser excluído.",

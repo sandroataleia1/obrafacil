@@ -6,7 +6,6 @@
  */
 
 import { todayIso } from "@/lib/date";
-import { getProject } from "@/features/projects/prototype/project-store";
 import { getMaterial } from "./material-store";
 import {
   createRequirementId,
@@ -26,9 +25,10 @@ export function createRequirement(input: {
   requiredQuantity: number;
   notes?: string;
 }): RequirementResult {
-  if (!getProject(input.projectId)) {
-    return { ok: false, error: "Obra não encontrada." };
-  }
+  // §46: Project existence is no longer synchronously checkable here —
+  // it now lives exclusively in the real API. Callers only ever reach
+  // this with a `projectId` already resolved from an API-backed
+  // selector/route, so this check is dropped rather than faked.
   if (!getMaterial(input.materialId)) {
     return { ok: false, error: "Material não encontrado." };
   }

@@ -46,7 +46,6 @@
 
 import { todayIso } from "@/lib/date";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
-import { getProject } from "@/features/projects/prototype/project-store";
 import { getMaterial } from "@/features/materials/prototype/material-store";
 import {
   calculateAvailableQuantity,
@@ -238,9 +237,8 @@ export interface StockAdjustmentInput {
  * timeline that was already valid).
  */
 export function createStockAdjustment(input: StockAdjustmentInput): StockAdjustmentResult {
-  if (!getProject(input.projectId)) {
-    return { ok: false, error: "Obra não encontrada." };
-  }
+  // §46: Project existence is no longer synchronously checkable here —
+  // see the matching note in `material-requirement.ts`.
   if (!getMaterial(input.materialId)) {
     return { ok: false, error: "Material não encontrado." };
   }

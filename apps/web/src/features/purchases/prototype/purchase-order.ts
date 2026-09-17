@@ -67,7 +67,6 @@
 import { toCents } from "@/lib/currency";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
 import { todayIso } from "@/lib/date";
-import { getProject } from "@/features/projects/prototype/project-store";
 import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
 import { getMaterial } from "@/features/materials/prototype/material-store";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderCommercialStatus, PurchaseOrderItem } from "../types";
@@ -116,9 +115,8 @@ export function createPurchaseOrder(input: PurchaseOrderHeaderInput): PurchaseOr
   if (supplier.status !== "active") {
     return { ok: false, error: "Selecione um fornecedor ativo." };
   }
-  if (!getProject(input.projectId)) {
-    return { ok: false, error: "Obra não encontrada." };
-  }
+  // §46: Project existence is no longer synchronously checkable here —
+  // see the matching note in `material-requirement.ts`.
   if (input.orderDate.trim() === "") {
     return { ok: false, error: "Informe a data do pedido." };
   }
@@ -176,9 +174,6 @@ export function updatePurchaseOrder(
     }
   }
 
-  if (changes.projectId !== existing.projectId && !getProject(changes.projectId)) {
-    return { ok: false, error: "Obra não encontrada." };
-  }
   if (changes.orderDate.trim() === "") {
     return { ok: false, error: "Informe a data do pedido." };
   }
@@ -373,7 +368,6 @@ export function removePurchaseOrderItem(
 
 function validateForOrdered(purchaseOrder: PurchaseOrder, items: PurchaseOrderItem[]): string | null {
   if (!getSupplier(purchaseOrder.supplierId)) return "Fornecedor não encontrado.";
-  if (!getProject(purchaseOrder.projectId)) return "Obra não encontrada.";
   if (items.length === 0) return "Adicione ao menos um item antes de confirmar o pedido.";
   if (items.some((item) => !isPositiveQuantity(item.quantity))) {
     return "Todos os itens precisam de quantidade maior que zero.";

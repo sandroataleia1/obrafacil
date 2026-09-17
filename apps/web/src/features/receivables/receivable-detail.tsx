@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
-import { getProject } from "@/features/projects/prototype/project-store";
+import { useProject } from "@/features/projects/use-project";
 import { getCustomer } from "@/features/customers/prototype/customer-store";
 import { RegisterReceiptDialog } from "./register-receipt-dialog";
 import { calculateReceivableFinancials, describeDueDate } from "./receivable-status";
@@ -31,6 +31,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 export function ReceivableDetail({ id }: { id: string }) {
   const router = useRouter();
   const { receivable, receipts, refresh } = useReceivable(id);
+  const { project } = useProject(receivable?.projectId ?? "");
   const [registeringOpen, setRegisteringOpen] = useState(false);
   const [deletingReceiptId, setDeletingReceiptId] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -49,7 +50,6 @@ export function ReceivableDetail({ id }: { id: string }) {
   }
 
   const customer = getCustomer(receivable.customerId);
-  const project = receivable.projectId ? getProject(receivable.projectId) : null;
   const { receivedAmount, outstandingAmount, displayStatus } = calculateReceivableFinancials(
     receivable,
     receipts

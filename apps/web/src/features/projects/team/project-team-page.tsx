@@ -11,7 +11,7 @@ import { useEmployees } from "@/features/employees/prototype/use-employees";
 import { formatPeriodLabel } from "@/features/employees/prototype/period-label";
 import { shiftPeriod } from "@/features/employees/prototype/attendance-overview";
 import { useAllWorkPeriods } from "@/features/employees/prototype/use-work-periods";
-import { useProject } from "@/features/projects/prototype/use-project";
+import { useProject } from "@/features/projects/use-project";
 import { todayIso } from "@/lib/date";
 import { ProjectTeamAssignmentDialog } from "./project-team-assignment-dialog";
 import { ProjectTeamEndAssignmentDialog } from "./project-team-end-assignment-dialog";

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Copy, Download, ExternalLink, Eye, FileText, Pencil, Plus, Send, Trash2 } from "lucide-react";
+import { ChevronRight, Copy, Download, ExternalLink, Eye, FileText, Pencil, Plus, Send, Trash2 } from "lucide-react";
 
 import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
@@ -715,6 +715,16 @@ export function BudgetDetail({ id }: { id: string }) {
             </>
           ) : null}
         </section>
+      ) : null}
+
+      {budget.status === "approved" ? (
+        <Link
+          href={`/obras/nova?sourceBudgetId=${budget.id}`}
+          className="flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
+        >
+          Criar obra a partir deste orçamento
+          <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
+        </Link>
       ) : null}
 
       <section className="space-y-1 rounded-xl border border-border bg-card p-4">

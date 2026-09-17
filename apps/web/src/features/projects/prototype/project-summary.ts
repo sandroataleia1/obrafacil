@@ -6,14 +6,15 @@
  * stays trivially testable in isolation.
  *
  * Terminology and formulas are deliberately conservative:
- * - `referenceAmount` is the linked Budget's sale total — never
- *   called "receita"/"faturamento"/"valor contratado", because none of
- *   those concepts exist in this prototype (no confirmed revenue, no
- *   separate contract value). It is `null` unless a Budget is linked
- *   AND still `approved` — a defensive check, since nothing in the
- *   domain currently allows an approved Budget's status to regress
- *   after a Project is created from it, but this keeps the summary
- *   honest if that ever changes.
+ * - `referenceAmount` is `project.source_budget?.total` (the real API's
+ *   decimal-string total for the Budget this Obra originated from — the
+ *   backend already guarantees it's `approved`, see ADR-016 §1/§3), or
+ *   `null` when the Project has no `source_budget`. The caller
+ *   (`ProjectDetail`) is the ONE place that parses that decimal string
+ *   into a `number` for this transitional, derived-only summary — this
+ *   module never talks to `projects-client`/the Budget API itself, and
+ *   the parsed number is never sent back to any API/persisted anywhere
+ *   (FRONTEND-PROJECTS-01 §44).
  * - `realizedCost` is the existing ProjectCost total (`sumCosts`) —
  *   this already includes manual costs, costs materialized from a
  *   paid Payable, and costs materialized from an
@@ -54,15 +55,12 @@
  */
 
 import { formatCurrency } from "@/lib/currency";
-import type { Budget } from "@/features/budgets/prototype/legacy-types";
-import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
 import { sumCosts, sumCostsByCategory } from "@/features/project-costs/prototype/cost-totals";
 import type { ProjectCost, ProjectCostCategory } from "@/features/project-costs/types";
 import { getPayableStatus } from "@/features/payables/payable-status";
 import type { Payable } from "@/features/payables/types";
 import { calculateReceivableTotals } from "@/features/receivables/prototype/receivable-totals";
 import type { Receipt, Receivable } from "@/features/receivables/types";
-import type { Project } from "../types";
 
 export type ProjectAlertSeverity = "info" | "warning" | "critical";
 
@@ -164,29 +162,26 @@ function buildAlerts({
 }
 
 export function buildProjectManagementSummary({
-  project,
-  budget,
+  projectId,
+  referenceAmount,
   costs,
   payables,
   receivables,
   receipts,
 }: {
-  project: Project;
-  budget: Budget | null;
+  projectId: string;
+  referenceAmount: number | null;
   costs: ProjectCost[];
   payables: Payable[];
   receivables: Receivable[];
   receipts: Receipt[];
 }): ProjectManagementSummary {
-  const referenceAmount =
-    budget && budget.status === "approved" ? calculateBudgetTotals(budget).total : null;
-
   const realizedCost = sumCosts(costs);
 
   let pendingPayables = 0;
   let overduePayables = 0;
   for (const payable of payables) {
-    if (payable.projectId !== project.id) continue;
+    if (payable.projectId !== projectId) continue;
     const status = getPayableStatus(payable);
     if (status === "pending" || status === "overdue") {
       pendingPayables += payable.amount;
@@ -214,7 +209,7 @@ export function buildProjectManagementSummary({
   const percentCommittedOfBudget =
     referenceAmount !== null && referenceAmount > 0 ? committedCost / referenceAmount : null;
 
-  const projectReceivables = receivables.filter((receivable) => receivable.projectId === project.id);
+  const projectReceivables = receivables.filter((receivable) => receivable.projectId === projectId);
   const receivableTotals = calculateReceivableTotals(projectReceivables, (receivableId) =>
     receipts.filter((receipt) => receipt.receivableId === receivableId)
   );

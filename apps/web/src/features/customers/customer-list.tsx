@@ -14,7 +14,7 @@ import { formatCpfCnpj, formatE164PhoneForDisplay } from "@/lib/document";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/features/auth/auth-provider";
 import { listAllBudgets } from "@/features/budgets/prototype/budget-store";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
+import { listAllProjectsFromApi } from "@/features/projects/projects-client";
 import { deleteCustomer, listCustomers } from "./customers-client";
 import type { CustomerListItem, CustomerPaginationResponse } from "./types";
 
@@ -26,9 +26,10 @@ type LoadStatus = "loading" | "success" | "error";
 /** §12 transitional guard: Budget/Project are still localStorage prototypes
  * and the backend has no knowledge of them, so this check stays client-side
  * until they migrate to their own backend gates. */
-function getLocalLinkCounts(customerId: string): { budgetsCount: number; projectsCount: number } {
+async function getLocalLinkCounts(customerId: string): Promise<{ budgetsCount: number; projectsCount: number }> {
   const budgetsCount = listAllBudgets().filter((budget) => budget.customerId === customerId).length;
-  const projectsCount = listAllProjects().filter((project) => project.customerId === customerId).length;
+  const allProjects = await listAllProjectsFromApi();
+  const projectsCount = allProjects.filter((project) => project.customer.id === customerId).length;
   return { budgetsCount, projectsCount };
 }
 
@@ -313,7 +314,7 @@ export function CustomerList() {
   async function handleConfirmDelete() {
     if (!deletingCustomer) return;
 
-    const { budgetsCount, projectsCount } = getLocalLinkCounts(deletingCustomer.id);
+    const { budgetsCount, projectsCount } = await getLocalLinkCounts(deletingCustomer.id);
     if (budgetsCount > 0 || projectsCount > 0) {
       setDeleteError("Este cliente possui orçamentos ou obras vinculados e não pode ser excluído.");
       return;

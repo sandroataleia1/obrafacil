@@ -15,8 +15,7 @@ import {
 } from "@/components/ui/select";
 import { parseCurrencyInput } from "@/lib/currency";
 import { todayIso } from "@/lib/date";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
-import type { Project } from "@/features/projects/types";
+import { useAllProjects } from "@/features/projects/use-all-projects";
 import {
   PROJECT_COST_CATEGORIES,
   PROJECT_COST_CATEGORY_LABEL,
@@ -54,7 +53,8 @@ export function PayableForm({ payableId }: { payableId?: string }) {
     PurchaseOrderContext | null | undefined
   >(purchaseOrderId ? undefined : null);
 
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { projects: allProjects } = useAllProjects();
+  const projects = allProjects ?? [];
   const [description, setDescription] = useState("");
   const [supplier, setSupplier] = useState("");
   const [category, setCategory] = useState<ProjectCostCategory>("materials");
@@ -63,11 +63,6 @@ export function PayableForm({ payableId }: { payableId?: string }) {
   const [projectId, setProjectId] = useState(NO_PROJECT);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setProjects(listAllProjects());
-  }, []);
 
   useEffect(() => {
     if (!existingPayable) return;

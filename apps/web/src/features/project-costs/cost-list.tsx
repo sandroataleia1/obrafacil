@@ -9,10 +9,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
-import { calculateBudgetTotals } from "@/features/budgets/prototype/budget-totals";
-import { getBudget } from "@/features/budgets/prototype/budget-store";
 import { resolveAllocationPeriodRoute } from "@/features/employees/prototype/period-allocation";
-import { useProject } from "@/features/projects/prototype/use-project";
+import { useProject } from "@/features/projects/use-project";
 import { sumCosts, sumCostsByCategory } from "./prototype/cost-totals";
 import { useProjectCosts } from "./prototype/use-project-costs";
 import { PROJECT_COST_CATEGORY_LABEL, type ProjectCost } from "./types";
@@ -79,8 +77,7 @@ export function CostList({ projectId }: { projectId: string }) {
     );
   }
 
-  const budget = project?.budgetId ? getBudget(project.budgetId) : null;
-  const budgetTotal = budget ? calculateBudgetTotals(budget).total : null;
+  const budgetTotal = project.source_budget ? Number(project.source_budget.total) : null;
   const totalCost = costs ? sumCosts(costs) : 0;
   const categoryTotals = costs ? sumCostsByCategory(costs) : [];
   const percentageOfBudget =

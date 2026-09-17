@@ -483,13 +483,49 @@ describe("BudgetDetail", () => {
   });
 
   describe("Zero project/localStorage affordances", () => {
-    it("never mentions Obra/Projeto and has no delete-the-whole-budget action", async () => {
-      vi.mocked(getBudget).mockResolvedValue(budget({ status: "approved", decided_at: "2026-09-03T00:00:00Z" }));
+    it("a draft budget never mentions Obra/Projeto and has no delete-the-whole-budget action", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "draft" }));
       render(<BudgetDetail id="budget-1" />);
       await screen.findAllByText("ORC-000001");
       expect(screen.queryByText(/obra/i)).not.toBeInTheDocument();
-      expect(screen.queryByText(/^criar obra$/i)).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /excluir/i })).not.toBeInTheDocument();
+    });
+
+    it("a pending_approval budget never mentions Obra/Projeto", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "pending_approval" }));
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+      expect(screen.queryByText(/obra/i)).not.toBeInTheDocument();
+    });
+
+    it("a rejected budget never mentions Obra/Projeto", async () => {
+      vi.mocked(getBudget).mockResolvedValue(
+        budget({ status: "rejected", decided_at: "2026-09-03T00:00:00Z" })
+      );
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+      expect(screen.queryByText(/obra/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Criar obra a partir deste orçamento (FRONTEND-PROJECTS-01 §10)", () => {
+    it("an approved budget shows a single, discrete link to /obras/nova?sourceBudgetId=<id> and never a delete-the-whole-budget action", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "approved", decided_at: "2026-09-03T00:00:00Z" }));
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+      const link = screen.getByRole("link", { name: /criar obra a partir deste orçamento/i });
+      expect(link).toHaveAttribute("href", "/obras/nova?sourceBudgetId=budget-1");
+      expect(screen.queryByRole("button", { name: /excluir/i })).not.toBeInTheDocument();
+    });
+
+    it("clicking it performs zero Budget mutation (no PUT/status-action call fires)", async () => {
+      vi.mocked(getBudget).mockResolvedValue(budget({ status: "approved", decided_at: "2026-09-03T00:00:00Z" }));
+      render(<BudgetDetail id="budget-1" />);
+      await screen.findAllByText("ORC-000001");
+      screen.getByRole("link", { name: /criar obra a partir deste orçamento/i });
+      expect(submitBudget).not.toHaveBeenCalled();
+      expect(approveBudgetManually).not.toHaveBeenCalled();
+      expect(rejectBudgetManually).not.toHaveBeenCalled();
     });
   });
 

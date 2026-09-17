@@ -18,7 +18,7 @@
  * reads, no writes, fully pure.
  */
 
-import type { Project } from "@/features/projects/types";
+import type { ProjectListItem } from "@/features/projects/types";
 import type { Payable } from "@/features/payables/types";
 import type { Receipt, Receivable } from "@/features/receivables/types";
 import type { ProjectCost } from "@/features/project-costs/types";
@@ -29,7 +29,7 @@ import { aggregatePayables, aggregateReceivables } from "./financial-analytics";
 import { buildTeamSnapshotFacts, buildWorkforcePeriodFacts } from "./team-analytics";
 import { PROJECT_STATUS_TO_COUNT_KEY, type CompanyAnalyticsFacts, type ProjectStatusCounts } from "./types";
 
-export function buildProjectStatusCounts(projects: Project[]): ProjectStatusCounts {
+export function buildProjectStatusCounts(projects: ProjectListItem[]): ProjectStatusCounts {
   const counts: ProjectStatusCounts = { planning: 0, inProgress: 0, paused: 0, completed: 0 };
   for (const project of projects) {
     counts[PROJECT_STATUS_TO_COUNT_KEY[project.status]] += 1;
@@ -38,7 +38,7 @@ export function buildProjectStatusCounts(projects: Project[]): ProjectStatusCoun
 }
 
 export function buildCompanyAnalyticsFacts(input: {
-  projects: Project[];
+  projects: ProjectListItem[];
   payables: Payable[];
   receivables: Receivable[];
   receiptsFor: (receivableId: string) => Receipt[];

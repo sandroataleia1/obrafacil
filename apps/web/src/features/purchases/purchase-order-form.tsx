@@ -15,8 +15,7 @@ import {
 import { todayIso } from "@/lib/date";
 import { listSuppliers } from "@/features/suppliers/prototype/supplier-store";
 import type { Supplier } from "@/features/suppliers/types";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
-import type { Project } from "@/features/projects/types";
+import { useAllProjects } from "@/features/projects/use-all-projects";
 import { createPurchaseOrder, updatePurchaseOrder } from "./prototype/purchase-order";
 import { usePurchaseOrder } from "./prototype/use-purchase-order";
 
@@ -32,7 +31,8 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
   const isEditing = Boolean(purchaseOrderId);
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { projects: allProjects } = useAllProjects();
+  const projects = allProjects ?? [];
   const [supplierId, setSupplierId] = useState(NONE);
   const [projectId, setProjectId] = useState(lockedProjectId ?? NONE);
   const [orderDate, setOrderDate] = useState(todayIso());
@@ -44,7 +44,6 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
     const loadedSuppliers = listSuppliers();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSuppliers(loadedSuppliers);
-    setProjects(listAllProjects());
 
     // `?supplierId=` only pre-selects on create, and only for a Supplier
     // that both exists and is active — an inactive or unknown id is

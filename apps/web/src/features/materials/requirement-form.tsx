@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useProject } from "@/features/projects/prototype/use-project";
+import { useProject } from "@/features/projects/use-project";
 import { formatMaterialUnit } from "./material-unit";
 import { listActiveMaterials, getMaterial } from "./prototype/material-store";
 import { listRequirementsByProject } from "./prototype/material-requirement-store";

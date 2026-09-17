@@ -1,5 +1,4 @@
 import { customers as seedCustomers } from "@/mocks/customers";
-import { projects as seedProjects } from "@/mocks/projects";
 import { budgets as seedBudgets } from "@/mocks/budgets";
 import { projectCosts as seedProjectCosts } from "@/mocks/project-costs";
 import { purchaseOrders as seedPurchaseOrders } from "@/mocks/purchase-orders";
@@ -27,9 +26,7 @@ type PilotBackupKey = keyof typeof PILOT_BACKUP_STORAGE_KEYS;
  * hidden.
  */
 export const PILOT_RESET_KEYS: readonly PilotBackupKey[] = [
-  // Obras
-  "obrafacil:projects",
-  "obrafacil:projects:deleted",
+  // Obras (Project itself is the real API now — nothing to reset here)
   "obrafacil:project-team-assignments",
   // Orçamentos
   "obrafacil:budgets",
@@ -68,7 +65,6 @@ export const PILOT_RESET_KEYS: readonly PilotBackupKey[] = [
  */
 const SEED_HIDE_GROUPS: ReadonlyArray<{ deletedKey: PilotBackupKey; ids: readonly string[] }> = [
   { deletedKey: "obrafacil:customers:deleted", ids: seedCustomers.map((row) => row.id) },
-  { deletedKey: "obrafacil:projects:deleted", ids: seedProjects.map((row) => row.id) },
   { deletedKey: "obrafacil:budgets:deleted", ids: seedBudgets.map((row) => row.id) },
   { deletedKey: "obrafacil:project-costs:deleted", ids: seedProjectCosts.map((row) => row.id) },
   { deletedKey: "obrafacil:purchase-orders:deleted", ids: seedPurchaseOrders.map((row) => row.id) },

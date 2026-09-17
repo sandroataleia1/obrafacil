@@ -12,7 +12,7 @@ import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
+import { useAllProjects } from "@/features/projects/use-all-projects";
 import { describeDueDate, getPayableOriginLabel, getPayableStatus, matchesStatusFilter } from "./payable-status";
 import { removePayable } from "./prototype/payable";
 import { usePayables } from "./prototype/use-payables";
@@ -256,10 +256,11 @@ export function PayableList() {
   const [statusFilter, setStatusFilter] = useState<PayableStatusFilter>("all");
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
-  const projects = listAllProjects();
+  const { projects: allProjects } = useAllProjects();
+  const projects = allProjects ?? [];
   const searchParams = useSearchParams();
   const projectId = searchParams.get("projectId");
-  const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
+  const project = projectId ? (projects ?? []).find((item) => item.id === projectId) : undefined;
   const [deletingPayable, setDeletingPayable] = useState<Payable | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 

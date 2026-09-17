@@ -1,11 +1,11 @@
 import { Suspense } from "react";
 
-import { ProjectForm } from "@/features/projects/project-form";
+import { ProjectCreateForm } from "@/features/projects/project-create-form";
 
 export default function NovaObraPage() {
   return (
     <Suspense fallback={null}>
-      <ProjectForm />
+      <ProjectCreateForm />
     </Suspense>
   );
 }

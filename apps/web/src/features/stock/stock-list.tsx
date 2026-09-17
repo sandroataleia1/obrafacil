@@ -12,7 +12,8 @@ import { formatQuantity } from "@/lib/quantity";
 import { cn } from "@/lib/utils";
 import { getMaterial } from "@/features/materials/prototype/material-store";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { getProject } from "@/features/projects/prototype/project-store";
+import { useAllProjects } from "@/features/projects/use-all-projects";
+import type { ProjectListItem } from "@/features/projects/types";
 import { useSupplyPositions } from "./prototype/use-supply-positions";
 import type { StockSupplyPosition } from "./prototype/supply-metrics";
 
@@ -29,9 +30,9 @@ interface EnrichedPosition extends StockSupplyPosition {
   projectName: string;
 }
 
-function enrich(position: StockSupplyPosition): EnrichedPosition | null {
+function enrich(position: StockSupplyPosition, projectsById: Map<string, ProjectListItem>): EnrichedPosition | null {
   const material = getMaterial(position.materialId);
-  const project = getProject(position.projectId);
+  const project = projectsById.get(position.projectId);
   if (!material || !project) return null;
   return {
     ...position,
@@ -332,12 +333,14 @@ const PAGE_SIZE = 15;
 
 export function StockList() {
   const { positions } = useSupplyPositions();
+  const { projects } = useAllProjects();
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [page, setPage] = useState(0);
 
+  const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
   const enriched = (positions ?? [])
-    .map(enrich)
+    .map((position) => enrich(position, projectsById))
     .filter((position): position is EnrichedPosition => position !== null);
 
   const projectOptions = Array.from(

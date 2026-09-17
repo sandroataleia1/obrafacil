@@ -79,7 +79,6 @@
  * cycle anywhere in this graph.
  */
 
-import { getProject } from "@/features/projects/prototype/project-store";
 import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
 import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
 import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
@@ -307,9 +306,8 @@ export interface MaterialConsumptionInput {
 }
 
 export function registerMaterialConsumption(input: MaterialConsumptionInput): MaterialConsumptionResult {
-  if (!getProject(input.projectId)) {
-    return { ok: false, error: "Obra não encontrada." };
-  }
+  // §46: Project existence is no longer synchronously checkable here —
+  // see the matching note in `material-requirement.ts`.
   const material = getMaterial(input.materialId);
   if (!material) {
     return { ok: false, error: "Material não encontrado." };

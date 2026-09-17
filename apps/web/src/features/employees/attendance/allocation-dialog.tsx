@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { parseCurrencyInput } from "@/lib/currency";
-import type { Project } from "@/features/projects/types";
+import type { ProjectListItem } from "@/features/projects/types";
 import { allocatePeriodToProject, updatePeriodAllocation } from "../prototype/period-allocation";
 import type { Employee, EmployeePeriodAllocation, EmployeeWorkPeriod } from "../types";
 
@@ -36,7 +36,7 @@ export function AllocationDialog({
 }: {
   workPeriod: EmployeeWorkPeriod;
   employee: Employee;
-  projects: Project[];
+  projects: ProjectListItem[];
   editing: EmployeePeriodAllocation | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;

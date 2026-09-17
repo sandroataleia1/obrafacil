@@ -18,8 +18,8 @@ vi.mock("@/features/budgets/prototype/budget-store", () => ({
   listAllBudgets: () => [],
 }));
 
-vi.mock("@/features/projects/prototype/project-store", () => ({
-  listAllProjects: () => [],
+vi.mock("@/features/projects/projects-client", () => ({
+  listAllProjectsFromApi: vi.fn(),
 }));
 
 vi.mock("../customers-client", () => ({
@@ -27,6 +27,7 @@ vi.mock("../customers-client", () => ({
   deleteCustomer: vi.fn(),
 }));
 
+import { listAllProjectsFromApi } from "@/features/projects/projects-client";
 import { deleteCustomer, listCustomers } from "../customers-client";
 
 // The list renders both a mobile card list and a desktop table simultaneously
@@ -70,6 +71,7 @@ describe("CustomerList — tenant isolation (TF1-TF7)", () => {
   beforeEach(() => {
     vi.mocked(listCustomers).mockReset();
     vi.mocked(deleteCustomer).mockReset();
+    vi.mocked(listAllProjectsFromApi).mockReset().mockResolvedValue([]);
     refresh.mockReset();
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
   });
@@ -168,5 +170,38 @@ describe("CustomerList — tenant isolation (TF1-TF7)", () => {
     await waitFor(() =>
       expect(screen.queryByText('Excluir o cliente "Cliente A1"? Esta ação não pode ser desfeita.')).not.toBeInTheDocument()
     );
+  });
+
+  /** DC1: the pre-delete link-count guard checks the real Project API
+   * (all-pages helper, filtered by customer.id) — never the deleted
+   * localStorage project-store — and blocks deletion when a Project exists. */
+  it("DC1: blocks deleting a customer that has a linked Obra, checked against the real Project API", async () => {
+    vi.mocked(listCustomers).mockResolvedValue(page(["Cliente A1"]));
+    vi.mocked(listAllProjectsFromApi).mockResolvedValue([
+      {
+        id: "proj-1",
+        number: "OBR-000001",
+        name: "Obra vinculada",
+        status: "planning",
+        reference: null,
+        customer: { id: "id-Cliente A1", name: "Cliente A1" },
+        expected_start_date: null,
+        expected_end_date: null,
+        source_budget: null,
+        created_at: "2026-09-10T00:00:00Z",
+        updated_at: "2026-09-10T00:00:00Z",
+      },
+    ]);
+
+    const user = userEvent.setup();
+    render(<CustomerList />);
+    await findCustomer("Cliente A1");
+
+    await user.click(screen.getAllByRole("button", { name: "Excluir Cliente A1" })[0]!);
+    await screen.findByText('Excluir o cliente "Cliente A1"? Esta ação não pode ser desfeita.');
+    await user.click(screen.getByRole("button", { name: "Excluir" }));
+
+    await screen.findByText("Este cliente possui orçamentos ou obras vinculados e não pode ser excluído.");
+    expect(deleteCustomer).not.toHaveBeenCalled();
   });
 });

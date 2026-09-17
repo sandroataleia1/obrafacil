@@ -62,7 +62,7 @@ interface ScheduleStatusInput {
   isLate: boolean;
   daysLate: number;
   isStartLate: boolean;
-  expectedEndDate?: string;
+  expectedEndDate?: string | null;
 }
 
 export interface ScheduleStatusLines {

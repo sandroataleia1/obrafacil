@@ -10,10 +10,10 @@
  * directly (Demo-Ready 010B §2).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { listAllProjects } from "@/features/projects/prototype/project-store";
-import { getBudget } from "@/features/budgets/prototype/budget-store";
+import { useAuth } from "@/features/auth/auth-provider";
+import { listAllProjectsFromApi } from "@/features/projects/projects-client";
 import { listAllPayables } from "@/features/payables/prototype/payable-store";
 import { listAllReceivables } from "@/features/receivables/prototype/receivable-store";
 import { listReceiptsByReceivable } from "@/features/receivables/prototype/receipt-store";
@@ -31,10 +31,10 @@ import { buildCompanyAnalyticsFacts } from "@/features/analytics/company-analyti
 import { buildProjectAnalyticsFacts } from "@/features/analytics/project-analytics";
 import type { CompanyAnalyticsFacts, ProjectAnalyticsFacts } from "@/features/analytics/types";
 import { todayIso } from "@/lib/date";
-import type { Project } from "@/features/projects/types";
+import type { ProjectListItem } from "@/features/projects/types";
 
 export interface ExecutivePanelProjectEntry {
-  project: Project;
+  project: ProjectListItem;
   facts: ProjectAnalyticsFacts;
 }
 
@@ -45,9 +45,9 @@ export interface ExecutivePanelData {
   projectEntries: ExecutivePanelProjectEntry[];
 }
 
-function loadExecutivePanelData(period: string): ExecutivePanelData {
+async function loadExecutivePanelData(period: string): Promise<ExecutivePanelData> {
   const today = todayIso();
-  const projects = listAllProjects();
+  const projects = await listAllProjectsFromApi();
   const payables = listAllPayables();
   const receivables = listAllReceivables();
   const receiptsFor = (receivableId: string) => listReceiptsByReceivable(receivableId);
@@ -70,7 +70,13 @@ function loadExecutivePanelData(period: string): ExecutivePanelData {
   });
 
   const projectEntries: ExecutivePanelProjectEntry[] = projects.map((project) => {
-    const budget = project.budgetId ? getBudget(project.budgetId) : null;
+    // §44/§45: no legacy Budget prototype lookup — the real Project's
+    // `source_budget` never exposes cost/margin (only {id, number,
+    // total}, deliberately — ADR-016/PROJECT-API-01 §17), so
+    // buildProjectAnalyticsFacts's cost-budget breakdown (budgetedCost/
+    // budgetSaleTotal/budgetMarginAmount) has no legitimate source
+    // anymore and stays null here, same principle as
+    // `buildProjectManagementSummary`'s referenceAmount boundary.
     const costs = listCostsByProject(project.id);
     const purchaseOrders = listPurchaseOrdersByProject(project.id);
     const purchaseOrderItems = listItemsByPurchaseOrders(purchaseOrders.map((purchaseOrder) => purchaseOrder.id));
@@ -82,7 +88,7 @@ function loadExecutivePanelData(period: string): ExecutivePanelData {
       project,
       facts: buildProjectAnalyticsFacts({
         projectId: project.id,
-        budget,
+        budget: null,
         costs,
         payables,
         receivables,
@@ -100,12 +106,28 @@ function loadExecutivePanelData(period: string): ExecutivePanelData {
 }
 
 export function useExecutivePanel(period: string): ExecutivePanelData | undefined {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+
   const [data, setData] = useState<ExecutivePanelData | undefined>(undefined);
 
+  const requestSequence = useRef(0);
+  const activeCompanyIdRef = useRef(activeCompanyId);
   useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
+  useEffect(() => {
+    const requestId = ++requestSequence.current;
+    const requestCompanyId = activeCompanyId;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setData(loadExecutivePanelData(period));
-  }, [period]);
+    setData(undefined);
+    void loadExecutivePanelData(period).then((result) => {
+      if (requestSequence.current !== requestId) return;
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      setData(result);
+    });
+  }, [period, activeCompanyId]);
 
   return data;
 }

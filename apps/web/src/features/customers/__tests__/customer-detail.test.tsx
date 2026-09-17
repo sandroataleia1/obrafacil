@@ -34,8 +34,8 @@ vi.mock("@/features/budgets/prototype/budget-store", () => ({
   listAllBudgets: () => [],
 }));
 
-vi.mock("@/features/projects/prototype/project-store", () => ({
-  listProjectsByCustomer: () => [],
+vi.mock("@/features/projects/projects-client", () => ({
+  listAllProjectsFromApi: vi.fn(),
 }));
 
 vi.mock("../customers-client", () => ({
@@ -49,6 +49,7 @@ vi.mock("../customers-client", () => ({
   deleteCustomer: vi.fn(),
 }));
 
+import { listAllProjectsFromApi } from "@/features/projects/projects-client";
 import { deleteAddress, getCustomer, updateAddress, updateContact } from "../customers-client";
 
 function customerWithTwoAddressesAndContacts(): Customer {
@@ -137,11 +138,51 @@ describe("CustomerDetail", () => {
     vi.mocked(getCustomer).mockReset();
     vi.mocked(updateAddress).mockReset();
     vi.mocked(updateContact).mockReset();
+    vi.mocked(listAllProjectsFromApi).mockReset().mockResolvedValue([]);
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  /** DC1: the Obras section is sourced from the real Project API (all-pages
+   * helper), filtered client-side by this Customer's id — never the deleted
+   * localStorage project-store, and never a `search=` approximation. */
+  it("DC1: renders this Customer's Obras from the real Project API, filtered by customer.id", async () => {
+    vi.mocked(getCustomer).mockResolvedValue(customerWithTwoAddressesAndContacts());
+    vi.mocked(listAllProjectsFromApi).mockResolvedValue([
+      {
+        id: "proj-1",
+        number: "OBR-000001",
+        name: "Casa do cliente",
+        status: "planning",
+        reference: null,
+        customer: { id: "cust-1", name: "Cliente Teste" },
+        expected_start_date: null,
+        expected_end_date: null,
+        source_budget: null,
+        created_at: "2026-09-10T00:00:00Z",
+        updated_at: "2026-09-10T00:00:00Z",
+      },
+      {
+        id: "proj-2",
+        number: "OBR-000002",
+        name: "Casa de outro cliente",
+        status: "planning",
+        reference: null,
+        customer: { id: "cust-2", name: "Outro Cliente" },
+        expected_start_date: null,
+        expected_end_date: null,
+        source_budget: null,
+        created_at: "2026-09-10T00:00:00Z",
+        updated_at: "2026-09-10T00:00:00Z",
+      },
+    ]);
+    render(<CustomerDetail id="cust-1" />);
+
+    await screen.findByText("Casa do cliente");
+    expect(screen.queryByText("Casa de outro cliente")).not.toBeInTheDocument();
   });
 
   /** §13: the primary address/contact is marked with a visible "Principal" text badge, not only the Star icon. */

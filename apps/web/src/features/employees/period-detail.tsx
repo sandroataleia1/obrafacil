@@ -14,8 +14,7 @@ import { formatDate, todayIso } from "@/lib/date";
 import { getPayableStatus } from "@/features/payables/payable-status";
 import { PayableStatusBadge } from "@/features/payables/components/status-badge";
 import type { Payable } from "@/features/payables/types";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
-import type { Project } from "@/features/projects/types";
+import { useAllProjects } from "@/features/projects/use-all-projects";
 import { AllocationDialog } from "./attendance/allocation-dialog";
 import { AttendanceCalendar } from "./attendance/attendance-calendar";
 import { AttendanceSummaryCard } from "./attendance/attendance-summary-card";
@@ -104,7 +103,8 @@ export function PeriodDetail({
   const [notes, setNotes] = useState("");
   const [relatedPayable, setRelatedPayable] = useState<Payable | null | undefined>(undefined);
   const [allocations, setAllocations] = useState<EmployeePeriodAllocation[] | undefined>(undefined);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { projects: allProjects } = useAllProjects();
+  const projects = allProjects ?? [];
   const [selectMode, setSelectMode] = useState(false);
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
 
@@ -125,11 +125,6 @@ export function PeriodDetail({
     status: AttendanceStatus;
   } | null>(null);
   const [legacyCloseConfirmOpen, setLegacyCloseConfirmOpen] = useState(false);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setProjects(listAllProjects());
-  }, []);
 
   useEffect(() => {
     if (!workPeriod) return;

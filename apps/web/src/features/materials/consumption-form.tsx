@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { Package } from "lucide-react";
 import { todayIso } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
-import { useProject } from "@/features/projects/prototype/use-project";
+import { useProject } from "@/features/projects/use-project";
 import { formatMaterialUnit } from "./material-unit";
 import { getMaterial } from "./prototype/material-store";
 import { calculateAvailableQuantity, registerMaterialConsumption } from "./prototype/material-consumption";

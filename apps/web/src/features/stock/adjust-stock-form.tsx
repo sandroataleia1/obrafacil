@@ -10,7 +10,7 @@ import { todayIso } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { getMaterial, listMaterials } from "@/features/materials/prototype/material-store";
-import { getProject, listAllProjects } from "@/features/projects/prototype/project-store";
+import { useAllProjects } from "@/features/projects/use-all-projects";
 import { createStockAdjustment, getStockBalance } from "./prototype/stock";
 import type { StockAdjustmentType } from "./types";
 
@@ -59,9 +59,18 @@ export function AdjustStockForm() {
 
   const rawProjectId = searchParams.get("projectId");
   const rawMaterialId = searchParams.get("materialId");
+
+  const { projects: allProjects } = useAllProjects();
+  const projects = allProjects ?? [];
   // An invalid/stale id in the URL is treated exactly like "not
   // provided" — falls through to the normal unselected-field state.
-  const validProjectId = rawProjectId && getProject(rawProjectId) ? rawProjectId : null;
+  // While `allProjects` is still loading, a rawProjectId is provisionally
+  // treated as valid (never bounced back to "unselected" mid-load) —
+  // it's corrected on the next render once the real list arrives.
+  const validProjectId =
+    rawProjectId && (allProjects === undefined || projects.some((project) => project.id === rawProjectId))
+      ? rawProjectId
+      : null;
   const fixedMaterialId =
     validProjectId && rawMaterialId && getMaterial(rawMaterialId) ? rawMaterialId : null;
   // Only a full projectId+materialId pair (opened from a specific
@@ -70,7 +79,6 @@ export function AdjustStockForm() {
   const fixedProjectId = fixedMaterialId ? validProjectId : null;
   const initialProjectId = validProjectId;
 
-  const projects = listAllProjects();
   const materials = listMaterials();
 
   const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId ?? "");
@@ -94,7 +102,7 @@ export function AdjustStockForm() {
 
   const effectiveProjectId = fixedProjectId ?? selectedProjectId;
   const effectiveMaterialId = fixedMaterialId ?? selectedMaterialId;
-  const project = effectiveProjectId ? getProject(effectiveProjectId) : null;
+  const project = effectiveProjectId ? (projects.find((item) => item.id === effectiveProjectId) ?? null) : null;
   const material = effectiveMaterialId ? getMaterial(effectiveMaterialId) : null;
   const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : null;
   const currentBalance =

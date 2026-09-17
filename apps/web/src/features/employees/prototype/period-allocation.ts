@@ -22,7 +22,6 @@
 
 import { formatCurrency, toCents } from "@/lib/currency";
 import { todayIso } from "@/lib/date";
-import { getProject } from "@/features/projects/prototype/project-store";
 import {
   createProjectCostId,
   deleteProjectCostByOrigin,
@@ -121,9 +120,8 @@ export function allocatePeriodToProject(
   projectId: string,
   amount: number
 ): AllocationResult {
-  if (!getProject(projectId)) {
-    return { ok: false, error: "Obra não encontrada." };
-  }
+  // §46: Project existence is no longer synchronously checkable here —
+  // see the matching note in `material-requirement.ts`.
   if (findAllocation(workPeriod.id, projectId)) {
     return {
       ok: false,

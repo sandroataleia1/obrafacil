@@ -33,9 +33,11 @@
 export type PilotBackupValueShape = "object" | "array";
 
 export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValueShape>> = {
-  // Obras
-  "obrafacil:projects": "object",
-  "obrafacil:projects:deleted": "array",
+  // Obras (FRONTEND-PROJECTS-01: Project itself moved to the real API —
+  // "obrafacil:projects"/"obrafacil:projects:deleted" are no longer
+  // read/written anywhere and are intentionally absent here. Equipe
+  // assignments are still a localStorage prototype, keyed by the real
+  // Project UUID.)
   "obrafacil:project-team-assignments": "object",
 
   // Clientes

@@ -12,7 +12,7 @@ import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
 import { listSuppliers } from "@/features/suppliers/prototype/supplier-store";
-import { listAllProjects } from "@/features/projects/prototype/project-store";
+import { useAllProjects } from "@/features/projects/use-all-projects";
 import { calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
 import { listReceiptItemsByPurchaseOrder } from "./prototype/goods-receipt-item-store";
 import { listItemsByPurchaseOrder } from "./prototype/purchase-order-item-store";
@@ -258,10 +258,11 @@ export function PurchaseOrderList() {
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
   const suppliers = listSuppliers();
-  const projects = listAllProjects();
+  const { projects: allProjects } = useAllProjects();
+  const projects = allProjects ?? [];
   const searchParams = useSearchParams();
   const projectId = searchParams.get("projectId");
-  const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
+  const project = projectId ? (projects ?? []).find((item) => item.id === projectId) : undefined;
 
   function handleDelete(purchaseOrder: PurchaseOrder) {
     const confirmed = window.confirm(
