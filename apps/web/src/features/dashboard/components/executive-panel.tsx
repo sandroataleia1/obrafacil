@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { AlertTriangle } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/shared/empty-state";
 import { useExecutivePanel } from "@/features/dashboard/prototype/use-executive-panel";
 import { buildProjectAttentionEntries } from "@/features/dashboard/prototype/project-priority";
 import { todayIso } from "@/lib/date";
@@ -26,7 +29,22 @@ function SectionLabel({ children, id }: { children: string; id: string }) {
  */
 export function ExecutivePanel() {
   const [period, setPeriod] = useState(() => todayIso().slice(0, 7));
-  const data = useExecutivePanel(period);
+  const { data, error: dataError, reload: reloadData } = useExecutivePanel(period);
+
+  if (dataError) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={AlertTriangle}
+          title="Não foi possível carregar o painel executivo"
+          description="Verifique sua conexão e tente novamente."
+        />
+        <Button type="button" onClick={reloadData}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
 
   if (data === undefined) return null;
 

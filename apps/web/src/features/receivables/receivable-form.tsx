@@ -33,7 +33,7 @@ export function ReceivableForm({ receivableId }: { receivableId?: string }) {
   const isEditing = Boolean(receivableId);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const { projects: allProjects } = useAllProjects();
+  const { projects: allProjects, error: projectsError } = useAllProjects();
   const [hasReceipts, setHasReceipts] = useState(false);
   const [lockedProjectSeeded, setLockedProjectSeeded] = useState(false);
 
@@ -217,6 +217,10 @@ export function ReceivableForm({ receivableId }: { receivableId?: string }) {
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
               {lockedProject?.name ?? "—"}
             </div>
+          ) : lockedProjectId && lockedProject === undefined && projectsError ? (
+            <p role="alert" className="text-sm text-destructive">
+              Não foi possível confirmar a obra vinculada. Recarregue a página e tente novamente.
+            </p>
           ) : fieldsLockedByReceipts ? (
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
               {projectId === NO_PROJECT
@@ -248,6 +252,11 @@ export function ReceivableForm({ receivableId }: { receivableId?: string }) {
           )}
           {!customerId && !isProjectLocked && !fieldsLockedByReceipts ? (
             <p className="text-xs text-muted-foreground">Selecione um cliente para escolher a obra.</p>
+          ) : null}
+          {customerId && !isProjectLocked && !fieldsLockedByReceipts && projectsError ? (
+            <p className="text-xs text-destructive">Não foi possível carregar as obras agora.</p>
+          ) : customerId && !isProjectLocked && !fieldsLockedByReceipts && allProjects === undefined ? (
+            <p className="text-xs text-muted-foreground">Carregando obras...</p>
           ) : null}
         </div>
 

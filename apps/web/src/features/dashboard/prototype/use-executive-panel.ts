@@ -10,7 +10,7 @@
  * directly (Demo-Ready 010B §2).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/features/auth/auth-provider";
 import { listAllProjectsFromApi } from "@/features/projects/projects-client";
@@ -105,29 +105,57 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
   return { referenceDate: today, period, company, projectEntries };
 }
 
-export function useExecutivePanel(period: string): ExecutivePanelData | undefined {
+interface LoadedExecutivePanel {
+  companyId: string | undefined;
+  data: ExecutivePanelData;
+}
+
+/**
+ * FRONTEND-PROJECTS-01A §14: same tagged-state/live-ref/error-contract
+ * discipline as `useAllProjects`/`useDashboardSummary` — `data` is
+ * derived from a `{companyId, data}`-tagged state (never a bare value),
+ * `activeCompanyIdRef` is written via `useLayoutEffect`, and a real
+ * fetch failure surfaces as `error: true` rather than leaving `data`
+ * permanently `undefined` with no feedback.
+ */
+export function useExecutivePanel(period: string): { data: ExecutivePanelData | undefined; error: boolean; reload: () => void } {
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
 
-  const [data, setData] = useState<ExecutivePanelData | undefined>(undefined);
+  const [loaded, setLoaded] = useState<LoadedExecutivePanel | null>(null);
+  const [errorCompanyId, setErrorCompanyId] = useState<string | undefined>(undefined);
 
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeCompanyIdRef.current = activeCompanyId;
   }, [activeCompanyId]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     const requestId = ++requestSequence.current;
     const requestCompanyId = activeCompanyId;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setData(undefined);
-    void loadExecutivePanelData(period).then((result) => {
-      if (requestSequence.current !== requestId) return;
-      if (activeCompanyIdRef.current !== requestCompanyId) return;
-      setData(result);
-    });
+    setErrorCompanyId(undefined);
+    loadExecutivePanelData(period)
+      .then((result) => {
+        if (requestSequence.current !== requestId) return;
+        if (activeCompanyIdRef.current !== requestCompanyId) return;
+        setLoaded({ companyId: requestCompanyId, data: result });
+      })
+      .catch(() => {
+        if (requestSequence.current !== requestId) return;
+        if (activeCompanyIdRef.current !== requestCompanyId) return;
+        setErrorCompanyId(requestCompanyId);
+      });
   }, [period, activeCompanyId]);
 
-  return data;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
+
+  const isCurrentTenant = loaded !== null && loaded.companyId === activeCompanyId;
+  const data = isCurrentTenant ? loaded.data : undefined;
+  const error = errorCompanyId === activeCompanyId;
+
+  return { data, error, reload: load };
 }

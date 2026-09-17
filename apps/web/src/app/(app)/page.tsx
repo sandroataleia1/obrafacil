@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Calculator, CalendarClock, FileText, House, Plus } from "lucide-react";
+import { AlertTriangle, Calculator, CalendarClock, FileText, House, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/features/auth/auth-provider";
 import { useDashboardSummary } from "@/features/dashboard/prototype/use-dashboard-summary";
+import { EmptyState } from "@/components/shared/empty-state";
 import {
   formatMaxDaysLateText,
   formatPendingApprovalSecondaryText,
@@ -50,10 +51,27 @@ function HeaderActions() {
 
 export default function HomePage() {
   const auth = useAuth();
-  const summary = useDashboardSummary();
+  const { summary, error: summaryError, reload: reloadSummary } = useDashboardSummary();
   const supplySummary = useDashboardSupplySummary();
 
-  if (summary === undefined || supplySummary === undefined || auth.user === null) return null;
+  if (auth.user === null) return null;
+
+  if (summaryError) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={AlertTriangle}
+          title="Não foi possível carregar o painel agora"
+          description="Verifique sua conexão e tente novamente."
+        />
+        <Button type="button" onClick={reloadSummary}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+
+  if (summary === undefined || supplySummary === undefined) return null;
 
   const firstName = auth.user.name.trim().split(/\s+/)[0] ?? auth.user.name;
 

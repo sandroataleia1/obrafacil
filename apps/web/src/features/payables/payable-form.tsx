@@ -53,7 +53,7 @@ export function PayableForm({ payableId }: { payableId?: string }) {
     PurchaseOrderContext | null | undefined
   >(purchaseOrderId ? undefined : null);
 
-  const { projects: allProjects } = useAllProjects();
+  const { projects: allProjects, error: projectsError } = useAllProjects();
   const projects = allProjects ?? [];
   const [description, setDescription] = useState("");
   const [supplier, setSupplier] = useState("");
@@ -377,6 +377,11 @@ export function PayableForm({ payableId }: { payableId?: string }) {
                 ))}
               </SelectContent>
             </Select>
+            {projectsError ? (
+              <p className="text-xs text-destructive">Não foi possível carregar as obras agora.</p>
+            ) : allProjects === undefined ? (
+              <p className="text-xs text-muted-foreground">Carregando obras...</p>
+            ) : null}
           </div>
         ) : null}
 

@@ -28,7 +28,7 @@ export function RequirementForm({
   requirementId?: string;
 }) {
   const router = useRouter();
-  const { project } = useProject(projectId);
+  const { project, error: projectError, reload: reloadProject } = useProject(projectId);
   const { requirement: existingRequirement } = useRequirement(requirementId ?? "");
   const isEditing = Boolean(requirementId);
 
@@ -98,8 +98,25 @@ export function RequirementForm({
     router.push(`/obras/${projectId}/materiais`);
   }
 
-  if (project === undefined) return null;
   if (isEditing && existingRequirement === undefined) return null;
+
+  if (projectError) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Obra" onBack={() => router.push("/obras")} />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar esta obra agora.
+          </p>
+          <Button type="button" onClick={reloadProject}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (project === undefined) return null;
 
   if (project === null) {
     return (

@@ -62,8 +62,21 @@ function CostRow({ cost }: { cost: ProjectCost }) {
 
 export function CostList({ projectId }: { projectId: string }) {
   const router = useRouter();
-  const { project } = useProject(projectId);
+  const { project, error: projectError, reload: reloadProject } = useProject(projectId);
   const { costs } = useProjectCosts(projectId);
+
+  if (projectError) {
+    return (
+      <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+        <p role="alert" className="text-sm text-muted-foreground">
+          Não foi possível carregar esta obra agora.
+        </p>
+        <Button type="button" onClick={reloadProject}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
 
   if (project === undefined) return null;
 

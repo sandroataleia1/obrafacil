@@ -60,15 +60,19 @@ export function AdjustStockForm() {
   const rawProjectId = searchParams.get("projectId");
   const rawMaterialId = searchParams.get("materialId");
 
-  const { projects: allProjects } = useAllProjects();
+  const { projects: allProjects, error: projectsError } = useAllProjects();
   const projects = allProjects ?? [];
   // An invalid/stale id in the URL is treated exactly like "not
   // provided" — falls through to the normal unselected-field state.
   // While `allProjects` is still loading, a rawProjectId is provisionally
   // treated as valid (never bounced back to "unselected" mid-load) —
-  // it's corrected on the next render once the real list arrives.
+  // it's corrected on the next render once the real list arrives. A real
+  // fetch failure (`projectsError`), however, must NEVER leave this
+  // optimistic trust standing forever — an unconfirmed deep-link id can
+  // never become the projectId a Stock adjustment is actually written
+  // against (§9).
   const validProjectId =
-    rawProjectId && (allProjects === undefined || projects.some((project) => project.id === rawProjectId))
+    rawProjectId && !projectsError && (allProjects === undefined || projects.some((project) => project.id === rawProjectId))
       ? rawProjectId
       : null;
   const fixedMaterialId =
@@ -124,7 +128,7 @@ export function AdjustStockForm() {
   }
 
   function handleConfirm() {
-    if (!effectiveProjectId || !effectiveMaterialId) {
+    if (!effectiveProjectId || !effectiveMaterialId || !project) {
       setError("Selecione a obra e o material.");
       return;
     }
@@ -184,6 +188,11 @@ export function AdjustStockForm() {
                 </option>
               ))}
             </select>
+            {projectsError ? (
+              <p className="text-xs text-destructive">Não foi possível carregar as obras agora.</p>
+            ) : allProjects === undefined ? (
+              <p className="text-xs text-muted-foreground">Carregando obras...</p>
+            ) : null}
           </div>
         )}
 

@@ -5,9 +5,22 @@
  * is NEVER sent in the PUT payload (immutable, backend-enforced —
  * ADR-016 §3/§12). When the Project has a `source_budget`, the Customer
  * field is read-only (§39); otherwise it's a full picker (§40).
+ *
+ * FRONTEND-PROJECTS-01A §16-17: `ProjectEditForm` is a thin, stable
+ * wrapper — same shape as `ProjectCreateForm` — that never itself holds
+ * a draft/request. It owns `activeCompanyIdRef` (written via
+ * `useLayoutEffect`, so a pending PUT/GET continuation for the OLD
+ * Company can never mistake itself for current even if it resolves as a
+ * microtask before the wrapper's own passive effects would have run),
+ * and force-remounts `ProjectEditFormInner` via `key={`${activeCompanyId}:${id}`}`
+ * on EITHER a Company switch OR an `id` change. Remounting clears the
+ * draft/conflict/loading/error state instantly — the old Inner instance
+ * keeps running (if it has an in-flight request) but can never paint,
+ * navigate, or write state that the new Inner would ever read, because
+ * every state variable below lives inside the remounted Inner itself.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileText } from "lucide-react";
 
@@ -77,7 +90,13 @@ function toAddressInput(fields: ProjectAddressFieldsValue): ProjectAddressInput 
   };
 }
 
-export function ProjectEditForm({ id }: { id: string }) {
+function ProjectEditFormInner({
+  id,
+  activeCompanyIdRef,
+}: {
+  id: string;
+  activeCompanyIdRef: { current: string | undefined };
+}) {
   const router = useRouter();
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
@@ -111,13 +130,9 @@ export function ProjectEditForm({ id }: { id: string }) {
   const [conflict, setConflict] = useState(false);
 
   const requestSequence = useRef(0);
-  const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
-    activeCompanyIdRef.current = activeCompanyId;
-  }, [activeCompanyId]);
   const isStaleRequest = useCallback(
     (requestCompanyId: string | undefined) => activeCompanyIdRef.current !== requestCompanyId,
-    []
+    [activeCompanyIdRef]
   );
 
   const load = useCallback(async () => {
@@ -488,4 +503,15 @@ export function ProjectEditForm({ id }: { id: string }) {
       </Button>
     </div>
   );
+}
+
+export function ProjectEditForm({ id }: { id: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
+  return <ProjectEditFormInner key={`${activeCompanyId}:${id}`} id={id} activeCompanyIdRef={activeCompanyIdRef} />;
 }

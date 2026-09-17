@@ -23,13 +23,29 @@ function parseQuantity(raw: string): number | null {
 
 export function ConsumptionForm({ projectId, materialId }: { projectId: string; materialId: string }) {
   const router = useRouter();
-  const { project } = useProject(projectId);
+  const { project, error: projectError, reload: reloadProject } = useProject(projectId);
   const material = getMaterial(materialId);
 
   const [quantityInput, setQuantityInput] = useState("");
   const [consumedAt, setConsumedAt] = useState(todayIso());
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  if (projectError) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Obra" onBack={() => router.push("/obras")} />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar esta obra agora.
+          </p>
+          <Button type="button" onClick={reloadProject}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (project === undefined) return null;
 

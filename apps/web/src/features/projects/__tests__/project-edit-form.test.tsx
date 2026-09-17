@@ -290,4 +290,99 @@ describe("ProjectEditForm", () => {
     render(<ProjectEditForm id="missing" />);
     await screen.findByText("Obra não encontrada");
   });
+
+  // ================= FRONTEND-PROJECTS-01A §17-18 (TE1-TE8) =================
+
+  /**
+   * TE4/§17: the render immediately after switching to Company B never
+   * shows Company A's typed-but-unsaved draft — the wrapper's `key`
+   * remounts `ProjectEditFormInner` from scratch, so B's Inner starts on
+   * a brand-new loading skeleton, never A's draft text for even one
+   * frame.
+   */
+  it("TE4: Company A's typed draft is absent in the SAME render that switches to Company B", async () => {
+    vi.mocked(getProject).mockResolvedValueOnce(project()).mockReturnValueOnce(new Promise(() => {}));
+    const user = userEvent.setup();
+    const { rerender } = render(<ProjectEditForm id="proj-1" />);
+    await screen.findByLabelText(/nome da obra/i);
+
+    await user.clear(screen.getByLabelText(/nome da obra/i));
+    await user.type(screen.getByLabelText(/nome da obra/i), "Rascunho nunca salvo de A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ProjectEditForm id="proj-1" />);
+
+    expect(screen.queryByDisplayValue("Rascunho nunca salvo de A")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/nome da obra/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * TE5/§17: a conflict banner shown under Company A must not survive
+   * into the render for Company B — the remount clears `conflict`
+   * (and every other piece of state) instantly, not on a later effect.
+   */
+  it("TE5: a conflict banner shown under Company A is absent in the SAME render that switches to Company B", async () => {
+    vi.mocked(getProject).mockResolvedValueOnce(project()).mockReturnValueOnce(new Promise(() => {}));
+    vi.mocked(updateProject).mockRejectedValue(new ApiError(409, "Conflict"));
+    const user = userEvent.setup();
+    const { rerender } = render(<ProjectEditForm id="proj-1" />);
+    await screen.findByLabelText(/nome da obra/i);
+
+    await user.click(screen.getByRole("button", { name: /salvar alterações/i }));
+    await screen.findByText(/A obra foi alterada por outra pessoa/);
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ProjectEditForm id="proj-1" />);
+
+    expect(screen.queryByText(/A obra foi alterada por outra pessoa/)).not.toBeInTheDocument();
+  });
+
+  /** TE6/§17: switching to Company B triggers a fresh, independent GET for B — never reuses A's already-resolved Project. */
+  it("TE6: Company B gets its own fresh GET, never reusing Company A's resolved Project", async () => {
+    vi.mocked(getProject)
+      .mockResolvedValueOnce(project({ name: "Obra de A" }))
+      .mockResolvedValueOnce(project({ name: "Obra de B" }));
+    const { rerender } = render(<ProjectEditForm id="proj-1" />);
+    await screen.findByDisplayValue("Obra de A");
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ProjectEditForm id="proj-1" />);
+
+    await screen.findByDisplayValue("Obra de B");
+    expect(getProject).toHaveBeenCalledTimes(2);
+  });
+
+  /** TE7/§17: an id-only change (same Company) follows the exact same remount discipline as a Company switch. */
+  it("TE7: switching from Project id A to id B (same Company) remounts and never shows A's draft", async () => {
+    vi.mocked(getProject)
+      .mockResolvedValueOnce(project({ id: "proj-1", name: "Obra A" }))
+      .mockReturnValueOnce(new Promise(() => {}));
+    const user = userEvent.setup();
+    const { rerender } = render(<ProjectEditForm id="proj-1" />);
+    await screen.findByLabelText(/nome da obra/i);
+
+    await user.clear(screen.getByLabelText(/nome da obra/i));
+    await user.type(screen.getByLabelText(/nome da obra/i), "Rascunho nunca salvo de A");
+
+    rerender(<ProjectEditForm id="proj-2" />);
+
+    expect(screen.queryByDisplayValue("Rascunho nunca salvo de A")).not.toBeInTheDocument();
+    await waitFor(() => expect(getProject).toHaveBeenCalledWith("proj-2"));
+  });
+
+  /** TE8/§17: the source-Budget Customer lock is independently re-derived for Company B's own Project — never inherited from A's render. */
+  it("TE8: the source-Budget Customer lock is independently correct for Company B's own Project, not inherited from A", async () => {
+    vi.mocked(getProject)
+      .mockResolvedValueOnce(project({ source_budget: { id: "budget-1", number: "ORC-000001", total: "1500.00" } }))
+      .mockResolvedValueOnce(project({ source_budget: null }));
+    const { rerender } = render(<ProjectEditForm id="proj-1" />);
+    await screen.findByText(/permanece vinculada ao mesmo cliente/i);
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<ProjectEditForm id="proj-1" />);
+
+    await screen.findByLabelText(/nome da obra/i);
+    expect(screen.queryByText(/permanece vinculada ao mesmo cliente/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/buscar cliente/i)).toBeInTheDocument();
+  });
 });

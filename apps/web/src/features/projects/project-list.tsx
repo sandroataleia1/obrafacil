@@ -8,7 +8,7 @@
  * filter()/slice() over a locally-held array.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Building2, ChevronLeft, ChevronRight, Eye, Plus, Search } from "lucide-react";
 
@@ -173,7 +173,12 @@ export function ProjectList() {
 
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
+  // FRONTEND-PROJECTS-01A §21: useLayoutEffect (not useEffect) closes
+  // the exact ownership window for `load()`'s own promise continuation
+  // — render is already protected by `loaded.companyId ===
+  // activeCompanyId`, but the live ref still gates which callback is
+  // allowed to write `loaded`/`errorCompanyId` at all.
+  useLayoutEffect(() => {
     activeCompanyIdRef.current = activeCompanyId;
   }, [activeCompanyId]);
   const previousCompanyIdRef = useRef(activeCompanyId);

@@ -31,10 +31,10 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
   const isEditing = Boolean(purchaseOrderId);
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const { projects: allProjects } = useAllProjects();
+  const { projects: allProjects, error: projectsError } = useAllProjects();
   const projects = allProjects ?? [];
   const [supplierId, setSupplierId] = useState(NONE);
-  const [projectId, setProjectId] = useState(lockedProjectId ?? NONE);
+  const [projectId, setProjectId] = useState(NONE);
   const [orderDate, setOrderDate] = useState(todayIso());
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -59,6 +59,18 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // `?projectId=` only pre-selects on create, and only for a Project that
+  // is actually confirmed present in the real API's result — never trust
+  // the bare deep-link id blindly, and never leave it silently "selected"
+  // if `useAllProjects()` failed to load (§9 — no fabricated projectId
+  // can slip into a create submit while the API is down).
+  useEffect(() => {
+    if (isEditing || !lockedProjectId || allProjects === undefined) return;
+    const locked = allProjects.find((project) => project.id === lockedProjectId);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (locked) setProjectId(locked.id);
+  }, [lockedProjectId, allProjects, isEditing]);
 
   useEffect(() => {
     if (!existingPurchaseOrder) return;
@@ -193,6 +205,11 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
               ))}
             </SelectContent>
           </Select>
+          {projectsError ? (
+            <p className="text-xs text-destructive">Não foi possível carregar as obras agora.</p>
+          ) : allProjects === undefined ? (
+            <p className="text-xs text-muted-foreground">Carregando obras...</p>
+          ) : null}
         </div>
 
         <div className="space-y-1.5">

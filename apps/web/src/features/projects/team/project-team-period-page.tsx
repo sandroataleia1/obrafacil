@@ -48,8 +48,21 @@ export function ProjectTeamPeriodPage({
   employeeId: string;
   period: string;
 }) {
-  const { project } = useProject(projectId);
+  const { project, error: projectError, reload: reloadProject } = useProject(projectId);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+
+  if (projectError) {
+    return (
+      <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+        <p role="alert" className="text-sm text-muted-foreground">
+          Não foi possível carregar esta obra agora.
+        </p>
+        <Button type="button" onClick={reloadProject}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
 
   if (project === undefined) return null;
 

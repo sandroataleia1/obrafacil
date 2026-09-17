@@ -10,7 +10,7 @@
  * `project.source_budget` instead of the deleted legacy Budget prototype.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Building2, ChevronDown, ChevronRight, ExternalLink, FileText, Info, Receipt } from "lucide-react";
@@ -208,13 +208,17 @@ export function ProjectDetail({ id }: { id: string }) {
 
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
-  useEffect(() => {
-    activeCompanyIdRef.current = activeCompanyId;
-  }, [activeCompanyId]);
   const currentIdRef = useRef(id);
-  useEffect(() => {
+  // FRONTEND-PROJECTS-01A §19: written via useLayoutEffect (not
+  // useEffect) — a status-PUT/409-refresh promise continuation for the
+  // OLD Company/Project id resolves as a microtask, which can run
+  // between commit and passive effects; the live ref must already
+  // reflect the NEW Company/id by then, or a stale continuation would
+  // wrongly conclude it's still current.
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
     currentIdRef.current = id;
-  }, [id]);
+  }, [activeCompanyId, id]);
 
   function isStale(requestCompanyId: string | undefined, requestId: string) {
     return activeCompanyIdRef.current !== requestCompanyId || currentIdRef.current !== requestId;
