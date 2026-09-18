@@ -228,7 +228,8 @@ class PurchaseOrderApiTest extends TestCase
         [$company] = $this->actingAsNewCompanyMember();
         $order = $this->postJson(self::ENDPOINT, $this->validPurchaseOrderPayload())->json();
         $this->postJson(self::ENDPOINT."/{$order['id']}/items", $this->validPurchaseOrderItemPayload())->assertCreated();
-        $confirmed = $this->postJson(self::ENDPOINT."/{$order['id']}/confirm", ['updated_at' => $order['updated_at']])->json();
+        $freshOrder = $this->getJson(self::ENDPOINT."/{$order['id']}")->json();
+        $confirmed = $this->postJson(self::ENDPOINT."/{$order['id']}/confirm", ['updated_at' => $freshOrder['updated_at']])->json();
 
         $otherSupplier = $this->makeSupplierForCompany($company);
 
@@ -272,8 +273,9 @@ class PurchaseOrderApiTest extends TestCase
         $this->actingAsNewCompanyMember();
         $order = $this->postJson(self::ENDPOINT, $this->validPurchaseOrderPayload())->json();
         $this->postJson(self::ENDPOINT."/{$order['id']}/items", $this->validPurchaseOrderItemPayload())->assertCreated();
+        $freshOrder = $this->getJson(self::ENDPOINT."/{$order['id']}")->json();
 
-        $this->deleteJson(self::ENDPOINT."/{$order['id']}", ['updated_at' => $order['updated_at']])->assertNoContent();
+        $this->deleteJson(self::ENDPOINT."/{$order['id']}", ['updated_at' => $freshOrder['updated_at']])->assertNoContent();
 
         $this->assertDatabaseMissing('purchase_orders', ['id' => $order['id']]);
         $this->assertDatabaseMissing('purchase_order_items', ['purchase_order_id' => $order['id']]);
@@ -286,7 +288,8 @@ class PurchaseOrderApiTest extends TestCase
 
         $orderedOrder = $this->postJson(self::ENDPOINT, $this->validPurchaseOrderPayload())->json();
         $this->postJson(self::ENDPOINT."/{$orderedOrder['id']}/items", $this->validPurchaseOrderItemPayload())->assertCreated();
-        $ordered = $this->postJson(self::ENDPOINT."/{$orderedOrder['id']}/confirm", ['updated_at' => $orderedOrder['updated_at']])->json();
+        $freshOrderedOrder = $this->getJson(self::ENDPOINT."/{$orderedOrder['id']}")->json();
+        $ordered = $this->postJson(self::ENDPOINT."/{$orderedOrder['id']}/confirm", ['updated_at' => $freshOrderedOrder['updated_at']])->json();
 
         $this->deleteJson(self::ENDPOINT."/{$ordered['id']}", ['updated_at' => $ordered['updated_at']])
             ->assertStatus(422)->assertJsonValidationErrors('commercial_status');

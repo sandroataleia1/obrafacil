@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\PurchaseOrderCommercialStatus;
 use App\Models\Concerns\BelongsToCompany;
+use App\Purchases\PurchaseOrderVersionClock;
 use Database\Factories\PurchaseOrderFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -16,6 +17,15 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * SUPPLY-API-01C §1/§13/§69-70. The commercial layer — `supplier()`/
  * `project()` are LIVE relations, never a name snapshot (ADR-017 #10). No
  * persisted `total` — always computed via App\Purchases\PurchaseOrderCalculator.
+ *
+ * SUPPLY-API-01C1 §11-13: `updated_at` is the optimistic-concurrency
+ * version for this aggregate, not just visual audit — `$dateFormat`
+ * carries microseconds (the `purchase_orders`/`purchase_order_items`
+ * columns were widened to `timestamp(6)`) so two mutations inside the
+ * same wall-clock second still produce distinguishable versions. Even
+ * with microsecond storage, `App\Purchases\PurchaseOrderVersionClock` is
+ * what actually GUARANTEES strict advancement (§14) — this format change
+ * alone only makes that guarantee observable/persistable.
  */
 #[Fillable([
     'number', 'supplier_id', 'project_id', 'order_date', 'expected_delivery_date',
@@ -25,6 +35,8 @@ class PurchaseOrder extends Model
 {
     /** @use HasFactory<PurchaseOrderFactory> */
     use BelongsToCompany, HasFactory, HasUuids;
+
+    protected $dateFormat = 'Y-m-d H:i:s.u';
 
     protected function casts(): array
     {
@@ -56,5 +68,33 @@ class PurchaseOrder extends Model
     public function formattedNumber(): string
     {
         return sprintf('PC-%06d', $this->number);
+    }
+
+    /**
+     * SUPPLY-API-01C1 §14/§17. Overrides Eloquent's own hook so
+     * `updated_at` always advances via PurchaseOrderVersionClock instead
+     * of a plain `now()` — guarantees strict advancement even when two
+     * mutations land in the same microsecond, or a test freezes the
+     * clock. `created_at` is untouched (still plain freshTimestamp()).
+     * Skips recomputation when the column is already dirty (e.g.
+     * touch() already set it before calling save()), matching Eloquent's
+     * own original guard exactly.
+     */
+    public function updateTimestamps()
+    {
+        $updatedAtColumn = $this->getUpdatedAtColumn();
+
+        if (! is_null($updatedAtColumn) && ! $this->isDirty($updatedAtColumn)) {
+            $current = $this->exists ? $this->{$updatedAtColumn} : null;
+            $this->setUpdatedAt(PurchaseOrderVersionClock::nextVersion($current));
+        }
+
+        $createdAtColumn = $this->getCreatedAtColumn();
+
+        if (! $this->exists && ! is_null($createdAtColumn) && ! $this->isDirty($createdAtColumn)) {
+            $this->setCreatedAt($this->freshTimestamp());
+        }
+
+        return $this;
     }
 }

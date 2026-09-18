@@ -31,6 +31,17 @@ use Illuminate\Validation\ValidationException;
  * check-then-delete, so a concurrent MaterialRequirement/PurchaseOrderItem
  * INSERT for this same Material serializes against it instead of racing
  * a plain SELECT-then-DELETE.
+ *
+ * SUPPLY-API-01C1 §1-5: `update()` now takes the SAME `lockForUpdate()`
+ * row lock as `delete()`/`MaterialRequirementService::create()`/
+ * `PurchaseOrderItemService::addItem()` — the unit-immutability
+ * invariant (§1) is only linearizable under concurrency if every writer
+ * that reads-then-decides based on `hasDependents()` locks the same row
+ * first. Before this gate, `update()` did a plain `findOrFail()` (no
+ * lock), so a concurrent dependent INSERT could commit between its check
+ * and its save(), letting a unit change succeed against a Material that,
+ * by the time the transaction committed, already had a dependent with a
+ * stale unit snapshot.
  */
 class MaterialService
 {
@@ -47,14 +58,16 @@ class MaterialService
      */
     public function update(Material $material, array $attributes): Material
     {
-        $scopedMaterial = Material::query()->findOrFail($material->id);
+        return DB::transaction(function () use ($material, $attributes) {
+            $lockedMaterial = Material::query()->lockForUpdate()->findOrFail($material->id);
 
-        $this->assertUnitChangeable($scopedMaterial, $attributes);
+            $this->assertUnitChangeable($lockedMaterial, $attributes);
 
-        $scopedMaterial->fill($attributes);
-        $scopedMaterial->save();
+            $lockedMaterial->fill($attributes);
+            $lockedMaterial->save();
 
-        return $scopedMaterial;
+            return $lockedMaterial;
+        });
     }
 
     public function delete(Material $material): void

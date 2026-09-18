@@ -28,6 +28,14 @@ use Illuminate\Validation\ValidationException;
  * check-then-delete, so a concurrent PurchaseOrder create for this same
  * Supplier serializes against it instead of racing a plain
  * SELECT-then-DELETE (§43).
+ *
+ * SUPPLY-API-01C1 §9-10: `update()` now takes the SAME `lockForUpdate()`
+ * row lock as `delete()` and as the target-Supplier lookup in
+ * `PurchaseOrderService::updateHeader()` — a plain `findOrFail()` (no
+ * lock) let an update and a delete of the same Supplier race with an
+ * unspecified winner instead of a genuinely serialized one. The
+ * document-unique SAVEPOINT (`saveOrConvertDocumentConflict()`) is
+ * preserved unchanged, nested inside this outer lock's own transaction.
  */
 class SupplierService
 {
@@ -65,12 +73,14 @@ class SupplierService
      */
     public function update(Supplier $supplier, array $attributes): Supplier
     {
-        $scopedSupplier = Supplier::query()->findOrFail($supplier->id);
+        return DB::transaction(function () use ($supplier, $attributes) {
+            $lockedSupplier = Supplier::query()->lockForUpdate()->findOrFail($supplier->id);
 
-        $scopedSupplier->fill($attributes);
-        $this->saveOrConvertDocumentConflict($scopedSupplier);
+            $lockedSupplier->fill($attributes);
+            $this->saveOrConvertDocumentConflict($lockedSupplier);
 
-        return $scopedSupplier;
+            return $lockedSupplier;
+        });
     }
 
     public function delete(Supplier $supplier): void

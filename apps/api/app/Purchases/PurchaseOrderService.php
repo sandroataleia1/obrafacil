@@ -109,7 +109,15 @@ class PurchaseOrderService
                     ]);
                 }
 
-                $supplier = Supplier::query()->find($validated['supplier_id']);
+                // §6-8: locked (not a plain find()) — the target
+                // Supplier must still exist/be active by the time this
+                // FK actually gets written, so a concurrent
+                // SupplierService::delete() for the SAME target Supplier
+                // serializes against this reassignment instead of racing
+                // a plain SELECT-then-UPDATE (which could otherwise
+                // commit a FK to a row that no longer exists, or is
+                // deleted moments later without ever seeing this Order).
+                $supplier = Supplier::query()->lockForUpdate()->find($validated['supplier_id']);
 
                 if ($supplier === null) {
                     throw ValidationException::withMessages(['supplier_id' => 'Fornecedor inválido.']);

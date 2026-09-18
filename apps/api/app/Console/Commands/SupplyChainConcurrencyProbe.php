@@ -8,10 +8,12 @@ use App\Models\Company;
 use App\Models\Material;
 use App\Models\Project;
 use App\Models\PurchaseOrder;
+use App\Models\Supplier;
 use App\Purchases\PurchaseOrderItemService;
 use App\Purchases\PurchaseOrderLocker;
 use App\Purchases\PurchaseOrderService;
 use App\Purchases\PurchaseOrderStatusService;
+use App\Suppliers\SupplierService;
 use App\Support\CurrentCompanyContext;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -38,7 +40,7 @@ class SupplyChainConcurrencyProbe extends Command
 {
     protected $signature = 'concurrency:supply
         {company : Company UUID}
-        {action : create-order|create-requirement|create-item|delete-material|confirm-order|delete-item|update-header|update-item}
+        {action : create-order|create-requirement|create-item|delete-material|confirm-order|delete-item|update-header|update-item|update-material-unit|delete-supplier|change-order-supplier}
         {--project= : Project UUID}
         {--supplier= : Supplier UUID}
         {--material= : Material UUID}
@@ -48,6 +50,7 @@ class SupplyChainConcurrencyProbe extends Command
         {--quantity=1.000 : quantity (create-requirement/create-item/update-item)}
         {--unit-price=10.00 : unit_price (create-item/update-item)}
         {--notes=probe : notes (update-header)}
+        {--unit-code=un : unit_code (update-material-unit)}
         {--hold-ms=0 : milliseconds to sleep AFTER acquiring the row lock, BEFORE writing (update-header/update-item)}
     ';
 
@@ -59,6 +62,7 @@ class SupplyChainConcurrencyProbe extends Command
         PurchaseOrderService $orderService,
         PurchaseOrderItemService $itemService,
         PurchaseOrderStatusService $statusService,
+        SupplierService $supplierService,
         PurchaseOrderLocker $locker,
     ): int {
         if (! app()->environment(['local', 'testing'])) {
@@ -75,9 +79,9 @@ class SupplyChainConcurrencyProbe extends Command
 
         try {
             app(CurrentCompanyContext::class)->run($company, function () use (
-                $materialService, $requirementService, $orderService, $itemService, $statusService, $locker, $action, &$result
+                $materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $locker, $action, &$result
             ) {
-                $result['outcome'] = $this->dispatch($materialService, $requirementService, $orderService, $itemService, $statusService, $locker, $action, $result);
+                $result['outcome'] = $this->dispatch($materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $locker, $action, $result);
             });
 
             $result['status'] ??= 'ok';
@@ -103,6 +107,7 @@ class SupplyChainConcurrencyProbe extends Command
         PurchaseOrderService $orderService,
         PurchaseOrderItemService $itemService,
         PurchaseOrderStatusService $statusService,
+        SupplierService $supplierService,
         PurchaseOrderLocker $locker,
         string $action,
         array &$result,
@@ -206,6 +211,29 @@ class SupplyChainConcurrencyProbe extends Command
 
                     return ['id' => $item->id, 'updated_at' => $item->updated_at?->toJSON()];
                 });
+
+            case 'update-material-unit':
+                $material = Material::query()->findOrFail((string) $this->option('material'));
+                $updated = $materialService->update($material, [
+                    'name' => $material->name,
+                    'unit_code' => (string) $this->option('unit-code'),
+                ]);
+
+                return ['unit_code' => $updated->unit_code->value];
+
+            case 'delete-supplier':
+                $supplier = Supplier::query()->findOrFail((string) $this->option('supplier'));
+                $supplierService->delete($supplier);
+
+                return ['deleted' => (string) $this->option('supplier')];
+
+            case 'change-order-supplier':
+                $order = $orderService->updateHeader((string) $this->option('order'), [
+                    'supplier_id' => (string) $this->option('supplier'),
+                    'updated_at' => (string) $this->option('updated-at'),
+                ]);
+
+                return ['supplier_id' => $order->supplier_id];
 
             default:
                 throw new InvalidArgumentException("Unknown action [{$action}].");

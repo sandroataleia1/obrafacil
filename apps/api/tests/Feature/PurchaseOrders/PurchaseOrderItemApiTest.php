@@ -227,7 +227,8 @@ class PurchaseOrderItemApiTest extends TestCase
         [$company] = $this->actingAsNewCompanyMember();
         $order = $this->createDraftOrder();
         $item = $this->postJson($this->itemsEndpoint($order['id']), $this->validPurchaseOrderItemPayload())->json();
-        $cancelled = $this->postJson(self::ORDERS."/{$order['id']}/cancel", ['updated_at' => $item['updated_at']])->json();
+        $freshOrder = $this->getJson(self::ORDERS."/{$order['id']}")->json();
+        $cancelled = $this->postJson(self::ORDERS."/{$order['id']}/cancel", ['updated_at' => $freshOrder['updated_at']])->json();
 
         $this->postJson($this->itemsEndpoint($order['id']), $this->validPurchaseOrderItemPayload(['material_id' => $this->makeMaterialForCompany($company)->id]))
             ->assertStatus(409);
@@ -245,7 +246,8 @@ class PurchaseOrderItemApiTest extends TestCase
         [$company] = $this->actingAsNewCompanyMember();
         $order = $this->createDraftOrder();
         $item = $this->postJson($this->itemsEndpoint($order['id']), $this->validPurchaseOrderItemPayload())->json();
-        $ordered = $this->postJson(self::ORDERS."/{$order['id']}/confirm", ['updated_at' => $item['updated_at']])->json();
+        $freshOrder = $this->getJson(self::ORDERS."/{$order['id']}")->json();
+        $ordered = $this->postJson(self::ORDERS."/{$order['id']}/confirm", ['updated_at' => $freshOrder['updated_at']])->json();
         $freshItem = collect($ordered['items'])->first();
 
         $this->putJson($this->itemsEndpoint($order['id'], $freshItem['id']), [
@@ -259,7 +261,8 @@ class PurchaseOrderItemApiTest extends TestCase
         [$company] = $this->actingAsNewCompanyMember();
         $order = $this->createDraftOrder();
         $item = $this->postJson($this->itemsEndpoint($order['id']), $this->validPurchaseOrderItemPayload())->json();
-        $ordered = $this->postJson(self::ORDERS."/{$order['id']}/confirm", ['updated_at' => $item['updated_at']])->json();
+        $freshOrder = $this->getJson(self::ORDERS."/{$order['id']}")->json();
+        $ordered = $this->postJson(self::ORDERS."/{$order['id']}/confirm", ['updated_at' => $freshOrder['updated_at']])->json();
 
         $newMaterial = $this->makeMaterialForCompany($company);
 
@@ -274,7 +277,8 @@ class PurchaseOrderItemApiTest extends TestCase
         [$company] = $this->actingAsNewCompanyMember();
         $order = $this->createDraftOrder();
         $item = $this->postJson($this->itemsEndpoint($order['id']), $this->validPurchaseOrderItemPayload())->json();
-        $this->postJson(self::ORDERS."/{$order['id']}/confirm", ['updated_at' => $item['updated_at']])->json();
+        $freshOrder = $this->getJson(self::ORDERS."/{$order['id']}")->json();
+        $this->postJson(self::ORDERS."/{$order['id']}/confirm", ['updated_at' => $freshOrder['updated_at']])->json();
 
         $this->deleteJson($this->itemsEndpoint($order['id'], $item['id']))->assertStatus(409);
 

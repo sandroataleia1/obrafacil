@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\MaterialUnitCode;
 use App\Models\Concerns\BelongsToCompany;
+use App\Purchases\PurchaseOrderVersionClock;
 use Database\Factories\PurchaseOrderItemFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -27,6 +28,9 @@ class PurchaseOrderItem extends Model
     /** @use HasFactory<PurchaseOrderItemFactory> */
     use BelongsToCompany, HasFactory, HasUuids;
 
+    /** SUPPLY-API-01C1 §11-13/§16: its own updated_at is the item's optimistic-concurrency version. */
+    protected $dateFormat = 'Y-m-d H:i:s.u';
+
     protected function casts(): array
     {
         return [
@@ -44,5 +48,27 @@ class PurchaseOrderItem extends Model
     public function material(): BelongsTo
     {
         return $this->belongsTo(Material::class);
+    }
+
+    /**
+     * SUPPLY-API-01C1 §14/§16-17. Same monotonic-version override as
+     * PurchaseOrder — see its own docblock for the full rationale.
+     */
+    public function updateTimestamps()
+    {
+        $updatedAtColumn = $this->getUpdatedAtColumn();
+
+        if (! is_null($updatedAtColumn) && ! $this->isDirty($updatedAtColumn)) {
+            $current = $this->exists ? $this->{$updatedAtColumn} : null;
+            $this->setUpdatedAt(PurchaseOrderVersionClock::nextVersion($current));
+        }
+
+        $createdAtColumn = $this->getCreatedAtColumn();
+
+        if (! $this->exists && ! is_null($createdAtColumn) && ! $this->isDirty($createdAtColumn)) {
+            $this->setCreatedAt($this->freshTimestamp());
+        }
+
+        return $this;
     }
 }

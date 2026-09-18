@@ -212,6 +212,15 @@ inventing new ones.
   racing a plain SELECT-then-write. `GoodsReceipt` real guards on
   PurchaseOrderItem, and any Payable-linked guard once Payables are a
   real backend, both remain deferred exactly as anticipated below.
+- **Update (SUPPLY-API-01C1)**: Material unit mutation now serializes by
+  the Material row (`MaterialService::update()` shares the same
+  `lockForUpdate()` as `delete()`/the dependent creators); draft Supplier
+  reassignment serializes with the target Supplier's own lifecycle
+  (`PurchaseOrderService::updateHeader()` locks the target Supplier
+  before writing the new FK); PurchaseOrder's optimistic version
+  (`updated_at`) now uses a monotonic timestamp
+  (`PurchaseOrderVersionClock`, microsecond-precision columns) so two
+  mutations can never share an indistinguishable version.
 
 ## Deferred to later gates
 
