@@ -129,14 +129,23 @@ class RegisterTest extends TestCase
             ->assertJsonValidationErrors('password');
     }
 
-    /** R13: duplicate email -> 422. */
+    /**
+     * R13/RA10: duplicate email -> 422, PT-BR message. This sequential
+     * (non-racing) case is caught by `RegisterRequest`'s own `unique`
+     * rule before the controller ever runs — already PT-BR via Laravel's
+     * own validation language file (see `PtBrValidationMessagesTest`).
+     * `RegisterAtomicityTest` separately proves the controller's own
+     * `isUniqueEmailViolation()` catch (only reachable for a genuine
+     * DB-level race the FormRequest layer can't see) is ALSO PT-BR.
+     */
     public function test_duplicate_email_returns_422(): void
     {
         $this->register();
 
         $this->register(['company_name' => 'Another Co'])
             ->assertStatus(422)
-            ->assertJsonValidationErrors('email');
+            ->assertJsonValidationErrors('email')
+            ->assertJsonPath('errors.email.0', 'O e-mail informado já está em uso.');
     }
 
     /**
@@ -225,7 +234,7 @@ class RegisterTest extends TestCase
         $this->assertSame($membershipsBefore, DB::table('company_user')->count());
     }
 
-    /** R17: an already-authenticated user cannot use /register to create a second company. */
+    /** R17/RA12: an already-authenticated user cannot use /register to create a second company. PT-BR message. */
     public function test_already_authenticated_user_cannot_register_again(): void
     {
         $existingUser = User::factory()->create(['password' => Hash::make('correct-password')]);
@@ -234,11 +243,15 @@ class RegisterTest extends TestCase
 
         $this->loginAs($existingUser, 'correct-password')->assertOk();
 
+        $companiesBefore = DB::table('companies')->count();
+
         $this->withHeaders($this->statefulHeaders())
             ->postJson('/api/v1/register', $this->validPayload(['email' => 'second-company@example.com']))
-            ->assertStatus(409);
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'Você já está autenticado. Saia da conta atual antes de registrar uma nova empresa.');
 
         $this->assertDatabaseMissing('users', ['email' => 'second-company@example.com']);
+        $this->assertSame($companiesBefore, DB::table('companies')->count());
     }
 
     /** R18: session ID is regenerated after register. */
