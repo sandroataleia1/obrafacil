@@ -23,6 +23,9 @@ use App\Http\Controllers\Api\V1\PostalCodeLookupController;
 use App\Http\Controllers\Api\V1\ProjectController;
 use App\Http\Controllers\Api\V1\ProposalController;
 use App\Http\Controllers\Api\V1\PublicProposalPdfController;
+use App\Http\Controllers\Api\V1\PurchaseOrderController;
+use App\Http\Controllers\Api\V1\PurchaseOrderItemController;
+use App\Http\Controllers\Api\V1\PurchaseOrderStatusController;
 use App\Http\Controllers\Api\V1\RegisterController;
 use App\Http\Controllers\Api\V1\ServiceOrderController;
 use App\Http\Controllers\Api\V1\ServiceOrderItemController;
@@ -154,6 +157,20 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/v1/projects/{project}/material-requirements/{requirement}', [MaterialRequirementController::class, 'show']);
         Route::put('/v1/projects/{project}/material-requirements/{requirement}', [MaterialRequirementController::class, 'update']);
         Route::delete('/v1/projects/{project}/material-requirements/{requirement}', [MaterialRequirementController::class, 'destroy']);
+
+        Route::get('/v1/purchase-orders', [PurchaseOrderController::class, 'index']);
+        Route::post('/v1/purchase-orders', [PurchaseOrderController::class, 'store']);
+        Route::get('/v1/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'show']);
+        Route::put('/v1/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'update']);
+        Route::delete('/v1/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'destroy']);
+
+        Route::post('/v1/purchase-orders/{purchaseOrder}/confirm', [PurchaseOrderStatusController::class, 'confirm']);
+        Route::post('/v1/purchase-orders/{purchaseOrder}/cancel', [PurchaseOrderStatusController::class, 'cancel']);
+        Route::post('/v1/purchase-orders/{purchaseOrder}/return-to-draft', [PurchaseOrderStatusController::class, 'returnToDraft']);
+
+        Route::post('/v1/purchase-orders/{purchaseOrder}/items', [PurchaseOrderItemController::class, 'store']);
+        Route::put('/v1/purchase-orders/{purchaseOrder}/items/{item}', [PurchaseOrderItemController::class, 'update']);
+        Route::delete('/v1/purchase-orders/{purchaseOrder}/items/{item}', [PurchaseOrderItemController::class, 'destroy']);
 
         Route::middleware('throttle:lookups')->group(function () {
             Route::get('/v1/lookups/cep', [PostalCodeLookupController::class, 'show']);

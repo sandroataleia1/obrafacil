@@ -192,12 +192,32 @@ inventing new ones.
   revalidates both Project and Material under the active
   CompanyScope/CurrentCompanyContext on every public method, independent
   of what the caller passed in.
+- **Update (SUPPLY-API-01C)**: `PurchaseOrder`/`PurchaseOrderItem` now
+  exist. `PC-000001` numbering is allocator-based (`PurchaseOrderNumberAllocator`,
+  same row-locked-sequence pattern as Project/Budget/ServiceOrder). Status
+  actions (confirm/cancel/return-to-draft) are the only path
+  `commercial_status` changes; `cancelled -> ordered` is impossible by
+  construction. Hard DELETE stays draft-only, matching the future
+  PurchaseOrder decision recorded above. `PurchaseOrderItem` snapshots
+  `unit_code`/`unit_custom_label` from the Material at creation and is now
+  the SECOND real dependent wired into `MaterialService::hasDependents()`
+  (OR'd with `MaterialRequirement`). `PurchaseOrder` is Supplier's FIRST
+  real dependent — `SupplierService::hasPurchaseOrders()`/`delete()` are
+  wired for real. `MaterialService`/`SupplierService`/the new Purchase
+  Services all re-resolve their Model arguments under CompanyScope
+  (DOMAIN-SERVICE-TENANT-DEFENSE-01, closed for these three) and take a
+  real `lockForUpdate()` row lock around every dependency-lifecycle
+  create/delete pair (Material vs MaterialRequirement/PurchaseOrderItem;
+  Supplier vs PurchaseOrder), so the two sides serialize instead of
+  racing a plain SELECT-then-write. `GoodsReceipt` real guards on
+  PurchaseOrderItem, and any Payable-linked guard once Payables are a
+  real backend, both remain deferred exactly as anticipated below.
 
 ## Deferred to later gates
 
 - `MaterialRequirement` (SUPPLY-API-01B) — DONE.
 - `PurchaseOrder`/`PurchaseOrderItem`, including the `PC-000001` number
-  allocator and the draft-only DELETE (SUPPLY-API-01C).
+  allocator and the draft-only DELETE (SUPPLY-API-01C) — DONE.
 - `GoodsReceipt`/`GoodsReceiptItem`, including the over-receipt
   concurrency guard (SUPPLY-API-01D).
 - `MaterialConsumption`/`StockAdjustment`/the Stock read model

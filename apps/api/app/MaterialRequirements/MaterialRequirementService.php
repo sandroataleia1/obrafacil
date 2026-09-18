@@ -44,34 +44,43 @@ class MaterialRequirementService
      */
     public function create(Project $project, array $attributes): MaterialRequirement
     {
-        // §2/§5: never trust the Project instance the caller already
-        // holds — re-resolve it by id under CompanyScope. A caller that
-        // grabbed a Project under a DIFFERENT tenant's context before the
-        // active Company changed (or passed one from another Company
-        // entirely) fails here, before any INSERT is attempted.
-        $resolvedProject = Project::query()->find($project->id);
-
-        if ($resolvedProject === null) {
-            throw ValidationException::withMessages(['project_id' => 'Obra inválida.']);
-        }
-
-        $material = Material::query()->find($attributes['material_id']);
-
-        if ($material === null) {
-            throw ValidationException::withMessages(['material_id' => 'Material inválido.']);
-        }
-
-        if (! $material->active) {
-            throw ValidationException::withMessages(['material_id' => 'Este material está inativo.']);
-        }
-
         try {
-            return DB::transaction(fn () => MaterialRequirement::create([
-                'project_id' => $resolvedProject->id,
-                'material_id' => $material->id,
-                'required_quantity' => $attributes['required_quantity'],
-                'notes' => $attributes['notes'] ?? null,
-            ]));
+            return DB::transaction(function () use ($project, $attributes) {
+                // §2/§5: never trust the Project instance the caller
+                // already holds — re-resolve it by id under CompanyScope.
+                // A caller that grabbed a Project under a DIFFERENT
+                // tenant's context before the active Company changed (or
+                // passed one from another Company entirely) fails here,
+                // before any INSERT is attempted.
+                $resolvedProject = Project::query()->find($project->id);
+
+                if ($resolvedProject === null) {
+                    throw ValidationException::withMessages(['project_id' => 'Obra inválida.']);
+                }
+
+                // SUPPLY-API-01C §44: locked (not a plain find()) INSIDE
+                // this same transaction, so a concurrent
+                // MaterialService::delete() — which takes the same
+                // lockForUpdate() on this Material row — serializes
+                // against this create() instead of racing a plain
+                // SELECT-then-INSERT/SELECT-then-DELETE.
+                $material = Material::query()->lockForUpdate()->find($attributes['material_id']);
+
+                if ($material === null) {
+                    throw ValidationException::withMessages(['material_id' => 'Material inválido.']);
+                }
+
+                if (! $material->active) {
+                    throw ValidationException::withMessages(['material_id' => 'Este material está inativo.']);
+                }
+
+                return MaterialRequirement::create([
+                    'project_id' => $resolvedProject->id,
+                    'material_id' => $material->id,
+                    'required_quantity' => $attributes['required_quantity'],
+                    'notes' => $attributes['notes'] ?? null,
+                ]);
+            });
         } catch (QueryException $e) {
             $this->rethrowAsValidationIfDuplicate($e);
 

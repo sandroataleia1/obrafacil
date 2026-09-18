@@ -5,6 +5,8 @@ namespace App\Materials;
 use App\Enums\MaterialUnitCode;
 use App\Models\Material;
 use App\Models\MaterialRequirement;
+use App\Models\PurchaseOrderItem;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -19,9 +21,16 @@ use Illuminate\Validation\ValidationException;
  * SUPPLY-API-01B §20-27: `hasDependents()` is now wired to a real table
  * (`material_requirements`) — the unit-change guard in `update()` and the
  * dependency guard in `delete()` both call it, so both checks live/die
- * together as this method is extended by later gates (01C:
- * PurchaseOrderItem, 01E: MaterialConsumption/StockAdjustment) — never a
- * second, parallel guard added elsewhere.
+ * together as this method is extended by later gates. SUPPLY-API-01C
+ * §39/§41-42 adds the second dependent, `purchase_order_items`.
+ *
+ * SUPPLY-API-01C §40/§44/DOMAIN-SERVICE-TENANT-DEFENSE-01: `update()`/
+ * `delete()` never trust the Model instance the caller already holds —
+ * both re-resolve by id under CompanyScope first. `delete()` additionally
+ * takes a real row lock (`lockForUpdate()`) around the whole
+ * check-then-delete, so a concurrent MaterialRequirement/PurchaseOrderItem
+ * INSERT for this same Material serializes against it instead of racing
+ * a plain SELECT-then-DELETE.
  */
 class MaterialService
 {
@@ -38,32 +47,39 @@ class MaterialService
      */
     public function update(Material $material, array $attributes): Material
     {
-        $this->assertUnitChangeable($material, $attributes);
+        $scopedMaterial = Material::query()->findOrFail($material->id);
 
-        $material->fill($attributes);
-        $material->save();
+        $this->assertUnitChangeable($scopedMaterial, $attributes);
 
-        return $material;
+        $scopedMaterial->fill($attributes);
+        $scopedMaterial->save();
+
+        return $scopedMaterial;
     }
 
     public function delete(Material $material): void
     {
-        $this->assertDeletable($material);
+        DB::transaction(function () use ($material) {
+            $lockedMaterial = Material::query()->lockForUpdate()->findOrFail($material->id);
 
-        $material->delete();
+            $this->assertDeletable($lockedMaterial);
+
+            $lockedMaterial->delete();
+        });
     }
 
     /**
      * ADR-017 #4/#5: true once ANY of material_requirements/
      * purchase_order_items/material_consumptions/stock_adjustments has a
      * row for this Material — the single check both the unit-immutability
-     * rule and the delete guard share. SUPPLY-API-01B wires the first of
-     * those four (material_requirements); later gates extend this method's
-     * body as each remaining table is introduced, never add a sibling.
+     * rule and the delete guard share. SUPPLY-API-01C wires the second of
+     * those four (purchase_order_items); 01E extends this method's body
+     * for the remaining two, never adds a sibling check.
      */
     public function hasDependents(Material $material): bool
     {
-        return MaterialRequirement::query()->where('material_id', $material->id)->exists();
+        return MaterialRequirement::query()->where('material_id', $material->id)->exists()
+            || PurchaseOrderItem::query()->where('material_id', $material->id)->exists();
     }
 
     /**

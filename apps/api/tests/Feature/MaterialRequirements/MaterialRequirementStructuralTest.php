@@ -128,12 +128,14 @@ class MaterialRequirementStructuralTest extends TestCase
         }
     }
 
-    /** MS10: zero Purchase/Stock/Finance tables were introduced by this gate. */
+    /**
+     * MS10: zero Stock/Finance tables were introduced by this gate.
+     * `purchase_orders`/`purchase_order_items` were legitimately added
+     * later by SUPPLY-API-01C — no longer asserted absent here.
+     */
     public function test_ms10_zero_purchase_stock_finance_tables_introduced(): void
     {
         foreach ([
-            'purchase_orders',
-            'purchase_order_items',
             'goods_receipts',
             'material_consumptions',
             'stock_adjustments',

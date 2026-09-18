@@ -61,17 +61,16 @@ class SupplyChainStructuralTest extends TestCase
     }
 
     /**
-     * ST7: zero PurchaseOrder/GoodsReceipt/Consumption/StockAdjustment
-     * tables exist yet — deferred to SUPPLY-API-01C+ (ADR-017).
-     * `material_requirements` itself was added by SUPPLY-API-01B and is
-     * asserted present (not absent) — see MS1 in
-     * MaterialRequirementStructuralTest for its own dedicated proof.
+     * ST7: zero GoodsReceipt/Consumption/StockAdjustment tables exist yet
+     * — deferred to SUPPLY-API-01D/01E (ADR-017). `material_requirements`
+     * (SUPPLY-API-01B) and `purchase_orders`/`purchase_order_items`
+     * (SUPPLY-API-01C) were added by later gates and are asserted present
+     * (not absent) — see MaterialRequirementStructuralTest/
+     * PurchaseOrderStructuralTest for their own dedicated proofs.
      */
     public function test_st7_zero_purchase_order_tables_exist(): void
     {
         foreach ([
-            'purchase_orders',
-            'purchase_order_items',
             'goods_receipts',
             'material_consumptions',
             'stock_adjustments',
@@ -80,6 +79,8 @@ class SupplyChainStructuralTest extends TestCase
         }
 
         $this->assertTrue(Schema::hasTable('material_requirements'), 'material_requirements was added by SUPPLY-API-01B.');
+        $this->assertTrue(Schema::hasTable('purchase_orders'), 'purchase_orders was added by SUPPLY-API-01C.');
+        $this->assertTrue(Schema::hasTable('purchase_order_items'), 'purchase_order_items was added by SUPPLY-API-01C.');
     }
 
     /** ST8: zero finance side effects — Material/Supplier domain files never reference Payable/ProjectCost. */

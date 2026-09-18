@@ -2,6 +2,7 @@
 
 namespace App\Suppliers;
 
+use App\Models\PurchaseOrder;
 use App\Models\Supplier;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -20,9 +21,13 @@ use Illuminate\Validation\ValidationException;
  * into the same ValidationException shape the pre-check already
  * produces, instead of a raw 500 — same pattern as CustomerService.
  *
- * `delete()` is the seam SUPPLY-API-01C extends with the PurchaseOrder
- * dependency guard (ADR-017 #8) — currently unconditional because that
- * table doesn't exist yet.
+ * SUPPLY-API-01C §37/§43/DOMAIN-SERVICE-TENANT-DEFENSE-01: `update()`/
+ * `delete()` never trust the Model instance the caller already holds —
+ * both re-resolve by id under CompanyScope first. `delete()` additionally
+ * takes a real row lock (`lockForUpdate()`) around the whole
+ * check-then-delete, so a concurrent PurchaseOrder create for this same
+ * Supplier serializes against it instead of racing a plain
+ * SELECT-then-DELETE (§43).
  */
 class SupplierService
 {
@@ -60,25 +65,36 @@ class SupplierService
      */
     public function update(Supplier $supplier, array $attributes): Supplier
     {
-        $supplier->fill($attributes);
-        $this->saveOrConvertDocumentConflict($supplier);
+        $scopedSupplier = Supplier::query()->findOrFail($supplier->id);
 
-        return $supplier;
+        $scopedSupplier->fill($attributes);
+        $this->saveOrConvertDocumentConflict($scopedSupplier);
+
+        return $scopedSupplier;
     }
 
     public function delete(Supplier $supplier): void
     {
-        $supplier->delete();
+        DB::transaction(function () use ($supplier) {
+            $lockedSupplier = Supplier::query()->lockForUpdate()->findOrFail($supplier->id);
+
+            if ($this->hasPurchaseOrders($lockedSupplier)) {
+                throw ValidationException::withMessages([
+                    'supplier' => 'Este fornecedor possui pedidos de compra registrados e não pode ser excluído.',
+                ]);
+            }
+
+            $lockedSupplier->delete();
+        });
     }
 
     /**
      * ADR-017 #8: true once the Supplier has any purchase_orders row,
-     * including cancelled ones. Always false in this gate — extended by
-     * SUPPLY-API-01C once that table exists, never duplicated elsewhere.
+     * including cancelled ones — SUPPLY-API-01C wires this for real.
      */
     public function hasPurchaseOrders(Supplier $supplier): bool
     {
-        return false;
+        return PurchaseOrder::query()->where('supplier_id', $supplier->id)->exists();
     }
 
     /**

@@ -7,6 +7,7 @@ use App\Enums\CompanyRole;
 use App\Models\CatalogItem;
 use App\Models\Company;
 use App\Models\Material;
+use App\Models\PurchaseOrder;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Support\CurrentCompanyContext;
@@ -924,32 +925,34 @@ class CatalogItemApiTest extends TestCase
     /**
      * §34/§46: proves structurally that CatalogItem CRUD touches nothing
      * that could belong to a Material/Stock/Purchase/ProjectMaterialRequirement
-     * domain. SUPPLY-API-01A added real `materials`/`suppliers` tables
-     * (ADR-010/ADR-017: Material stays deliberately disconnected from
-     * CatalogItem — no `catalog_item_id`/`material_id` cross-link, ever),
-     * so those two are now asserted by real row-count isolation instead of
-     * table absence, exactly as this test's own comment anticipated. The
-     * remaining Stock/Purchase tables still don't exist backend-side
-     * (deferred to SUPPLY-API-01B+), so they keep the absence check.
+     * domain. SUPPLY-API-01A added real `materials`/`suppliers` tables,
+     * SUPPLY-API-01C added real `purchase_orders`/`purchase_order_items`
+     * (ADR-010/ADR-017: Material/Supplier/PurchaseOrder stay deliberately
+     * disconnected from CatalogItem), so all four are now asserted by
+     * real row-count isolation instead of table absence, exactly as this
+     * test's own comment anticipated. The remaining Stock tables still
+     * don't exist backend-side (deferred to SUPPLY-API-01E), so they keep
+     * the absence check.
      */
     public function test_material_isolation_no_coupling_with_material_domain(): void
     {
         [$company] = $this->actingAsNewCompanyMember();
 
-        $stillAbsentTables = ['stock_ledger', 'stock_movements', 'purchases', 'purchase_orders', 'project_material_requirements'];
+        $stillAbsentTables = ['stock_ledger', 'stock_movements', 'purchases', 'project_material_requirements'];
         foreach ($stillAbsentTables as $table) {
             $this->assertFalse(
                 Schema::hasTable($table),
-                "Expected no backend table named '{$table}' to exist yet — Purchase/Stock is still deferred to a later gate."
+                "Expected no backend table named '{$table}' to exist yet — Stock is still deferred to a later gate."
             );
         }
 
         $materialsCountBefore = $this->currentCompanyContext()->run($company, fn () => Material::query()->count());
         $suppliersCountBefore = $this->currentCompanyContext()->run($company, fn () => Supplier::query()->count());
+        $purchaseOrdersCountBefore = $this->currentCompanyContext()->run($company, fn () => PurchaseOrder::query()->count());
 
         // Create, update, and inactivate a CatalogItem — then confirm the
         // only table affected is catalog_items itself: zero rows appear in
-        // materials/suppliers as a side effect.
+        // materials/suppliers/purchase_orders as a side effect.
         $id = $this->postJson(self::ENDPOINT, $this->validPayload())->assertStatus(201)->json('id');
         $this->putJson(self::ENDPOINT."/{$id}", $this->validPayload(['name' => 'Atualizado']))->assertOk();
         $this->putJson(self::ENDPOINT."/{$id}", $this->validPayload(['active' => false]))->assertOk();
@@ -959,7 +962,9 @@ class CatalogItemApiTest extends TestCase
 
         $materialsCountAfter = $this->currentCompanyContext()->run($company, fn () => Material::query()->count());
         $suppliersCountAfter = $this->currentCompanyContext()->run($company, fn () => Supplier::query()->count());
+        $purchaseOrdersCountAfter = $this->currentCompanyContext()->run($company, fn () => PurchaseOrder::query()->count());
         $this->assertSame($materialsCountBefore, $materialsCountAfter);
         $this->assertSame($suppliersCountBefore, $suppliersCountAfter);
+        $this->assertSame($purchaseOrdersCountBefore, $purchaseOrdersCountAfter);
     }
 }
