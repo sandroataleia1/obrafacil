@@ -189,7 +189,7 @@ return [
         'name' => 'nome',
         'trade_name' => 'nome fantasia',
         'legal_name' => 'razão social',
-        'document' => 'documento',
+        'document' => 'CPF/CNPJ',
         'phone' => 'telefone',
         'whatsapp' => 'WhatsApp',
         'email' => 'e-mail',
@@ -225,6 +225,10 @@ return [
         'expected_end_date' => 'conclusão prevista',
         'status' => 'status',
         'updated_at' => 'data de atualização',
+        'unit_code' => 'unidade',
+        'unit_custom_label' => 'unidade personalizada',
+        'contact_name' => 'contato',
+        'active' => 'ativo',
     ],
 
 ];

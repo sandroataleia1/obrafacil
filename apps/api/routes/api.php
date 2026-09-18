@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\EvolutionWebhookController;
 use App\Http\Controllers\Api\V1\LoginController;
 use App\Http\Controllers\Api\V1\LogoutController;
+use App\Http\Controllers\Api\V1\MaterialController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\NotificationSettingsController;
 use App\Http\Controllers\Api\V1\PostalCodeLookupController;
@@ -26,6 +27,7 @@ use App\Http\Controllers\Api\V1\ServiceOrderController;
 use App\Http\Controllers\Api\V1\ServiceOrderItemController;
 use App\Http\Controllers\Api\V1\ServiceOrderSettingsController;
 use App\Http\Controllers\Api\V1\ServiceOrderStatusController;
+use App\Http\Controllers\Api\V1\SupplierController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/v1/health', function () {
@@ -90,6 +92,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/v1/catalog-items', [CatalogItemController::class, 'store']);
         Route::get('/v1/catalog-items/{catalogItem}', [CatalogItemController::class, 'show']);
         Route::put('/v1/catalog-items/{catalogItem}', [CatalogItemController::class, 'update']);
+
+        Route::get('/v1/materials', [MaterialController::class, 'index']);
+        Route::post('/v1/materials', [MaterialController::class, 'store']);
+        Route::get('/v1/materials/{material}', [MaterialController::class, 'show']);
+        Route::put('/v1/materials/{material}', [MaterialController::class, 'update']);
+        Route::delete('/v1/materials/{material}', [MaterialController::class, 'destroy']);
+
+        Route::get('/v1/suppliers', [SupplierController::class, 'index']);
+        Route::post('/v1/suppliers', [SupplierController::class, 'store']);
+        Route::get('/v1/suppliers/{supplier}', [SupplierController::class, 'show']);
+        Route::put('/v1/suppliers/{supplier}', [SupplierController::class, 'update']);
+        Route::delete('/v1/suppliers/{supplier}', [SupplierController::class, 'destroy']);
 
         // §53: settings routes registered BEFORE the dynamic
         // {serviceOrder} routes below, so "settings" is never swallowed
