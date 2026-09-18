@@ -2,23 +2,26 @@
 
 namespace App\Materials;
 
+use App\Enums\MaterialUnitCode;
 use App\Models\Material;
+use App\Models\MaterialRequirement;
+use Illuminate\Validation\ValidationException;
 
 /**
  * SUPPLY-API-01A §30/ADR-017 #4-#5. Controller stays thin — every real
- * decision, including the future dependency guards, lives here.
+ * decision, including the dependency guards, lives here.
  *
  * `create()`/`update()` need no race-safe unique-constraint translation
  * (§15 — Material.name is deliberately NOT unique) unlike
  * CatalogItem/Customer/Supplier, so this class is simpler than those
  * siblings today.
  *
- * `delete()`/the unit-change guard inside update() are the ONE seam every
- * later gate (SUPPLY-API-01B: MaterialRequirement, 01C: PurchaseOrderItem,
- * 01E: MaterialConsumption/StockAdjustment) must extend — never a second,
- * parallel guard added elsewhere. In this gate, none of those four
- * dependent tables exist, so both checks are structurally present but
- * currently always pass (`hasDependents()` always returns false).
+ * SUPPLY-API-01B §20-27: `hasDependents()` is now wired to a real table
+ * (`material_requirements`) — the unit-change guard in `update()` and the
+ * dependency guard in `delete()` both call it, so both checks live/die
+ * together as this method is extended by later gates (01C:
+ * PurchaseOrderItem, 01E: MaterialConsumption/StockAdjustment) — never a
+ * second, parallel guard added elsewhere.
  */
 class MaterialService
 {
@@ -35,6 +38,8 @@ class MaterialService
      */
     public function update(Material $material, array $attributes): Material
     {
+        $this->assertUnitChangeable($material, $attributes);
+
         $material->fill($attributes);
         $material->save();
 
@@ -43,6 +48,8 @@ class MaterialService
 
     public function delete(Material $material): void
     {
+        $this->assertDeletable($material);
+
         $material->delete();
     }
 
@@ -50,12 +57,52 @@ class MaterialService
      * ADR-017 #4/#5: true once ANY of material_requirements/
      * purchase_order_items/material_consumptions/stock_adjustments has a
      * row for this Material — the single check both the unit-immutability
-     * rule and the delete guard will share once those tables exist.
-     * Always false in this gate; each later gate that creates one of
-     * those tables extends this method's body, never adds a sibling.
+     * rule and the delete guard share. SUPPLY-API-01B wires the first of
+     * those four (material_requirements); later gates extend this method's
+     * body as each remaining table is introduced, never add a sibling.
      */
     public function hasDependents(Material $material): bool
     {
-        return false;
+        return MaterialRequirement::query()->where('material_id', $material->id)->exists();
+    }
+
+    /**
+     * §22/§23: a unit change is unit_code changing OR unit_custom_label
+     * changing (e.g. other/"rolo" -> other/"bobina" is still a unit
+     * change even though unit_code stays "other") — comparing unit_code
+     * alone would miss that case.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function assertUnitChangeable(Material $material, array $attributes): void
+    {
+        $newUnitCode = array_key_exists('unit_code', $attributes)
+            ? $this->normalizeUnitCode($attributes['unit_code'])
+            : $material->unit_code->value;
+        $newCustomLabel = array_key_exists('unit_custom_label', $attributes)
+            ? $attributes['unit_custom_label']
+            : $material->unit_custom_label;
+
+        $unitChanged = $newUnitCode !== $material->unit_code->value || $newCustomLabel !== $material->unit_custom_label;
+
+        if ($unitChanged && $this->hasDependents($material)) {
+            throw ValidationException::withMessages([
+                'unit_code' => 'Este material já possui histórico operacional e sua unidade não pode ser alterada.',
+            ]);
+        }
+    }
+
+    private function normalizeUnitCode(mixed $value): string
+    {
+        return $value instanceof MaterialUnitCode ? $value->value : (string) $value;
+    }
+
+    private function assertDeletable(Material $material): void
+    {
+        if ($this->hasDependents($material)) {
+            throw ValidationException::withMessages([
+                'material' => 'Este material possui necessidades cadastradas em obras e não pode ser excluído.',
+            ]);
+        }
     }
 }

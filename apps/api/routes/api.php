@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\V1\EvolutionWebhookController;
 use App\Http\Controllers\Api\V1\LoginController;
 use App\Http\Controllers\Api\V1\LogoutController;
 use App\Http\Controllers\Api\V1\MaterialController;
+use App\Http\Controllers\Api\V1\MaterialRequirementController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\NotificationSettingsController;
 use App\Http\Controllers\Api\V1\PostalCodeLookupController;
@@ -147,6 +148,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/v1/projects', [ProjectController::class, 'store']);
         Route::get('/v1/projects/{project}', [ProjectController::class, 'show']);
         Route::put('/v1/projects/{project}', [ProjectController::class, 'update']);
+
+        Route::get('/v1/projects/{project}/material-requirements', [MaterialRequirementController::class, 'index']);
+        Route::post('/v1/projects/{project}/material-requirements', [MaterialRequirementController::class, 'store']);
+        Route::get('/v1/projects/{project}/material-requirements/{requirement}', [MaterialRequirementController::class, 'show']);
+        Route::put('/v1/projects/{project}/material-requirements/{requirement}', [MaterialRequirementController::class, 'update']);
+        Route::delete('/v1/projects/{project}/material-requirements/{requirement}', [MaterialRequirementController::class, 'destroy']);
 
         Route::middleware('throttle:lookups')->group(function () {
             Route::get('/v1/lookups/cep', [PostalCodeLookupController::class, 'show']);

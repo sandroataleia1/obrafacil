@@ -60,19 +60,26 @@ class SupplyChainStructuralTest extends TestCase
         $this->assertFalse(Schema::hasColumn('materials', 'supplier_id'));
     }
 
-    /** ST7: zero PurchaseOrder-related tables exist yet — deferred to SUPPLY-API-01C+ (ADR-017). */
+    /**
+     * ST7: zero PurchaseOrder/GoodsReceipt/Consumption/StockAdjustment
+     * tables exist yet — deferred to SUPPLY-API-01C+ (ADR-017).
+     * `material_requirements` itself was added by SUPPLY-API-01B and is
+     * asserted present (not absent) — see MS1 in
+     * MaterialRequirementStructuralTest for its own dedicated proof.
+     */
     public function test_st7_zero_purchase_order_tables_exist(): void
     {
         foreach ([
             'purchase_orders',
             'purchase_order_items',
-            'material_requirements',
             'goods_receipts',
             'material_consumptions',
             'stock_adjustments',
         ] as $table) {
             $this->assertFalse(Schema::hasTable($table), "Table [{$table}] must not exist yet in this gate.");
         }
+
+        $this->assertTrue(Schema::hasTable('material_requirements'), 'material_requirements was added by SUPPLY-API-01B.');
     }
 
     /** ST8: zero finance side effects — Material/Supplier domain files never reference Payable/ProjectCost. */

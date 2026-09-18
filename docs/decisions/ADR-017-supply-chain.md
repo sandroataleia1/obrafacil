@@ -180,9 +180,18 @@ inventing new ones.
   already-battle-tested mechanisms Customer already uses — no new
   validation infrastructure was invented for this gate.
 
+- **Update (SUPPLY-API-01B)**: `MaterialRequirement` now exists and is the
+  first real dependent wired into `MaterialService::hasDependents()` — the
+  unit-change guard (`update()`) and the delete guard (`delete()`) both
+  call it, exactly as anticipated above. `SupplierService::hasPurchaseOrders()`
+  remains unwired (still always `false`) because `purchase_orders` doesn't
+  exist yet — SUPPLY-API-01C must both implement it for real and make
+  `SupplierService::delete()` call it, the same seam-wiring this gate did
+  for Material.
+
 ## Deferred to later gates
 
-- `MaterialRequirement` (SUPPLY-API-01B).
+- `MaterialRequirement` (SUPPLY-API-01B) — DONE.
 - `PurchaseOrder`/`PurchaseOrderItem`, including the `PC-000001` number
   allocator and the draft-only DELETE (SUPPLY-API-01C).
 - `GoodsReceipt`/`GoodsReceiptItem`, including the over-receipt

@@ -229,6 +229,8 @@ return [
         'unit_custom_label' => 'unidade personalizada',
         'contact_name' => 'contato',
         'active' => 'ativo',
+        'material_id' => 'material',
+        'required_quantity' => 'quantidade necessária',
     ],
 
 ];
