@@ -10,14 +10,19 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * SUPPLY-API-01B §17. Controller stays thin.
+ * SUPPLY-API-01B §17/SUPPLY-API-01B1. Controller stays thin.
  *
- * §7: `material_id` is resolved tenant-scoped here (`Material::query()`
- * already carries CompanyScope) — a cross-tenant or non-existent id is a
- * 422 on `material_id`, never a silent cross-tenant read. The Project
- * itself is resolved tenant-scoped by the controller (`Project::query()
- * ->findOrFail()`) before this service is ever called — a cross-tenant
- * Project route parameter 404s before reaching here.
+ * SUPPLY-API-01B1 §1-2/§8-9: every public method here re-resolves its
+ * relations under the active CompanyScope/CurrentCompanyContext instead
+ * of trusting a Model instance the caller already holds — an in-memory
+ * `Project`/`MaterialRequirement` object carries no live guarantee that it
+ * still belongs to the currently active Company, since `Model::save()`/
+ * `delete()` use `newModelQuery()` internally, which bypasses ALL global
+ * scopes (including `CompanyScope`) and matches purely by primary key.
+ * The real HTTP flow already re-fetches `{project}`/`{requirement}`
+ * scoped on every request (MaterialRequirementController), so this only
+ * changes what a direct/internal Service call can do — never the
+ * Controller's own 404 contract (§3).
  *
  * §19/DOMAIN-UNIQUE-SAVEPOINT-01: the INSERT that can trigger
  * `material_requirements_project_material_unique` runs inside
@@ -26,7 +31,7 @@ use Illuminate\Validation\ValidationException;
  * request, or RefreshDatabase's wrapping transaction in tests). Without
  * it, catching the 23505 here would leave that outer transaction poisoned
  * for every later query — the exact bug found in SUPPLY-API-01A's S15 and
- * already present (unfixed, out of scope) in
+ * already present (unfixed, out of scope — DOMAIN-UNIQUE-SAVEPOINT-01) in
  * CustomerService::create()/CatalogItemService::create(). This class does
  * not repeat it.
  */
@@ -39,6 +44,17 @@ class MaterialRequirementService
      */
     public function create(Project $project, array $attributes): MaterialRequirement
     {
+        // §2/§5: never trust the Project instance the caller already
+        // holds — re-resolve it by id under CompanyScope. A caller that
+        // grabbed a Project under a DIFFERENT tenant's context before the
+        // active Company changed (or passed one from another Company
+        // entirely) fails here, before any INSERT is attempted.
+        $resolvedProject = Project::query()->find($project->id);
+
+        if ($resolvedProject === null) {
+            throw ValidationException::withMessages(['project_id' => 'Obra inválida.']);
+        }
+
         $material = Material::query()->find($attributes['material_id']);
 
         if ($material === null) {
@@ -51,7 +67,7 @@ class MaterialRequirementService
 
         try {
             return DB::transaction(fn () => MaterialRequirement::create([
-                'project_id' => $project->id,
+                'project_id' => $resolvedProject->id,
                 'material_id' => $material->id,
                 'required_quantity' => $attributes['required_quantity'],
                 'notes' => $attributes['notes'] ?? null,
@@ -68,18 +84,28 @@ class MaterialRequirementService
      */
     public function update(MaterialRequirement $requirement, array $attributes): MaterialRequirement
     {
-        $requirement->fill([
+        // §12: re-resolve by id under CompanyScope before mutating — a
+        // Requirement instance from another tenant, held in memory by a
+        // direct caller, must never be updatable just because the caller
+        // already had a loaded Model (save() bypasses CompanyScope).
+        $scopedRequirement = MaterialRequirement::query()->findOrFail($requirement->id);
+
+        $scopedRequirement->fill([
             'required_quantity' => $attributes['required_quantity'],
             'notes' => $attributes['notes'] ?? null,
         ]);
-        $requirement->save();
+        $scopedRequirement->save();
 
-        return $requirement;
+        return $scopedRequirement;
     }
 
     public function delete(MaterialRequirement $requirement): void
     {
-        $requirement->delete();
+        // §12/§14: same re-resolution as update() — delete() also bypasses
+        // CompanyScope internally (newModelQuery()), so the id alone must
+        // be re-checked against the active tenant first.
+        $scopedRequirement = MaterialRequirement::query()->findOrFail($requirement->id);
+        $scopedRequirement->delete();
     }
 
     private function rethrowAsValidationIfDuplicate(QueryException $e): void

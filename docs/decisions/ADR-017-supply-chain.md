@@ -188,6 +188,10 @@ inventing new ones.
   exist yet — SUPPLY-API-01C must both implement it for real and make
   `SupplierService::delete()` call it, the same seam-wiring this gate did
   for Material.
+- **Update (SUPPLY-API-01B1)**: `MaterialRequirementService` now
+  revalidates both Project and Material under the active
+  CompanyScope/CurrentCompanyContext on every public method, independent
+  of what the caller passed in.
 
 ## Deferred to later gates
 
