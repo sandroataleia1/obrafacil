@@ -239,6 +239,10 @@ return [
         'received_at' => 'data do recebimento',
         'items' => 'itens',
         'purchase_order_item_id' => 'item do pedido',
+        'consumed_at' => 'data de uso',
+        'occurred_at' => 'data do ajuste',
+        'type' => 'tipo',
+        'reason' => 'motivo',
     ],
 
 ];

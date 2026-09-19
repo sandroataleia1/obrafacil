@@ -14,6 +14,8 @@ use App\Purchases\PurchaseOrderItemService;
 use App\Purchases\PurchaseOrderLocker;
 use App\Purchases\PurchaseOrderService;
 use App\Purchases\PurchaseOrderStatusService;
+use App\Stock\MaterialConsumptionService;
+use App\Stock\StockAdjustmentService;
 use App\Suppliers\SupplierService;
 use App\Support\CurrentCompanyContext;
 use Illuminate\Console\Command;
@@ -41,7 +43,7 @@ class SupplyChainConcurrencyProbe extends Command
 {
     protected $signature = 'concurrency:supply
         {company : Company UUID}
-        {action : create-order|create-requirement|create-item|delete-material|confirm-order|delete-item|update-header|update-item|update-material-unit|delete-supplier|change-order-supplier|create-receipt|cancel-order|return-to-draft-order}
+        {action : create-order|create-requirement|create-item|delete-material|confirm-order|delete-item|update-header|update-item|update-material-unit|delete-supplier|change-order-supplier|create-receipt|cancel-order|return-to-draft-order|delete-receipt|create-consumption|create-adjustment}
         {--project= : Project UUID}
         {--supplier= : Supplier UUID}
         {--material= : Material UUID}
@@ -49,15 +51,18 @@ class SupplyChainConcurrencyProbe extends Command
         {--item= : PurchaseOrderItem UUID}
         {--receipt= : GoodsReceipt UUID}
         {--updated-at= : updated_at precondition}
-        {--quantity=1.000 : quantity (create-requirement/create-item/update-item/create-receipt)}
+        {--quantity=1.000 : quantity (create-requirement/create-item/update-item/create-receipt/create-consumption/create-adjustment)}
         {--unit-price=10.00 : unit_price (create-item/update-item)}
         {--notes=probe : notes (update-header)}
         {--unit-code=un : unit_code (update-material-unit)}
         {--received-at= : received_at (create-receipt), defaults to today}
+        {--consumed-at= : consumed_at (create-consumption), defaults to today}
+        {--occurred-at= : occurred_at (create-adjustment), defaults to today}
+        {--type=ADJUSTMENT_IN : type (create-adjustment)}
         {--hold-ms=0 : milliseconds to sleep AFTER acquiring the row lock, BEFORE writing (update-header/update-item/confirm-order/cancel-order/return-to-draft-order)}
     ';
 
-    protected $description = 'SUPPLY-API-01C test harness — performs one supply-chain action in its own real DB connection/process.';
+    protected $description = 'SUPPLY-API-01C/01E test harness — performs one supply-chain action in its own real DB connection/process.';
 
     public function handle(
         MaterialService $materialService,
@@ -68,6 +73,8 @@ class SupplyChainConcurrencyProbe extends Command
         SupplierService $supplierService,
         GoodsReceiptService $goodsReceiptService,
         PurchaseOrderLocker $locker,
+        MaterialConsumptionService $consumptionService,
+        StockAdjustmentService $adjustmentService,
     ): int {
         if (! app()->environment(['local', 'testing'])) {
             $this->error('SupplyChainConcurrencyProbe is a test-only harness and refuses to run outside local/testing.');
@@ -83,9 +90,9 @@ class SupplyChainConcurrencyProbe extends Command
 
         try {
             app(CurrentCompanyContext::class)->run($company, function () use (
-                $materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $goodsReceiptService, $locker, $action, &$result
+                $materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $goodsReceiptService, $locker, $consumptionService, $adjustmentService, $action, &$result
             ) {
-                $result['outcome'] = $this->dispatch($materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $goodsReceiptService, $locker, $action, $result);
+                $result['outcome'] = $this->dispatch($materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $goodsReceiptService, $locker, $consumptionService, $adjustmentService, $action, $result);
             });
 
             $result['status'] ??= 'ok';
@@ -114,6 +121,8 @@ class SupplyChainConcurrencyProbe extends Command
         SupplierService $supplierService,
         GoodsReceiptService $goodsReceiptService,
         PurchaseOrderLocker $locker,
+        MaterialConsumptionService $consumptionService,
+        StockAdjustmentService $adjustmentService,
         string $action,
         array &$result,
     ): array {
@@ -281,6 +290,35 @@ class SupplyChainConcurrencyProbe extends Command
 
                     return ['commercial_status' => $order->commercial_status->value];
                 });
+
+            case 'delete-receipt':
+                $order = PurchaseOrder::query()->findOrFail((string) $this->option('order'));
+                $goodsReceiptService->delete($order, (string) $this->option('receipt'));
+
+                return ['deleted' => (string) $this->option('receipt')];
+
+            case 'create-consumption':
+                $project = Project::query()->findOrFail((string) $this->option('project'));
+                $consumedAt = (string) $this->option('consumed-at');
+                $consumption = $consumptionService->create($project, [
+                    'material_id' => (string) $this->option('material'),
+                    'quantity' => (string) $this->option('quantity'),
+                    'consumed_at' => $consumedAt !== '' ? $consumedAt : now()->toDateString(),
+                ]);
+
+                return ['id' => $consumption->id];
+
+            case 'create-adjustment':
+                $project = Project::query()->findOrFail((string) $this->option('project'));
+                $occurredAt = (string) $this->option('occurred-at');
+                $adjustment = $adjustmentService->create($project, [
+                    'material_id' => (string) $this->option('material'),
+                    'type' => (string) $this->option('type'),
+                    'quantity' => (string) $this->option('quantity'),
+                    'occurred_at' => $occurredAt !== '' ? $occurredAt : now()->toDateString(),
+                ]);
+
+                return ['id' => $adjustment->id];
 
             default:
                 throw new InvalidArgumentException("Unknown action [{$action}].");

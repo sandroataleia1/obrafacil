@@ -5,7 +5,10 @@ namespace App\Purchases;
 use App\Enums\PurchaseOrderCommercialStatus;
 use App\Models\GoodsReceipt;
 use App\Models\GoodsReceiptItem;
+use App\Models\Material;
 use App\Models\PurchaseOrder;
+use App\Models\PurchaseOrderItem;
+use App\Stock\StockLedgerService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -33,6 +36,7 @@ class GoodsReceiptService
     public function __construct(
         private readonly PurchaseOrderLocker $locker,
         private readonly PurchaseOrderFulfillmentService $fulfillmentService,
+        private readonly StockLedgerService $ledger,
     ) {}
 
     /**
@@ -120,6 +124,17 @@ class GoodsReceiptService
         });
     }
 
+    /**
+     * SUPPLY-API-01E §31-37/§70-72. Before removing anything, discover
+     * every distinct Material this Receipt's lines touch, lock those
+     * Material rows in deterministic ASC id order (§31/§71 — NEVER
+     * payload/relation order, which is what avoids a deadlock against
+     * MaterialConsumptionService/StockAdjustmentService/MaterialService,
+     * none of which ever lock more than one Material at a time), then
+     * simulate the timeline for each affected Material with this
+     * Receipt's events excluded (§32). A single Material going negative
+     * blocks the WHOLE delete — zero lines removed (§35).
+     */
     public function delete(PurchaseOrder|string $purchaseOrder, GoodsReceipt|string $goodsReceipt): void
     {
         DB::transaction(function () use ($purchaseOrder, $goodsReceipt) {
@@ -130,7 +145,31 @@ class GoodsReceiptService
             // §23: nested to the locked Order — a Receipt id from a
             // different Order (or a different tenant) is indistinguishable
             // from "doesn't exist" — a real 404.
-            $receipt = GoodsReceipt::query()->where('purchase_order_id', $lockedOrder->id)->findOrFail($receiptId);
+            $receipt = GoodsReceipt::query()->where('purchase_order_id', $lockedOrder->id)->with('items')->findOrFail($receiptId);
+
+            $materialIds = PurchaseOrderItem::query()
+                ->whereIn('id', $receipt->items->pluck('purchase_order_item_id'))
+                ->pluck('material_id')
+                ->unique()
+                ->sort()
+                ->values();
+
+            // §31/§71: lock in deterministic ASC id order, never the
+            // order the relation/payload happens to yield.
+            foreach ($materialIds as $materialId) {
+                Material::query()->where('id', $materialId)->lockForUpdate()->first();
+            }
+
+            // §32-35: simulate this Receipt's removal for EVERY affected
+            // Material before touching a single row — one invalid
+            // Material blocks the entire delete.
+            foreach ($materialIds as $materialId) {
+                if (! $this->ledger->isValidExcludingReceipt($lockedOrder->project_id, $materialId, $receipt->id)) {
+                    throw ValidationException::withMessages([
+                        'goods_receipt' => 'Este recebimento não pode ser excluído porque existem saídas de material que dependem dele.',
+                    ]);
+                }
+            }
 
             // §24: items removed explicitly, never a silent cascade.
             $receipt->items()->delete();

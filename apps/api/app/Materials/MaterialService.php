@@ -4,8 +4,10 @@ namespace App\Materials;
 
 use App\Enums\MaterialUnitCode;
 use App\Models\Material;
+use App\Models\MaterialConsumption;
 use App\Models\MaterialRequirement;
 use App\Models\PurchaseOrderItem;
+use App\Models\StockAdjustment;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -85,14 +87,18 @@ class MaterialService
      * ADR-017 #4/#5: true once ANY of material_requirements/
      * purchase_order_items/material_consumptions/stock_adjustments has a
      * row for this Material — the single check both the unit-immutability
-     * rule and the delete guard share. SUPPLY-API-01C wires the second of
-     * those four (purchase_order_items); 01E extends this method's body
-     * for the remaining two, never adds a sibling check.
+     * rule and the delete guard share. SUPPLY-API-01D/01E complete this
+     * four-way check (§40) — GoodsReceipt is deliberately NOT a fifth
+     * check: it stays transitively covered via purchase_order_items
+     * (§40/§80), since a GoodsReceiptItem can only exist against a
+     * PurchaseOrderItem that already blocks this Material.
      */
     public function hasDependents(Material $material): bool
     {
         return MaterialRequirement::query()->where('material_id', $material->id)->exists()
-            || PurchaseOrderItem::query()->where('material_id', $material->id)->exists();
+            || PurchaseOrderItem::query()->where('material_id', $material->id)->exists()
+            || MaterialConsumption::query()->where('material_id', $material->id)->exists()
+            || StockAdjustment::query()->where('material_id', $material->id)->exists();
     }
 
     /**

@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\V1\EvolutionWebhookController;
 use App\Http\Controllers\Api\V1\GoodsReceiptController;
 use App\Http\Controllers\Api\V1\LoginController;
 use App\Http\Controllers\Api\V1\LogoutController;
+use App\Http\Controllers\Api\V1\MaterialConsumptionController;
 use App\Http\Controllers\Api\V1\MaterialController;
 use App\Http\Controllers\Api\V1\MaterialRequirementController;
 use App\Http\Controllers\Api\V1\MeController;
@@ -32,6 +33,8 @@ use App\Http\Controllers\Api\V1\ServiceOrderController;
 use App\Http\Controllers\Api\V1\ServiceOrderItemController;
 use App\Http\Controllers\Api\V1\ServiceOrderSettingsController;
 use App\Http\Controllers\Api\V1\ServiceOrderStatusController;
+use App\Http\Controllers\Api\V1\StockAdjustmentController;
+use App\Http\Controllers\Api\V1\StockPositionController;
 use App\Http\Controllers\Api\V1\SupplierController;
 use Illuminate\Support\Facades\Route;
 
@@ -175,6 +178,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::post('/v1/purchase-orders/{purchaseOrder}/goods-receipts', [GoodsReceiptController::class, 'store']);
         Route::delete('/v1/purchase-orders/{purchaseOrder}/goods-receipts/{goodsReceipt}', [GoodsReceiptController::class, 'destroy']);
+
+        Route::post('/v1/projects/{project}/material-consumptions', [MaterialConsumptionController::class, 'store']);
+        Route::delete('/v1/projects/{project}/material-consumptions/{consumption}', [MaterialConsumptionController::class, 'destroy']);
+
+        Route::post('/v1/projects/{project}/stock-adjustments', [StockAdjustmentController::class, 'store']);
+
+        Route::get('/v1/stock/positions', [StockPositionController::class, 'index']);
+        Route::get('/v1/stock/positions/{project}/{material}', [StockPositionController::class, 'show']);
+        Route::get('/v1/stock/positions/{project}/{material}/movements', [StockPositionController::class, 'movements']);
 
         Route::middleware('throttle:lookups')->group(function () {
             Route::get('/v1/lookups/cep', [PostalCodeLookupController::class, 'show']);

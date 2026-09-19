@@ -240,6 +240,48 @@ inventing new ones.
   `SUPPLY-API-01E` will add the chronology guard before a GoodsReceipt can
   be deleted once `MaterialConsumption`/`StockAdjustment` exist — not
   implemented here (no fake guard against tables that don't exist yet).
+- **Update (SUPPLY-API-01E)**: the physical stock layer is complete.
+  `MaterialConsumption` (immutable event, create/delete only) and
+  `StockAdjustment` (append-only for its entire lifetime — create only,
+  no PUT/PATCH/DELETE route exists at any layer) join `GoodsReceiptItem`
+  as the only three sources of physical stock movement. There is still no
+  persisted balance anywhere — `App\Stock\StockLedgerService` is the
+  SINGLE ledger (never duplicated in `MaterialConsumptionService`/
+  `StockAdjustmentService`/`GoodsReceiptService`/any Resource), deriving
+  every read from those three event sources at query time. For a given
+  Project+Material, events are aggregated PER DAY before the cumulative
+  check — a same-day arrival (Receipt or `ADJUSTMENT_IN`) can supply a
+  same-day departure (Consumption or `ADJUSTMENT_OUT`) — and the
+  cumulative balance must never go negative on any date; all quantity
+  math is decimal-string (`App\Purchases\Quantity`, scale 3, bcmath),
+  never float. The Material row is the v1 ledger mutex — every writer
+  that can affect a Material's physical/lifecycle integrity
+  (`MaterialConsumptionService::create/delete`, `StockAdjustmentService::
+  create`, `MaterialService::update/delete`, and now `GoodsReceiptService
+  ::delete`'s chronology guard) takes a `lockForUpdate()` on that same
+  row — deliberately simple (one lock granularity, not a fine-grained
+  per-event lock) and proven deadlock-free by construction: Consumption/
+  Adjustment paths NEVER lock a PurchaseOrder, so the only two-resource
+  lock order in this codebase is GoodsReceipt-delete's `PurchaseOrder`
+  (via `PurchaseOrderLocker`) → `Material` rows (sorted ASC by id, never
+  payload/relation order) — a one-directional order that cannot cycle
+  with any single-Material lock elsewhere. `GoodsReceiptService::delete()`
+  now implements the promised chronology guard: before removing a
+  Receipt, it discovers every Material the Receipt's lines touch, locks
+  those rows in sorted order, and simulates the ledger with the Receipt's
+  own events excluded for each one — a single Material going negative
+  blocks the ENTIRE delete (zero lines removed), with a controlled 422
+  message, never a raw FK/SQL error. `MaterialService::hasDependents()`
+  now checks all four dependent tables (`material_requirements`,
+  `purchase_order_items`, `material_consumptions`, `stock_adjustments`);
+  `GoodsReceipt` stays deliberately uncounted — it is still covered
+  transitively via `purchase_order_items`. `StockPosition`/`StockMovement`
+  remain pure read models (no table) — `App\Stock\StockPositionService`
+  computes required/purchased/received/consumed/stock/pending/missing
+  metrics via a fixed, small number of GROUP BY aggregate queries per
+  page regardless of how many Project+Material pairs are shown, never one
+  query per pair. No central/warehouse-level stock concept was
+  introduced — every metric stays Project+Material scoped.
 
 ## Deferred to later gates
 
@@ -248,10 +290,10 @@ inventing new ones.
   allocator and the draft-only DELETE (SUPPLY-API-01C) — DONE.
 - `GoodsReceipt`/`GoodsReceiptItem` (SUPPLY-API-01D) — DONE. The
   over-receipt concurrency guard shipped with it; the DELETE chronology
-  guard remains deferred to SUPPLY-API-01E (see above).
+  guard shipped with SUPPLY-API-01E (see above).
 - `MaterialConsumption`/`StockAdjustment`/the Stock read model
-  (SUPPLY-API-01E).
+  (SUPPLY-API-01E) — DONE.
 - Any Purchase→Payable automation (explicitly out of scope indefinitely
   unless a fresh product decision authorizes it).
-- Frontend migration of Materials/Suppliers (`SUPPLY-FRONTEND-01A`) — the
-  existing prototype stores/screens are untouched by this gate.
+- Frontend migration of Materials/Suppliers/Stock (`SUPPLY-FRONTEND-01A`)
+  — the existing prototype stores/screens are untouched by this gate.

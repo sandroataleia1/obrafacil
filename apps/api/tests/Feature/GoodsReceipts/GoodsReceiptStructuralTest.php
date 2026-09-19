@@ -136,13 +136,17 @@ class GoodsReceiptStructuralTest extends TestCase
         $this->assertFalse(Schema::hasColumn('purchase_orders', 'payable_id'));
     }
 
-    /** GS13: no standalone stock table/quantity was introduced. */
+    /**
+     * GS13: no standalone stock BALANCE table/quantity was introduced by
+     * this gate. `material_consumptions`/`stock_adjustments` were added by
+     * SUPPLY-API-01E as real event tables (not a persisted balance) — see
+     * StockStructuralTest for their own dedicated proofs; StockPosition/
+     * StockMovement remain pure read models, never a table (ADR-017).
+     */
     public function test_gs13_no_standalone_stock_table(): void
     {
         $this->assertFalse(Schema::hasTable('stock_positions'));
         $this->assertFalse(Schema::hasTable('stock_movements'));
-        $this->assertFalse(Schema::hasTable('material_consumptions'));
-        $this->assertFalse(Schema::hasTable('stock_adjustments'));
     }
 
     /** GS14: zero notification side effects — GoodsReceiptService never references notification infrastructure. */

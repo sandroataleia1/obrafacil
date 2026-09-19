@@ -61,29 +61,23 @@ class SupplyChainStructuralTest extends TestCase
     }
 
     /**
-     * ST7: zero Consumption/StockAdjustment tables exist yet — deferred
-     * to SUPPLY-API-01E (ADR-017). `material_requirements`
-     * (SUPPLY-API-01B), `purchase_orders`/`purchase_order_items`
-     * (SUPPLY-API-01C), and `goods_receipts`/`goods_receipt_items`
-     * (SUPPLY-API-01D) were added by later gates and are asserted present
-     * (not absent) — see MaterialRequirementStructuralTest/
-     * PurchaseOrderStructuralTest/GoodsReceiptStructuralTest for their
-     * own dedicated proofs.
+     * ST7: `material_requirements` (SUPPLY-API-01B), `purchase_orders`/
+     * `purchase_order_items` (SUPPLY-API-01C), `goods_receipts`/
+     * `goods_receipt_items` (SUPPLY-API-01D), and `material_consumptions`/
+     * `stock_adjustments` (SUPPLY-API-01E) were all added by later gates
+     * and are asserted present here — see MaterialRequirementStructuralTest/
+     * PurchaseOrderStructuralTest/GoodsReceiptStructuralTest/
+     * StockStructuralTest for their own dedicated proofs.
      */
     public function test_st7_zero_purchase_order_tables_exist(): void
     {
-        foreach ([
-            'material_consumptions',
-            'stock_adjustments',
-        ] as $table) {
-            $this->assertFalse(Schema::hasTable($table), "Table [{$table}] must not exist yet in this gate.");
-        }
-
         $this->assertTrue(Schema::hasTable('material_requirements'), 'material_requirements was added by SUPPLY-API-01B.');
         $this->assertTrue(Schema::hasTable('purchase_orders'), 'purchase_orders was added by SUPPLY-API-01C.');
         $this->assertTrue(Schema::hasTable('purchase_order_items'), 'purchase_order_items was added by SUPPLY-API-01C.');
         $this->assertTrue(Schema::hasTable('goods_receipts'), 'goods_receipts was added by SUPPLY-API-01D.');
         $this->assertTrue(Schema::hasTable('goods_receipt_items'), 'goods_receipt_items was added by SUPPLY-API-01D.');
+        $this->assertTrue(Schema::hasTable('material_consumptions'), 'material_consumptions was added by SUPPLY-API-01E.');
+        $this->assertTrue(Schema::hasTable('stock_adjustments'), 'stock_adjustments was added by SUPPLY-API-01E.');
     }
 
     /** ST8: zero finance side effects — Material/Supplier domain files never reference Payable/ProjectCost. */

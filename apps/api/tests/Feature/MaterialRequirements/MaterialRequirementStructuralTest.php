@@ -137,13 +137,15 @@ class MaterialRequirementStructuralTest extends TestCase
     public function test_ms10_zero_purchase_stock_finance_tables_introduced(): void
     {
         foreach ([
-            'material_consumptions',
-            'stock_adjustments',
             'payables',
             'project_costs',
         ] as $table) {
             $this->assertFalse(Schema::hasTable($table), "Table [{$table}] must not exist — out of scope for this gate.");
         }
+
+        // material_consumptions/stock_adjustments were added by SUPPLY-API-01E — see StockStructuralTest for their own dedicated proofs.
+        $this->assertTrue(Schema::hasTable('material_consumptions'));
+        $this->assertTrue(Schema::hasTable('stock_adjustments'));
 
         $this->assertFalse(Schema::hasColumn('material_requirements', 'ordered_quantity'));
         $this->assertFalse(Schema::hasColumn('material_requirements', 'received_quantity'));
