@@ -135,11 +135,15 @@ class PurchaseOrderStructuralTest extends TestCase
         $this->assertFalse(Schema::hasColumn('purchase_order_items', 'line_total'));
     }
 
-    /** ST13: no fulfillment fields/tables exist yet (deferred to SUPPLY-API-01D). */
+    /**
+     * ST13: fulfillment is still never a persisted column — SUPPLY-API-01D
+     * added the real `goods_receipts`/`goods_receipt_items` tables (its
+     * own PurchaseOrderStructuralTest-equivalent, GS1-GS14, proves those
+     * structurally), but `fulfillment_status`/`received_quantity`/
+     * `remaining_quantity` remain purely derived, never columns.
+     */
     public function test_st13_no_fulfillment_fields_or_tables(): void
     {
-        $this->assertFalse(Schema::hasTable('goods_receipts'));
-        $this->assertFalse(Schema::hasTable('goods_receipt_items'));
         $this->assertFalse(Schema::hasColumn('purchase_orders', 'fulfillment_status'));
         $this->assertFalse(Schema::hasColumn('purchase_order_items', 'received_quantity'));
         $this->assertFalse(Schema::hasColumn('purchase_order_items', 'remaining_quantity'));

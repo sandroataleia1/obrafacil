@@ -3,6 +3,7 @@
 namespace App\Purchases;
 
 use App\Enums\PurchaseOrderCommercialStatus;
+use App\Models\GoodsReceipt;
 use App\Models\Project;
 use App\Models\PurchaseOrder;
 use App\Models\Supplier;
@@ -181,6 +182,20 @@ class PurchaseOrderService
             if ($locked->commercial_status !== PurchaseOrderCommercialStatus::Draft) {
                 throw ValidationException::withMessages([
                     'commercial_status' => 'Somente pedidos em rascunho podem ser excluídos.',
+                ]);
+            }
+
+            // SUPPLY-API-01D §48: defense-in-depth — return-to-draft
+            // already refuses to reopen a draft with any GoodsReceipt
+            // (PurchaseOrderStatusService::returnToDraft()), so this
+            // should be structurally unreachable in the normal flow. Kept
+            // anyway so a draft delete never depends solely on that other
+            // guard's history being perfect, and never surfaces a raw FK
+            // exception if it ever were reachable.
+            $hasGoodsReceipts = GoodsReceipt::query()->where('purchase_order_id', $locked->id)->exists();
+            if ($hasGoodsReceipts) {
+                throw ValidationException::withMessages([
+                    'commercial_status' => 'Este pedido possui recebimentos registrados e não pode ser excluído.',
                 ]);
             }
 

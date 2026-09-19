@@ -38,6 +38,17 @@ class PurchaseOrder extends Model
 
     protected $dateFormat = 'Y-m-d H:i:s.u';
 
+    /**
+     * SUPPLY-API-01D §62. A real PHP property, NOT an Eloquent attribute
+     * — assigning it goes straight to this declared property, bypassing
+     * Model::__set()/setAttribute() entirely, so it is never marked
+     * dirty and never written by save()/touch(). Populated by
+     * App\Purchases\PurchaseOrderFulfillmentService::attachToOrders()
+     * before a Resource reads it; never persisted, never accepted from a
+     * request.
+     */
+    public ?string $fulfillmentStatus = null;
+
     protected function casts(): array
     {
         return [
@@ -60,6 +71,19 @@ class PurchaseOrder extends Model
     public function items(): HasMany
     {
         return $this->hasMany(PurchaseOrderItem::class);
+    }
+
+    /**
+     * SUPPLY-API-01D §31/§33. The full physical (receipt) history,
+     * ordered chronologically — received_at ASC, then created_at ASC,
+     * then id ASC as a final deterministic tiebreak.
+     */
+    public function goodsReceipts(): HasMany
+    {
+        return $this->hasMany(GoodsReceipt::class)
+            ->orderBy('received_at')
+            ->orderBy('created_at')
+            ->orderBy('id');
     }
 
     /**

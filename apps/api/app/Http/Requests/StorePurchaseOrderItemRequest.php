@@ -28,6 +28,9 @@ class StorePurchaseOrderItemRequest extends FormRequest
             'unit_code' => ['prohibited'],
             'unit_custom_label' => ['prohibited'],
             'line_total' => ['prohibited'],
+            'received_quantity' => ['prohibited'],
+            'remaining_quantity' => ['prohibited'],
+            'fulfillment_status' => ['prohibited'],
             'created_at' => ['prohibited'],
             'updated_at' => ['prohibited'],
 

@@ -3,6 +3,7 @@
 namespace App\Purchases;
 
 use App\Enums\PurchaseOrderCommercialStatus;
+use App\Models\GoodsReceipt;
 use App\Models\PurchaseOrder;
 use App\Purchases\Exceptions\PurchaseOrderConcurrencyConflictException;
 use App\Purchases\Exceptions\PurchaseOrderStatusConflictException;
@@ -23,10 +24,17 @@ use Illuminate\Validation\ValidationException;
  *
  * §65: confirm() loads Items fresh from the DB, inside the same
  * lock/transaction — never trusts an array the caller might pass in.
+ *
+ * SUPPLY-API-01D §43-45/§62: `returnToDraft()`/`cancel()` both consult
+ * GoodsReceipt/fulfillment state fresh from the DB, inside the same Order
+ * lock — never a `hasGoodsReceipts` flag from the frontend (§44).
  */
 class PurchaseOrderStatusService
 {
-    public function __construct(private readonly PurchaseOrderLocker $locker) {}
+    public function __construct(
+        private readonly PurchaseOrderLocker $locker,
+        private readonly PurchaseOrderFulfillmentService $fulfillmentService,
+    ) {}
 
     public function confirm(PurchaseOrder|string $purchaseOrder, string $providedUpdatedAt): PurchaseOrder
     {
@@ -71,6 +79,19 @@ class PurchaseOrderStatusService
                 throw new PurchaseOrderStatusConflictException('Este pedido já está cancelado.');
             }
 
+            // SUPPLY-API-01D §45: a fully-received ordered Order cannot
+            // be cancelled — partial and not_received both remain
+            // cancellable (§46: the remaining quantity stays
+            // mathematically derived, cancellation doesn't rewrite it).
+            if ($locked->commercial_status === PurchaseOrderCommercialStatus::Ordered) {
+                $locked->loadMissing('items');
+                $status = $this->fulfillmentService->computeAndAttach($locked);
+
+                if ($status === PurchaseOrderFulfillmentService::RECEIVED) {
+                    throw new PurchaseOrderStatusConflictException('Este pedido já foi totalmente recebido.');
+                }
+            }
+
             $locked->commercial_status = PurchaseOrderCommercialStatus::Cancelled;
             $locked->save();
 
@@ -86,6 +107,16 @@ class PurchaseOrderStatusService
 
             if (! in_array($locked->commercial_status, [PurchaseOrderCommercialStatus::Ordered, PurchaseOrderCommercialStatus::Cancelled], true)) {
                 throw new PurchaseOrderStatusConflictException('Este pedido já está em rascunho.');
+            }
+
+            // SUPPLY-API-01D §43/§47: any physical receipt (ordered OR
+            // cancelled) blocks a return to draft — physical history
+            // never gets silently reopened as a commercial draft.
+            $hasGoodsReceipts = GoodsReceipt::query()->where('purchase_order_id', $locked->id)->exists();
+            if ($hasGoodsReceipts) {
+                throw new PurchaseOrderStatusConflictException(
+                    'Este pedido possui recebimentos registrados e não pode voltar para rascunho. Remova os recebimentos primeiro.'
+                );
             }
 
             $locked->commercial_status = PurchaseOrderCommercialStatus::Draft;

@@ -221,14 +221,34 @@ inventing new ones.
   (`updated_at`) now uses a monotonic timestamp
   (`PurchaseOrderVersionClock`, microsecond-precision columns) so two
   mutations can never share an indistinguishable version.
+- **Update (SUPPLY-API-01D)**: `GoodsReceipt`/`GoodsReceiptItem` now exist
+  — the PHYSICAL fact, deliberately separate from the commercial
+  (`PurchaseOrder`) and future financial (`Payable`) facts. A GoodsReceipt
+  is an immutable event (create/delete only, no PUT/PATCH, no human
+  number). Over-receipt is impossible by construction (checked against
+  currently-persisted totals, inside the same PurchaseOrder row lock every
+  other writer already shares). `fulfillment_status`/`received_quantity`/
+  `remaining_quantity` are always derived
+  (`PurchaseOrderFulfillmentService`), never persisted columns.
+  `commercial_status` never auto-completes from fulfillment — a fully
+  received Order stays `ordered` until an explicit action changes it.
+  GoodsReceipt existence now blocks `return-to-draft`; full receipt blocks
+  `cancel`/adding new Items; any receipt on an Item blocks that Item's
+  delete and freezes its quantity. `GoodsReceiptService` does NOT extend
+  `MaterialService::hasDependents()` — `PurchaseOrderItem` already covers
+  that transitively, so no duplicate/parallel dependency check was added.
+  `SUPPLY-API-01E` will add the chronology guard before a GoodsReceipt can
+  be deleted once `MaterialConsumption`/`StockAdjustment` exist — not
+  implemented here (no fake guard against tables that don't exist yet).
 
 ## Deferred to later gates
 
 - `MaterialRequirement` (SUPPLY-API-01B) — DONE.
 - `PurchaseOrder`/`PurchaseOrderItem`, including the `PC-000001` number
   allocator and the draft-only DELETE (SUPPLY-API-01C) — DONE.
-- `GoodsReceipt`/`GoodsReceiptItem`, including the over-receipt
-  concurrency guard (SUPPLY-API-01D).
+- `GoodsReceipt`/`GoodsReceiptItem` (SUPPLY-API-01D) — DONE. The
+  over-receipt concurrency guard shipped with it; the DELETE chronology
+  guard remains deferred to SUPPLY-API-01E (see above).
 - `MaterialConsumption`/`StockAdjustment`/the Stock read model
   (SUPPLY-API-01E).
 - Any Purchase→Payable automation (explicitly out of scope indefinitely

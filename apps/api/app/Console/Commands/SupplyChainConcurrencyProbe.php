@@ -9,6 +9,7 @@ use App\Models\Material;
 use App\Models\Project;
 use App\Models\PurchaseOrder;
 use App\Models\Supplier;
+use App\Purchases\GoodsReceiptService;
 use App\Purchases\PurchaseOrderItemService;
 use App\Purchases\PurchaseOrderLocker;
 use App\Purchases\PurchaseOrderService;
@@ -40,18 +41,20 @@ class SupplyChainConcurrencyProbe extends Command
 {
     protected $signature = 'concurrency:supply
         {company : Company UUID}
-        {action : create-order|create-requirement|create-item|delete-material|confirm-order|delete-item|update-header|update-item|update-material-unit|delete-supplier|change-order-supplier}
+        {action : create-order|create-requirement|create-item|delete-material|confirm-order|delete-item|update-header|update-item|update-material-unit|delete-supplier|change-order-supplier|create-receipt|cancel-order|return-to-draft-order}
         {--project= : Project UUID}
         {--supplier= : Supplier UUID}
         {--material= : Material UUID}
         {--order= : PurchaseOrder UUID}
         {--item= : PurchaseOrderItem UUID}
+        {--receipt= : GoodsReceipt UUID}
         {--updated-at= : updated_at precondition}
-        {--quantity=1.000 : quantity (create-requirement/create-item/update-item)}
+        {--quantity=1.000 : quantity (create-requirement/create-item/update-item/create-receipt)}
         {--unit-price=10.00 : unit_price (create-item/update-item)}
         {--notes=probe : notes (update-header)}
         {--unit-code=un : unit_code (update-material-unit)}
-        {--hold-ms=0 : milliseconds to sleep AFTER acquiring the row lock, BEFORE writing (update-header/update-item)}
+        {--received-at= : received_at (create-receipt), defaults to today}
+        {--hold-ms=0 : milliseconds to sleep AFTER acquiring the row lock, BEFORE writing (update-header/update-item/confirm-order/cancel-order/return-to-draft-order)}
     ';
 
     protected $description = 'SUPPLY-API-01C test harness — performs one supply-chain action in its own real DB connection/process.';
@@ -63,6 +66,7 @@ class SupplyChainConcurrencyProbe extends Command
         PurchaseOrderItemService $itemService,
         PurchaseOrderStatusService $statusService,
         SupplierService $supplierService,
+        GoodsReceiptService $goodsReceiptService,
         PurchaseOrderLocker $locker,
     ): int {
         if (! app()->environment(['local', 'testing'])) {
@@ -79,9 +83,9 @@ class SupplyChainConcurrencyProbe extends Command
 
         try {
             app(CurrentCompanyContext::class)->run($company, function () use (
-                $materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $locker, $action, &$result
+                $materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $goodsReceiptService, $locker, $action, &$result
             ) {
-                $result['outcome'] = $this->dispatch($materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $locker, $action, $result);
+                $result['outcome'] = $this->dispatch($materialService, $requirementService, $orderService, $itemService, $statusService, $supplierService, $goodsReceiptService, $locker, $action, $result);
             });
 
             $result['status'] ??= 'ok';
@@ -108,6 +112,7 @@ class SupplyChainConcurrencyProbe extends Command
         PurchaseOrderItemService $itemService,
         PurchaseOrderStatusService $statusService,
         SupplierService $supplierService,
+        GoodsReceiptService $goodsReceiptService,
         PurchaseOrderLocker $locker,
         string $action,
         array &$result,
@@ -234,6 +239,48 @@ class SupplyChainConcurrencyProbe extends Command
                 ]);
 
                 return ['supplier_id' => $order->supplier_id];
+
+            case 'create-receipt':
+                $order = PurchaseOrder::query()->findOrFail((string) $this->option('order'));
+                $receivedAt = (string) $this->option('received-at');
+                $receipt = $goodsReceiptService->create($order, [
+                    'received_at' => $receivedAt !== '' ? $receivedAt : now()->toDateString(),
+                    'items' => [
+                        ['purchase_order_item_id' => (string) $this->option('item'), 'quantity' => (string) $this->option('quantity')],
+                    ],
+                ]);
+
+                return ['id' => $receipt->id];
+
+            case 'cancel-order':
+                return DB::transaction(function () use ($statusService, $locker, &$result) {
+                    $locker->lock((string) $this->option('order'));
+                    $result['locked_at'] = microtime(true);
+
+                    $holdMs = (int) $this->option('hold-ms');
+                    if ($holdMs > 0) {
+                        usleep($holdMs * 1000);
+                    }
+
+                    $order = $statusService->cancel((string) $this->option('order'), (string) $this->option('updated-at'));
+
+                    return ['commercial_status' => $order->commercial_status->value];
+                });
+
+            case 'return-to-draft-order':
+                return DB::transaction(function () use ($statusService, $locker, &$result) {
+                    $locker->lock((string) $this->option('order'));
+                    $result['locked_at'] = microtime(true);
+
+                    $holdMs = (int) $this->option('hold-ms');
+                    if ($holdMs > 0) {
+                        usleep($holdMs * 1000);
+                    }
+
+                    $order = $statusService->returnToDraft((string) $this->option('order'), (string) $this->option('updated-at'));
+
+                    return ['commercial_status' => $order->commercial_status->value];
+                });
 
             default:
                 throw new InvalidArgumentException("Unknown action [{$action}].");

@@ -13,6 +13,12 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * `items` relation (quantity/unit_price only) — never a per-row N+1 query,
  * and never `round(SUM(...))` (§61: summed AFTER each line is rounded).
  *
+ * SUPPLY-API-01D §30/§62: `fulfillment_status` is derived (App\Purchases\
+ * PurchaseOrderFulfillmentService) — the controller MUST have already
+ * called `attachToOrders()` on the whole paginated collection (one
+ * aggregate query total, never one per row) before wrapping it here. The
+ * full Receipt history is deliberately NOT included in the list (§30).
+ *
  * @mixin PurchaseOrder
  */
 class PurchaseOrderListResource extends JsonResource
@@ -32,6 +38,7 @@ class PurchaseOrderListResource extends JsonResource
             'id' => $this->id,
             'number' => $this->formattedNumber(),
             'commercial_status' => $this->commercial_status->value,
+            'fulfillment_status' => $this->fulfillmentStatus,
             'supplier' => [
                 'id' => $this->supplier->id,
                 'name' => $this->supplier->name,

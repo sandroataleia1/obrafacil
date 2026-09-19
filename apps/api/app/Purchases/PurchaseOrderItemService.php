@@ -24,12 +24,22 @@ use Illuminate\Validation\ValidationException;
  * the INSERT that can trigger `purchase_order_items_order_material_unique`
  * — runs inside one `DB::transaction()`, so a caught 23505 never poisons
  * an outer transaction.
+ *
+ * SUPPLY-API-01D §35-40: since GoodsReceiptService ALSO locks the parent
+ * Order first (§14/§58), every guard here that reads a received quantity
+ * (`PurchaseOrderFulfillmentService::receivedQuantityForItem()`) is
+ * automatically race-safe against a concurrent GoodsReceipt create for
+ * the same Item — both serialize on the same PurchaseOrder row lock
+ * (§41/§42).
  */
 class PurchaseOrderItemService
 {
     private const string ORDER_MATERIAL_UNIQUE_CONSTRAINT = 'purchase_order_items_order_material_unique';
 
-    public function __construct(private readonly PurchaseOrderLocker $locker) {}
+    public function __construct(
+        private readonly PurchaseOrderLocker $locker,
+        private readonly PurchaseOrderFulfillmentService $fulfillmentService,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $validated
@@ -40,6 +50,7 @@ class PurchaseOrderItemService
             return DB::transaction(function () use ($purchaseOrder, $validated) {
                 $lockedOrder = $this->locker->lock($purchaseOrder);
                 $this->assertItemsMutable($lockedOrder);
+                $this->assertOrderNotFullyReceived($lockedOrder);
 
                 // §44: locked (not a plain find()) so a concurrent
                 // MaterialService::delete() for this same Material
@@ -97,9 +108,15 @@ class PurchaseOrderItemService
             $unitPrice = Money::normalize((string) $validated['unit_price']);
             $this->assertUnitPriceValidForStatus($lockedOrder, $unitPrice);
 
+            // §36/§62: the received total is always read fresh from the
+            // DB inside this same lock — never accepted from the request.
+            $receivedQuantity = $this->fulfillmentService->receivedQuantityForItem($lockedItem);
+            $newQuantity = Quantity::normalize((string) $validated['quantity']);
+            $this->assertQuantityChangeAllowed($lockedItem, $receivedQuantity, $newQuantity);
+
             $lockedItem->fill([
                 'description' => $validated['description'],
-                'quantity' => $validated['quantity'],
+                'quantity' => $newQuantity,
                 'unit_price' => $unitPrice,
             ]);
             $lockedItem->save();
@@ -118,6 +135,17 @@ class PurchaseOrderItemService
 
             $itemId = $item instanceof PurchaseOrderItem ? $item->id : $item;
             $lockedItem = $lockedOrder->items()->whereKey($itemId)->firstOrFail();
+
+            // SUPPLY-API-01D §40/§42: an Item with any physical receipt
+            // can never be deleted — checked fresh from the DB, inside
+            // the same Order lock a concurrent GoodsReceipt create also
+            // takes, so the two can never race to a corrupt outcome.
+            $receivedQuantity = $this->fulfillmentService->receivedQuantityForItem($lockedItem);
+            if (Quantity::compare($receivedQuantity, '0.000') > 0) {
+                throw ValidationException::withMessages([
+                    'item' => 'Este item já possui material recebido.',
+                ]);
+            }
 
             // §33/§46: an ordered Order must never end up with zero items
             // — this check runs against the count taken AFTER the parent
@@ -149,6 +177,63 @@ class PurchaseOrderItemService
             throw new PurchaseOrderStatusConflictException(
                 'Este pedido está cancelado e seus itens não podem ser alterados.'
             );
+        }
+    }
+
+    /**
+     * SUPPLY-API-01D §35: a fully-received `ordered` Order accepts no new
+     * items — draft is unaffected (fulfillment is meaningless before
+     * confirmation), and cancelled is already blocked by
+     * assertItemsMutable().
+     */
+    private function assertOrderNotFullyReceived(PurchaseOrder $order): void
+    {
+        if ($order->commercial_status !== PurchaseOrderCommercialStatus::Ordered) {
+            return;
+        }
+
+        $order->loadMissing('items');
+        $status = $this->fulfillmentService->computeAndAttach($order);
+
+        if ($status === PurchaseOrderFulfillmentService::RECEIVED) {
+            throw new PurchaseOrderStatusConflictException(
+                'Este pedido já foi totalmente recebido e não aceita novos itens.'
+            );
+        }
+    }
+
+    /**
+     * SUPPLY-API-01D §37-39: encodes the three possible receipt states
+     * for a single Item's quantity edit —
+     *   - zero received: free to change to anything > 0 (§39, already
+     *     enforced by the FormRequest's own gt:0 rule).
+     *   - partially received: may rise freely, may fall no lower than
+     *     what's already been physically received (§38).
+     *   - fully received: frozen — the new value must equal the current
+     *     one exactly, neither direction (§37).
+     */
+    private function assertQuantityChangeAllowed(PurchaseOrderItem $item, string $receivedQuantity, string $newQuantity): void
+    {
+        if (Quantity::compare($receivedQuantity, '0.000') <= 0) {
+            return;
+        }
+
+        $orderedQuantity = Quantity::normalize((string) $item->quantity);
+
+        if (Quantity::compare($receivedQuantity, $orderedQuantity) >= 0) {
+            if (Quantity::compare($newQuantity, $orderedQuantity) !== 0) {
+                throw ValidationException::withMessages([
+                    'quantity' => 'Este item já foi totalmente recebido e sua quantidade não pode ser alterada.',
+                ]);
+            }
+
+            return;
+        }
+
+        if (Quantity::compare($newQuantity, $receivedQuantity) < 0) {
+            throw ValidationException::withMessages([
+                'quantity' => 'A quantidade não pode ser menor que o total já recebido para este item.',
+            ]);
         }
     }
 

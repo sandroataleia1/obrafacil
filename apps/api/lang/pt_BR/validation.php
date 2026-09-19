@@ -236,6 +236,9 @@ return [
         'order_date' => 'data do pedido',
         'expected_delivery_date' => 'previsão de entrega',
         'commercial_status' => 'status',
+        'received_at' => 'data do recebimento',
+        'items' => 'itens',
+        'purchase_order_item_id' => 'item do pedido',
     ],
 
 ];

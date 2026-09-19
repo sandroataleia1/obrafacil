@@ -10,6 +10,10 @@ use Illuminate\Foundation\Http\FormRequest;
  * `purchase_order_id` are immutable — once created, a wrong Material means
  * delete-and-recreate, never edit-in-place (mirrors MaterialRequirement's
  * own §11 rule).
+ *
+ * SUPPLY-API-01D §62: `received_quantity`/`remaining_quantity`/
+ * `fulfillment_status` are always derived — explicitly prohibited here so
+ * a hostile/stale value in the payload can never even reach the Service.
  */
 class UpdatePurchaseOrderItemRequest extends FormRequest
 {
@@ -31,6 +35,9 @@ class UpdatePurchaseOrderItemRequest extends FormRequest
             'unit_code' => ['prohibited'],
             'unit_custom_label' => ['prohibited'],
             'line_total' => ['prohibited'],
+            'received_quantity' => ['prohibited'],
+            'remaining_quantity' => ['prohibited'],
+            'fulfillment_status' => ['prohibited'],
             'created_at' => ['prohibited'],
 
             'description' => ['required', 'string', 'max:255'],

@@ -10,6 +10,7 @@ use App\Http\Requests\UpdatePurchaseOrderRequest;
 use App\Http\Resources\PurchaseOrderListResource;
 use App\Http\Resources\PurchaseOrderResource;
 use App\Models\PurchaseOrder;
+use App\Purchases\PurchaseOrderFulfillmentService;
 use App\Purchases\PurchaseOrderService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -20,6 +21,13 @@ use Illuminate\Http\Response;
  * SUPPLY-API-01C §72. `{purchaseOrder}` is never implicitly bound — always
  * resolved explicitly via `PurchaseOrder::query()->findOrFail()`, after
  * `resolve-current-company` has run.
+ *
+ * SUPPLY-API-01D §29-31/§34/§62-63: every response that reaches a
+ * PurchaseOrder{List,}Resource/PurchaseOrderItemResource MUST first pass
+ * through `PurchaseOrderFulfillmentService::attachToOrders()` — this is
+ * the ONE place that happens for this controller, so fulfillment is never
+ * computed inline in a Resource (which would reintroduce N+1) nor
+ * skipped.
  */
 class PurchaseOrderController extends Controller
 {
@@ -27,7 +35,10 @@ class PurchaseOrderController extends Controller
 
     private const int MAX_PER_PAGE = 100;
 
-    public function __construct(private readonly PurchaseOrderService $service) {}
+    public function __construct(
+        private readonly PurchaseOrderService $service,
+        private readonly PurchaseOrderFulfillmentService $fulfillmentService,
+    ) {}
 
     public function index(ListPurchaseOrderRequest $request): AnonymousResourceCollection
     {
@@ -59,6 +70,9 @@ class PurchaseOrderController extends Controller
             ->paginate($perPage)
             ->withQueryString();
 
+        // §30/§63: ONE aggregate query for the whole page, never one per row.
+        $this->fulfillmentService->attachToOrders($purchaseOrders->getCollection());
+
         return PurchaseOrderListResource::collection($purchaseOrders);
     }
 
@@ -66,14 +80,16 @@ class PurchaseOrderController extends Controller
     {
         $purchaseOrder = $this->service->create($request->validated());
 
-        return (new PurchaseOrderResource($purchaseOrder->load('items.material')))->response()->setStatusCode(201);
+        return (new PurchaseOrderResource($this->loadForDetail($purchaseOrder)))->response()->setStatusCode(201);
     }
 
     public function show(string $purchaseOrder): PurchaseOrderResource
     {
         $purchaseOrderModel = PurchaseOrder::query()
-            ->with(['supplier', 'project', 'items.material'])
+            ->with(['supplier', 'project', 'items.material', 'goodsReceipts.items'])
             ->findOrFail($purchaseOrder);
+
+        $this->fulfillmentService->computeAndAttach($purchaseOrderModel);
 
         return new PurchaseOrderResource($purchaseOrderModel);
     }
@@ -83,7 +99,7 @@ class PurchaseOrderController extends Controller
         $purchaseOrderModel = PurchaseOrder::query()->findOrFail($purchaseOrder);
         $purchaseOrderModel = $this->service->updateHeader($purchaseOrderModel, $request->validated());
 
-        return new PurchaseOrderResource($purchaseOrderModel->load('items.material'));
+        return new PurchaseOrderResource($this->loadForDetail($purchaseOrderModel));
     }
 
     public function destroy(DeletePurchaseOrderRequest $request, string $purchaseOrder): Response
@@ -92,6 +108,14 @@ class PurchaseOrderController extends Controller
         $this->service->deleteDraft($purchaseOrderModel, $request->validated('updated_at'));
 
         return response()->noContent();
+    }
+
+    private function loadForDetail(PurchaseOrder $purchaseOrder): PurchaseOrder
+    {
+        $purchaseOrder->load(['items.material', 'goodsReceipts.items']);
+        $this->fulfillmentService->computeAndAttach($purchaseOrder);
+
+        return $purchaseOrder;
     }
 
     private function applySearch(Builder $query, ?string $search): void

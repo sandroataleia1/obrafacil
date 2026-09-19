@@ -31,6 +31,14 @@ class PurchaseOrderItem extends Model
     /** SUPPLY-API-01C1 §11-13/§16: its own updated_at is the item's optimistic-concurrency version. */
     protected $dateFormat = 'Y-m-d H:i:s.u';
 
+    /**
+     * SUPPLY-API-01D §62. A real PHP property, NOT an Eloquent attribute
+     * — see PurchaseOrder::$fulfillmentStatus for the full rationale.
+     *
+     * @var array{received_quantity: string, remaining_quantity: string, fulfillment_status: string}|null
+     */
+    public ?array $fulfillment = null;
+
     protected function casts(): array
     {
         return [

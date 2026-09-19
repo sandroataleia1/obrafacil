@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\CustomerAddressController;
 use App\Http\Controllers\Api\V1\CustomerContactController;
 use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\EvolutionWebhookController;
+use App\Http\Controllers\Api\V1\GoodsReceiptController;
 use App\Http\Controllers\Api\V1\LoginController;
 use App\Http\Controllers\Api\V1\LogoutController;
 use App\Http\Controllers\Api\V1\MaterialController;
@@ -171,6 +172,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/v1/purchase-orders/{purchaseOrder}/items', [PurchaseOrderItemController::class, 'store']);
         Route::put('/v1/purchase-orders/{purchaseOrder}/items/{item}', [PurchaseOrderItemController::class, 'update']);
         Route::delete('/v1/purchase-orders/{purchaseOrder}/items/{item}', [PurchaseOrderItemController::class, 'destroy']);
+
+        Route::post('/v1/purchase-orders/{purchaseOrder}/goods-receipts', [GoodsReceiptController::class, 'store']);
+        Route::delete('/v1/purchase-orders/{purchaseOrder}/goods-receipts/{goodsReceipt}', [GoodsReceiptController::class, 'destroy']);
 
         Route::middleware('throttle:lookups')->group(function () {
             Route::get('/v1/lookups/cep', [PostalCodeLookupController::class, 'show']);
