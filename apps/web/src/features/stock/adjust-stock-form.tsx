@@ -8,8 +8,8 @@ import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
 import { todayIso } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
-import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { getMaterial, listMaterials } from "@/features/materials/prototype/material-store";
+import { formatMaterialUnitCode } from "@/features/materials/material-unit";
+import { useAllMaterials } from "@/features/materials/use-all-materials";
 import { useAllProjects } from "@/features/projects/use-all-projects";
 import { createStockAdjustment, getStockBalance } from "./prototype/stock";
 import type { StockAdjustmentType } from "./types";
@@ -75,15 +75,21 @@ export function AdjustStockForm() {
     rawProjectId && !projectsError && (allProjects === undefined || projects.some((project) => project.id === rawProjectId))
       ? rawProjectId
       : null;
+
+  const { materials: allMaterials, error: materialsError } = useAllMaterials();
+  const materials = allMaterials ?? [];
+  // Same optimistic-until-confirmed-wrong rule as `validProjectId` above:
+  // while `allMaterials` is still loading, a rawMaterialId is
+  // provisionally treated as valid.
   const fixedMaterialId =
-    validProjectId && rawMaterialId && getMaterial(rawMaterialId) ? rawMaterialId : null;
+    validProjectId && rawMaterialId && !materialsError && (allMaterials === undefined || materials.some((material) => material.id === rawMaterialId))
+      ? rawMaterialId
+      : null;
   // Only a full projectId+materialId pair (opened from a specific
   // detail page) locks the Obra field too — a lone projectId (opened
   // from the listing with an Obra filter active) is a prefill only.
   const fixedProjectId = fixedMaterialId ? validProjectId : null;
   const initialProjectId = validProjectId;
-
-  const materials = listMaterials();
 
   const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId ?? "");
   const [selectedMaterialId, setSelectedMaterialId] = useState(fixedMaterialId ?? "");
@@ -107,8 +113,8 @@ export function AdjustStockForm() {
   const effectiveProjectId = fixedProjectId ?? selectedProjectId;
   const effectiveMaterialId = fixedMaterialId ?? selectedMaterialId;
   const project = effectiveProjectId ? (projects.find((item) => item.id === effectiveProjectId) ?? null) : null;
-  const material = effectiveMaterialId ? getMaterial(effectiveMaterialId) : null;
-  const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : null;
+  const material = effectiveMaterialId ? (materials.find((item) => item.id === effectiveMaterialId) ?? null) : null;
+  const unitLabel = material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : null;
   const currentBalance =
     project && material ? getStockBalance(effectiveProjectId, effectiveMaterialId) : null;
 
@@ -138,14 +144,17 @@ export function AdjustStockForm() {
       return;
     }
 
-    const result = createStockAdjustment({
-      projectId: effectiveProjectId,
-      materialId: effectiveMaterialId,
-      type,
-      quantity,
-      occurredAt,
-      reason,
-    });
+    const result = createStockAdjustment(
+      {
+        projectId: effectiveProjectId,
+        materialId: effectiveMaterialId,
+        type,
+        quantity,
+        occurredAt,
+        reason,
+      },
+      Boolean(material)
+    );
     if (!result.ok) {
       setError(result.error);
       return;
@@ -221,6 +230,11 @@ export function AdjustStockForm() {
                 </option>
               ))}
             </select>
+            {materialsError ? (
+              <p className="text-xs text-destructive">Não foi possível carregar os materiais agora.</p>
+            ) : allMaterials === undefined ? (
+              <p className="text-xs text-muted-foreground">Carregando materiais...</p>
+            ) : null}
           </div>
         )}
 

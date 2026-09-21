@@ -17,12 +17,12 @@ import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purc
 import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
 import { calculateMaterialPlanning, type MaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
-import { formatMaterialUnit } from "./material-unit";
-import { getMaterial } from "./prototype/material-store";
+import { formatMaterialUnitCode } from "./material-unit";
+import { useAllMaterials } from "./use-all-materials";
 import { listConsumptionsByProject } from "./prototype/material-consumption-store";
 import { removeMaterialConsumption } from "./prototype/material-consumption";
 import { useRequirements } from "./prototype/use-requirements";
-import type { Material, MaterialConsumption, MaterialRequirement } from "./types";
+import type { MaterialConsumption, MaterialListItem, MaterialRequirement } from "./types";
 
 function PlanningRow({
   label,
@@ -100,7 +100,7 @@ function MaterialPlanningCard({
 }: {
   projectId: string;
   materialId: string;
-  material: Material | null;
+  material: MaterialListItem | null;
   requirement: MaterialRequirement | null;
   planning: MaterialPlanning;
   consumptions: MaterialConsumption[];
@@ -108,7 +108,7 @@ function MaterialPlanningCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : "";
+  const unitLabel = material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : "";
   const needsPurchase = Boolean(planning.remainingToBuy && planning.remainingToBuy > 0);
 
   return (
@@ -121,8 +121,8 @@ function MaterialPlanningCard({
       >
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-foreground">
-            {material?.name ?? "Material não encontrado"}
-            {material?.status === "inactive" ? (
+            {material?.name ?? "Material indisponível"}
+            {material && !material.active ? (
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">(inativo)</span>
             ) : null}
           </p>
@@ -238,6 +238,8 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { project, error: projectError, reload: reloadProject } = useProject(projectId);
   const { requirements } = useRequirements(projectId);
+  const { materials: allMaterials } = useAllMaterials();
+  const materialById = new Map((allMaterials ?? []).map((material) => [material.id, material]));
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
   const [purchaseOrderItems, setPurchaseOrderItems] = useState<PurchaseOrderItem[] | undefined>(
     undefined
@@ -368,7 +370,7 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
                 key={materialId}
                 projectId={projectId}
                 materialId={materialId}
-                material={getMaterial(materialId)}
+                material={materialById.get(materialId) ?? null}
                 requirement={requirement}
                 planning={planning}
                 consumptions={materialConsumptions}

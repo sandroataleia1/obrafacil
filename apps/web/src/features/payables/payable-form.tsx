@@ -27,7 +27,8 @@ import { calculatePurchaseOrderTotal } from "@/features/purchases/prototype/purc
 import { calculatePurchaseFinancialSummary } from "@/features/purchases/prototype/purchase-financial-summary";
 import { generatePayableFromPurchaseOrder } from "@/features/purchases/prototype/purchase-payable";
 import type { PurchaseOrder } from "@/features/purchases/types";
-import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
+import { getSupplier } from "@/features/suppliers/suppliers-client";
+import { ApiError } from "@/lib/api-client";
 import type { Supplier } from "@/features/suppliers/types";
 import { createPayableId, listPayablesByOrigin, savePayable } from "./prototype/payable-store";
 import { updatePayable } from "./prototype/payable";
@@ -87,19 +88,33 @@ export function PayableForm({ payableId }: { payableId?: string }) {
       setPurchaseOrderContext(null);
       return;
     }
-    const supplierRecord = getSupplier(purchaseOrder.supplierId);
-    if (!supplierRecord) {
-      setPurchaseOrderContext(null);
-      return;
-    }
-    const purchaseTotal = calculatePurchaseOrderTotal(listItemsByPurchaseOrder(purchaseOrderId));
-    const existingPayables = listPayablesByOrigin("purchase-order", purchaseOrderId);
-    const summary = calculatePurchaseFinancialSummary(purchaseTotal, existingPayables);
-    setPurchaseOrderContext({
-      purchaseOrder,
-      supplier: supplierRecord,
-      uncoveredAmount: summary.uncoveredAmount,
-    });
+    // Supplier is now the real API master — resolved async. `cancelled`
+    // guards against writing state after this effect's own dependency
+    // (`purchaseOrderId`) has already changed/unmounted.
+    let cancelled = false;
+    getSupplier(purchaseOrder.supplierId)
+      .then((supplierRecord) => {
+        if (cancelled) return;
+        const purchaseTotal = calculatePurchaseOrderTotal(listItemsByPurchaseOrder(purchaseOrderId));
+        const existingPayables = listPayablesByOrigin("purchase-order", purchaseOrderId);
+        const summary = calculatePurchaseFinancialSummary(purchaseTotal, existingPayables);
+        setPurchaseOrderContext({
+          purchaseOrder,
+          supplier: supplierRecord,
+          uncoveredAmount: summary.uncoveredAmount,
+        });
+      })
+      .catch((fetchError: unknown) => {
+        if (cancelled) return;
+        if (fetchError instanceof ApiError && fetchError.status === 404) {
+          setPurchaseOrderContext(null);
+          return;
+        }
+        setPurchaseOrderContext(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [purchaseOrderId]);
 
   useEffect(() => {

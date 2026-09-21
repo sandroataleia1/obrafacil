@@ -1,39 +1,18 @@
 /**
- * UI/prototype models for the Materiais catalog and planned Obra
- * requirements.
+ * SUPPLY-FRONTEND-01A. `Material` (the master catalog) is now the real
+ * API domain contract — mirrors `App\Http\Resources\MaterialResource` /
+ * `MaterialListResource` and `Store`/`UpdateMaterialRequest` field-for-
+ * field (same discipline as `features/projects/types.ts`). Never invent
+ * a field here without a matching backend source.
  *
- * `Material` is a global catalog, shared across every Obra — the same
- * "Cimento CP-II" is the same physical material regardless of which
- * Obra buys it. Deliberately excludes price, stock, supplier, brand,
- * barcode, NCM, and average cost: none of those belong to a basic
- * catalog entry, and none have a real use case yet in this prototype.
- *
- * `defaultUnit` is the material's single operational unit. Task 040's
- * PurchaseOrderItem will snapshot this unit at the moment an item is
- * ordered — the same Material can never be represented in two
- * different units across the system, because there is no unit
- * conversion in this prototype (50 kg is never treated as "1 saco").
- *
- * `MaterialRequirement` is the planned need of one Material for one
- * Obra ("Obra A needs 100 sc of Cimento CP-II"). It stores nothing
- * derivable from Project/Material (no `projectName`/`materialName`/
- * `unit`) and nothing that depends on Purchase/Delivery/Consumption
- * entities that don't exist yet (`ordered`/`received`/`consumed`/
- * `remainingToBuy` are all future, derived-only figures).
- *
- * NOT the definitive domain contract for the future API — only exists
- * to validate the product experience with mocked/local data.
+ * `MaterialRequirement`/`MaterialConsumption` below are UNCHANGED — they
+ * remain a legacy frontend prototype child contract (localStorage,
+ * SUPPLY-FRONTEND-01B/01C will migrate them). The master Material itself
+ * is API-backed as of this gate; these children only ever store a
+ * `materialId` string and resolve the real identity via the API
+ * (`useMaterial`/`useAllMaterials`), never a second local Material model.
  */
 
-export type MaterialStatus = "active" | "inactive";
-
-/**
- * Controlled set of common construction units, plus "other" for the
- * rare case not covered (e.g. "rolo", "milheiro", "barra"). "other"
- * always carries `customLabel` — the free text is preserved, never
- * collapsed into a generic "outro" string. No unit conversion exists
- * between any of these.
- */
 export const MATERIAL_UNIT_CODES = [
   "un",
   "kg",
@@ -60,29 +39,74 @@ export const MATERIAL_UNIT_CODE_LABEL: Record<Exclude<MaterialUnitCode, "other">
   cx: "caixa",
 };
 
-export interface MaterialUnit {
-  code: MaterialUnitCode;
-  /** Only meaningful (and required in practice) when `code === "other"`. */
-  customLabel?: string;
-}
-
+/** GET/POST/PUT /api/v1/materials/{material} — full detail. */
 export interface Material {
   id: string;
   name: string;
-
-  defaultUnit: MaterialUnit;
-
-  notes?: string;
-  status: MaterialStatus;
-
-  createdAt: string;
-  updatedAt: string;
+  unit_code: MaterialUnitCode;
+  unit_custom_label: string | null;
+  notes: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-export const MATERIAL_STATUS_LABEL: Record<MaterialStatus, string> = {
-  active: "Ativo",
-  inactive: "Inativo",
-};
+/** A row from GET /api/v1/materials — lean shape, mirrors MaterialListResource. */
+export interface MaterialListItem {
+  id: string;
+  name: string;
+  unit_code: MaterialUnitCode;
+  unit_custom_label: string | null;
+  active: boolean;
+  updated_at: string;
+}
+
+/** Laravel's default paginate() JSON shape. */
+export interface MaterialPaginationResponse {
+  data: MaterialListItem[];
+  meta: {
+    current_page: number;
+    from: number | null;
+    last_page: number;
+    per_page: number;
+    to: number | null;
+    total: number;
+  };
+  links: {
+    first: string | null;
+    last: string | null;
+    prev: string | null;
+    next: string | null;
+  };
+}
+
+/**
+ * POST /api/v1/materials. Never `id`/`company_id`/`created_at`/
+ * `updated_at` — `active` defaults to `true` server-side when omitted.
+ */
+export interface MaterialCreatePayload {
+  name: string;
+  unit_code: MaterialUnitCode;
+  unit_custom_label?: string | null;
+  notes?: string | null;
+  active?: boolean;
+}
+
+/** PUT /api/v1/materials/{material} — `UpdateMaterialRequest` requires every field. */
+export interface MaterialUpdatePayload {
+  name: string;
+  unit_code: MaterialUnitCode;
+  unit_custom_label?: string | null;
+  notes?: string | null;
+  active: boolean;
+}
+
+export interface MaterialListParams {
+  search?: string;
+  page?: number;
+  perPage?: number;
+  active?: boolean;
+}
 
 export const MATERIAL_STATUS_FILTERS = ["all", "active", "inactive"] as const;
 export type MaterialStatusFilter = (typeof MATERIAL_STATUS_FILTERS)[number];
@@ -93,6 +117,25 @@ export const MATERIAL_STATUS_FILTER_LABEL: Record<MaterialStatusFilter, string> 
   inactive: "Inativos",
 };
 
+/**
+ * Legacy frontend prototype child snapshot shape — `PurchaseOrderItem`
+ * (still local prototype) snapshots a Material's unit at the moment an
+ * item is added, in this shape (distinct from the API's
+ * `unit_code`/`unit_custom_label` field names). Build one from a
+ * resolved API `Material` with
+ * `{ code: material.unit_code, customLabel: material.unit_custom_label ?? undefined }`.
+ */
+export interface MaterialUnit {
+  code: MaterialUnitCode;
+  customLabel?: string;
+}
+
+/**
+ * Legacy frontend prototype child contract (localStorage) — the master
+ * Material itself is API-backed (see `Material` above). Preserved
+ * unchanged in shape from before this gate; only `material.ts`'s
+ * synchronous `getMaterial()` lookups around it were removed.
+ */
 export interface MaterialRequirement {
   id: string;
 
@@ -108,19 +151,8 @@ export interface MaterialRequirement {
 }
 
 /**
- * A physical event: this much of a Material was used at a Project.
- * Nothing financial — no cost, no ProjectCost, no Payable. Belongs to
- * Project + Material only, not to a specific PurchaseOrder/GoodsReceipt
- * (received quantity is aggregated across every delivery of that
- * Material at that Project — no lot/FIFO tracking in this v1).
- *
- * Deliberately excludes projectName/materialName/unit (all resolved
- * transitively, same pattern as PurchaseOrder/GoodsReceipt) and
- * receivedQuantity/availableQuantity (always derived, never stored —
- * see `prototype/material-consumption.ts`).
- *
- * No edit in this v1 — to correct an entry, delete and register again
- * (same pattern as GoodsReceipt).
+ * Legacy frontend prototype child contract (localStorage) — same note
+ * as `MaterialRequirement` above.
  */
 export interface MaterialConsumption {
   id: string;

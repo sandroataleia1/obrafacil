@@ -34,8 +34,8 @@ import { listReceivablesByProject } from "@/features/receivables/prototype/recei
 import { listReceiptsByReceivable } from "@/features/receivables/prototype/receipt-store";
 import type { Receipt as ReceiptModel, Receivable } from "@/features/receivables/types";
 import { formatQuantity } from "@/lib/quantity";
-import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { getMaterial } from "@/features/materials/prototype/material-store";
+import { formatMaterialUnitCode } from "@/features/materials/material-unit";
+import { useAllMaterials } from "@/features/materials/use-all-materials";
 import { listRequirementsByProject } from "@/features/materials/prototype/material-requirement-store";
 import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
 import type { MaterialConsumption, MaterialRequirement } from "@/features/materials/types";
@@ -197,6 +197,7 @@ export function ProjectDetail({ id }: { id: string }) {
   const [statusActionError, setStatusActionError] = useState<string | null>(null);
 
   const { costs } = useProjectCosts(id);
+  const { materials: allMaterials } = useAllMaterials();
   const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
   const [receivables, setReceivables] = useState<Receivable[] | undefined>(undefined);
   const [receipts, setReceipts] = useState<ReceiptModel[] | undefined>(undefined);
@@ -559,7 +560,7 @@ export function ProjectDetail({ id }: { id: string }) {
           <div className="space-y-3">
             <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
               {requirements.map((requirement) => {
-                const material = getMaterial(requirement.materialId);
+                const material = (allMaterials ?? []).find((item) => item.id === requirement.materialId) ?? null;
                 const planning = calculateMaterialPlanning(
                   requirement.requiredQuantity,
                   purchaseOrders,
@@ -568,11 +569,11 @@ export function ProjectDetail({ id }: { id: string }) {
                   purchaseConsumptions,
                   requirement.materialId
                 );
-                const unitLabel = material ? formatMaterialUnit(material.defaultUnit) : "";
+                const unitLabel = material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : "";
                 return (
                   <MaterialSummaryItem
                     key={requirement.id}
-                    materialName={material?.name ?? "Material não encontrado"}
+                    materialName={material?.name ?? "Material indisponível"}
                     unitLabel={unitLabel}
                     planning={planning}
                   />

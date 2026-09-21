@@ -13,8 +13,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { todayIso } from "@/lib/date";
-import { listSuppliers } from "@/features/suppliers/prototype/supplier-store";
-import type { Supplier } from "@/features/suppliers/types";
+import { useAllSuppliers } from "@/features/suppliers/use-all-suppliers";
+import { useSupplier } from "@/features/suppliers/use-supplier";
 import { useAllProjects } from "@/features/projects/use-all-projects";
 import { createPurchaseOrder, updatePurchaseOrder } from "./prototype/purchase-order";
 import { usePurchaseOrder } from "./prototype/use-purchase-order";
@@ -30,7 +30,8 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
   const { purchaseOrder: existingPurchaseOrder } = usePurchaseOrder(purchaseOrderId ?? "");
   const isEditing = Boolean(purchaseOrderId);
 
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const { suppliers: allSuppliers, error: suppliersError } = useAllSuppliers();
+  const suppliers = allSuppliers ?? [];
   const { projects: allProjects, error: projectsError } = useAllProjects();
   const projects = allProjects ?? [];
   const [supplierId, setSupplierId] = useState(NONE);
@@ -40,25 +41,17 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // `?supplierId=` only pre-selects on create, and only for a Supplier that
+  // is actually confirmed present in the real API's result AND active — an
+  // inactive or unknown id is silently ignored rather than pre-selected
+  // (D008/§9: a deep link can't hand the form a supplier the picker itself
+  // would never offer, and never trusts the bare id while the API is down).
   useEffect(() => {
-    const loadedSuppliers = listSuppliers();
+    if (isEditing || !lockedSupplierId || allSuppliers === undefined) return;
+    const locked = allSuppliers.find((supplier) => supplier.id === lockedSupplierId);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSuppliers(loadedSuppliers);
-
-    // `?supplierId=` only pre-selects on create, and only for a Supplier
-    // that both exists and is active — an inactive or unknown id is
-    // silently ignored rather than pre-selected (D008 defense-in-depth:
-    // a deep link can't hand the form a supplier the picker itself would
-    // never offer). Editing an existing Purchase is seeded separately
-    // below, from the record itself, never from this query param.
-    if (!isEditing && lockedSupplierId) {
-      const locked = loadedSuppliers.find((supplier) => supplier.id === lockedSupplierId);
-      if (locked && locked.status === "active") {
-        setSupplierId(locked.id);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (locked && locked.active) setSupplierId(locked.id);
+  }, [lockedSupplierId, allSuppliers, isEditing]);
 
   // `?projectId=` only pre-selects on create, and only for a Project that
   // is actually confirmed present in the real API's result — never trust
@@ -92,8 +85,13 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
   // (`purchase-order.ts`) already blocks the same rule server-side; this
   // is only the UI half of that defense-in-depth pair.
   const selectableSuppliers = suppliers.filter(
-    (supplier) => supplier.status === "active" || supplier.id === existingPurchaseOrder?.supplierId
+    (supplier) => supplier.active || supplier.id === existingPurchaseOrder?.supplierId
   );
+
+  // Full resolved Supplier (not just the lean list row) for the domain
+  // function's own existence/active re-check — §53: a deep link or a
+  // stale selection can never slip an invented id past submit.
+  const { supplier: selectedSupplier } = useSupplier(supplierId === NONE ? "" : supplierId);
 
   function handleSubmit() {
     if (supplierId === NONE) {
@@ -102,6 +100,10 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
     }
     if (projectId === NONE) {
       setError("Selecione uma obra.");
+      return;
+    }
+    if (!selectedSupplier) {
+      setError("Não foi possível confirmar o fornecedor selecionado. Tente novamente.");
       return;
     }
 
@@ -114,8 +116,8 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
     };
 
     const result = existingPurchaseOrder
-      ? updatePurchaseOrder(existingPurchaseOrder, input)
-      : createPurchaseOrder(input);
+      ? updatePurchaseOrder(existingPurchaseOrder, input, selectedSupplier)
+      : createPurchaseOrder(input, selectedSupplier);
 
     if (!result.ok) {
       setError(result.error);
@@ -172,7 +174,7 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
                 {(value: string | null) => {
                   const selected = suppliers.find((supplier) => supplier.id === value);
                   if (!selected) return "Selecione um fornecedor";
-                  return selected.status === "inactive" ? `${selected.name} (inativo)` : selected.name;
+                  return !selected.active ? `${selected.name} (inativo)` : selected.name;
                 }}
               </SelectValue>
             </SelectTrigger>
@@ -180,11 +182,16 @@ export function PurchaseOrderForm({ purchaseOrderId }: { purchaseOrderId?: strin
               {selectableSuppliers.map((supplier) => (
                 <SelectItem key={supplier.id} value={supplier.id}>
                   {supplier.name}
-                  {supplier.status === "inactive" ? " (inativo)" : ""}
+                  {!supplier.active ? " (inativo)" : ""}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {suppliersError ? (
+            <p className="text-xs text-destructive">Não foi possível carregar os fornecedores agora.</p>
+          ) : allSuppliers === undefined ? (
+            <p className="text-xs text-muted-foreground">Carregando fornecedores...</p>
+          ) : null}
         </div>
 
         <div className="space-y-1.5">

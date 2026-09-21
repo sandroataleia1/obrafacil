@@ -67,8 +67,8 @@
 import { toCents } from "@/lib/currency";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
 import { todayIso } from "@/lib/date";
-import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
-import { getMaterial } from "@/features/materials/prototype/material-store";
+import type { Supplier } from "@/features/suppliers/types";
+import type { Material } from "@/features/materials/types";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderCommercialStatus, PurchaseOrderItem } from "../types";
 import { calculatePurchaseOrderFulfillment } from "./fulfillment";
 import {
@@ -109,10 +109,9 @@ function isOrdered(purchaseOrder: PurchaseOrder): boolean {
   return purchaseOrder.commercialStatus === "ordered";
 }
 
-export function createPurchaseOrder(input: PurchaseOrderHeaderInput): PurchaseOrderResult {
-  const supplier = getSupplier(input.supplierId);
-  if (!supplier) return { ok: false, error: "Fornecedor não encontrado." };
-  if (supplier.status !== "active") {
+export function createPurchaseOrder(input: PurchaseOrderHeaderInput, supplier: Supplier | null): PurchaseOrderResult {
+  if (!supplier || supplier.id !== input.supplierId) return { ok: false, error: "Fornecedor não encontrado." };
+  if (!supplier.active) {
     return { ok: false, error: "Selecione um fornecedor ativo." };
   }
   // §46: Project existence is no longer synchronously checkable here —
@@ -139,7 +138,8 @@ export function createPurchaseOrder(input: PurchaseOrderHeaderInput): PurchaseOr
 
 export function updatePurchaseOrder(
   existing: PurchaseOrder,
-  changes: PurchaseOrderHeaderInput
+  changes: PurchaseOrderHeaderInput,
+  newSupplier: Supplier | null = null
 ): PurchaseOrderResult {
   if (isCancelled(existing)) {
     return {
@@ -167,9 +167,8 @@ export function updatePurchaseOrder(
       };
     }
   } else if (changes.supplierId !== existing.supplierId) {
-    const supplier = getSupplier(changes.supplierId);
-    if (!supplier) return { ok: false, error: "Fornecedor não encontrado." };
-    if (supplier.status !== "active") {
+    if (!newSupplier || newSupplier.id !== changes.supplierId) return { ok: false, error: "Fornecedor não encontrado." };
+    if (!newSupplier.active) {
       return { ok: false, error: "Selecione um fornecedor ativo." };
     }
   }
@@ -227,6 +226,7 @@ export interface PurchaseOrderItemInput {
 export function addPurchaseOrderItem(
   purchaseOrder: PurchaseOrder,
   input: PurchaseOrderItemInput,
+  material: Material | null,
   isFullyReceived: boolean = false
 ): PurchaseOrderItemResult {
   if (isCancelled(purchaseOrder)) {
@@ -239,9 +239,8 @@ export function addPurchaseOrderItem(
     };
   }
 
-  const material = getMaterial(input.materialId);
-  if (!material) return { ok: false, error: "Material não encontrado." };
-  if (material.status !== "active") {
+  if (!material || material.id !== input.materialId) return { ok: false, error: "Material não encontrado." };
+  if (!material.active) {
     return { ok: false, error: "Selecione um material ativo." };
   }
   if (findItemByMaterial(purchaseOrder.id, input.materialId)) {
@@ -273,7 +272,7 @@ export function addPurchaseOrderItem(
     purchaseOrderId: purchaseOrder.id,
     materialId: input.materialId,
     description: input.description.trim(),
-    unit: { ...material.defaultUnit },
+    unit: { code: material.unit_code, customLabel: material.unit_custom_label ?? undefined },
     quantity: normalizeQuantity(input.quantity),
     unitPrice: input.unitPrice,
     createdAt: now,
@@ -366,8 +365,8 @@ export function removePurchaseOrderItem(
   return { ok: true };
 }
 
-function validateForOrdered(purchaseOrder: PurchaseOrder, items: PurchaseOrderItem[]): string | null {
-  if (!getSupplier(purchaseOrder.supplierId)) return "Fornecedor não encontrado.";
+function validateForOrdered(purchaseOrder: PurchaseOrder, items: PurchaseOrderItem[], supplier: Supplier | null): string | null {
+  if (!supplier || supplier.id !== purchaseOrder.supplierId) return "Fornecedor não encontrado.";
   if (items.length === 0) return "Adicione ao menos um item antes de confirmar o pedido.";
   if (items.some((item) => !isPositiveQuantity(item.quantity))) {
     return "Todos os itens precisam de quantidade maior que zero.";
@@ -389,7 +388,8 @@ export function changePurchaseOrderStatus(
   newStatus: PurchaseOrderCommercialStatus,
   items: PurchaseOrderItem[],
   receiptItems: GoodsReceiptItem[],
-  hasPayables: boolean = false
+  hasPayables: boolean = false,
+  supplier: Supplier | null = null
 ): PurchaseOrderResult {
   if (!ALLOWED_TRANSITIONS[purchaseOrder.commercialStatus].includes(newStatus)) {
     return { ok: false, error: "Essa mudança de status não é permitida." };
@@ -421,7 +421,7 @@ export function changePurchaseOrderStatus(
   }
 
   if (newStatus === "ordered") {
-    const error = validateForOrdered(purchaseOrder, items);
+    const error = validateForOrdered(purchaseOrder, items, supplier);
     if (error) return { ok: false, error };
   }
 

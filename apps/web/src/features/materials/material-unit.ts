@@ -1,13 +1,23 @@
-import { MATERIAL_UNIT_CODE_LABEL, type MaterialUnit } from "./types";
+import { MATERIAL_UNIT_CODE_LABEL, type MaterialUnit, type MaterialUnitCode } from "./types";
 
 /**
- * Resolves a Material's unit to its display label — the single place
- * that knows how to read `customLabel` for "other", so list/detail/
- * form never duplicate this branching.
+ * SUPPLY-FRONTEND-01A §26. Resolves a Material's unit — sourced directly
+ * from the API's `unit_code`/`unit_custom_label` fields — to its display
+ * label. The single place that knows how to read `unit_custom_label` for
+ * "other", so list/detail/form never duplicate this branching.
+ */
+export function formatMaterialUnitCode(code: MaterialUnitCode, customLabel: string | null): string {
+  if (code === "other") {
+    return customLabel?.trim() || "un";
+  }
+  return MATERIAL_UNIT_CODE_LABEL[code];
+}
+
+/**
+ * Legacy overload for a `PurchaseOrderItem`'s local unit SNAPSHOT
+ * (`{code, customLabel}`, not the API's `{unit_code, unit_custom_label}`
+ * field names) — still local prototype until SUPPLY-FRONTEND-01B.
  */
 export function formatMaterialUnit(unit: MaterialUnit): string {
-  if (unit.code === "other") {
-    return unit.customLabel?.trim() || "un";
-  }
-  return MATERIAL_UNIT_CODE_LABEL[unit.code];
+  return formatMaterialUnitCode(unit.code, unit.customLabel ?? null);
 }

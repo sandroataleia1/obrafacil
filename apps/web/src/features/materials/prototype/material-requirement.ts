@@ -1,12 +1,20 @@
 /**
  * Domain operations for MaterialRequirement. The (projectId,
- * materialId) uniqueness invariant and existence checks live here,
- * not only in the form's own logic — mirrors `receivable.ts`'s
- * Cliente↔Obra guard.
+ * materialId) uniqueness invariant lives here, not only in the form's
+ * own logic — mirrors `receivable.ts`'s Cliente↔Obra guard.
+ *
+ * SUPPLY-FRONTEND-01A §50: Material is now the real API master — this
+ * module no longer imports `material-store.ts` (deleted) or calls any
+ * synchronous local lookup. `createRequirement()` instead takes the
+ * ALREADY-RESOLVED Material (from `useMaterial`/`useAllMaterials`) as an
+ * explicit parameter and validates `material.id === input.materialId`
+ * (never trusts a caller passing a mismatched pair) plus
+ * `material.active` for a NEW requirement — never makes an API call
+ * itself from this synchronous domain function.
  */
 
 import { todayIso } from "@/lib/date";
-import { getMaterial } from "./material-store";
+import type { Material } from "../types";
 import {
   createRequirementId,
   deleteRequirement as deleteRequirementRecord,
@@ -19,18 +27,24 @@ export type RequirementResult =
   | { ok: true; requirement: MaterialRequirement }
   | { ok: false; error: string };
 
-export function createRequirement(input: {
-  projectId: string;
-  materialId: string;
-  requiredQuantity: number;
-  notes?: string;
-}): RequirementResult {
+export function createRequirement(
+  input: {
+    projectId: string;
+    materialId: string;
+    requiredQuantity: number;
+    notes?: string;
+  },
+  material: Material | null
+): RequirementResult {
   // §46: Project existence is no longer synchronously checkable here —
   // it now lives exclusively in the real API. Callers only ever reach
   // this with a `projectId` already resolved from an API-backed
   // selector/route, so this check is dropped rather than faked.
-  if (!getMaterial(input.materialId)) {
+  if (!material || material.id !== input.materialId) {
     return { ok: false, error: "Material não encontrado." };
+  }
+  if (!material.active) {
+    return { ok: false, error: "Selecione um material ativo." };
   }
   if (!(input.requiredQuantity > 0)) {
     return { ok: false, error: "Informe uma quantidade maior que zero." };

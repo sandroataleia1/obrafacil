@@ -46,7 +46,6 @@
 
 import { todayIso } from "@/lib/date";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
-import { getMaterial } from "@/features/materials/prototype/material-store";
 import {
   calculateAvailableQuantity,
   isTimelineValid,
@@ -236,10 +235,17 @@ export interface StockAdjustmentInput {
  * reasoning that a balance-increasing change can never invalidate a
  * timeline that was already valid).
  */
-export function createStockAdjustment(input: StockAdjustmentInput): StockAdjustmentResult {
+/**
+ * SUPPLY-FRONTEND-01A §58: Material is now the real API master — this
+ * function no longer imports `material-store.ts` (deleted). `materialExists`
+ * is the caller's own API-resolved existence proof
+ * (`Boolean(useMaterial(materialId).material)`) — never faked. Any
+ * Material (including inactive) can be selected for an adjustment (§58).
+ */
+export function createStockAdjustment(input: StockAdjustmentInput, materialExists: boolean): StockAdjustmentResult {
   // §46: Project existence is no longer synchronously checkable here —
   // see the matching note in `material-requirement.ts`.
-  if (!getMaterial(input.materialId)) {
+  if (!materialExists) {
     return { ok: false, error: "Material não encontrado." };
   }
   if (!isPositiveQuantity(input.quantity)) {

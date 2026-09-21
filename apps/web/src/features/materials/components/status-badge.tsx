@@ -1,27 +1,24 @@
 import { cn } from "@/lib/utils";
-import { MATERIAL_STATUS_LABEL, type MaterialStatus } from "../types";
 
-const STATUS_CLASSES: Record<MaterialStatus, string> = {
+const STATUS_CLASSES = {
   active: "bg-primary/10 text-primary",
   inactive: "bg-muted text-muted-foreground",
 };
 
-export function MaterialStatusBadge({
-  status,
-  className,
-}: {
-  status: MaterialStatus;
-  className?: string;
-}) {
+/**
+ * SUPPLY-FRONTEND-01A §74-75. Derives its label/color from the real API
+ * `active` boolean — `status` is never persisted on the entity itself.
+ */
+export function MaterialStatusBadge({ active, className }: { active: boolean; className?: string }) {
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-medium",
-        STATUS_CLASSES[status],
+        active ? STATUS_CLASSES.active : STATUS_CLASSES.inactive,
         className
       )}
     >
-      {MATERIAL_STATUS_LABEL[status]}
+      {active ? "Ativo" : "Inativo"}
     </span>
   );
 }

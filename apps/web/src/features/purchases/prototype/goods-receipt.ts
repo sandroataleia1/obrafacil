@@ -21,7 +21,6 @@
 import { todayIso } from "@/lib/date";
 import { formatQuantity, isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { getMaterial } from "@/features/materials/prototype/material-store";
 import {
   isTimelineValid,
   listAdjustmentInEventsForProjectMaterial,
@@ -182,11 +181,16 @@ export function removeGoodsReceipt(goodsReceipt: GoodsReceipt): DomainResult {
       ...adjustmentOutEvents.map((event) => ({ date: event.date, units: -event.units })),
     ];
     if (!isTimelineValid(signedEvents)) {
-      const material = getMaterial(materialId);
+      // SUPPLY-FRONTEND-01A §50/§55: Material is now the real API master
+      // — this synchronous domain function can no longer resolve its
+      // name locally. The affected PurchaseOrderItem's own `description`
+      // snapshot (already local, no API call needed) is used instead.
+      const description = Array.from(orderItemById.values()).find((item) => item.materialId === materialId)
+        ?.description;
       return {
         ok: false,
-        error: material
-          ? `Este recebimento não pode ser excluído porque parte de "${material.name}" já foi utilizada na obra.`
+        error: description
+          ? `Este recebimento não pode ser excluído porque parte de "${description}" já foi utilizada na obra.`
           : "Este recebimento não pode ser excluído porque parte do material já foi utilizada na obra.",
       };
     }

@@ -10,8 +10,9 @@ import { PageTitle } from "@/components/shared/page-title";
 import { Pagination as SharedPagination } from "@/features/budgets/components/pagination";
 import { formatQuantity } from "@/lib/quantity";
 import { cn } from "@/lib/utils";
-import { getMaterial } from "@/features/materials/prototype/material-store";
-import { formatMaterialUnit } from "@/features/materials/material-unit";
+import { formatMaterialUnitCode } from "@/features/materials/material-unit";
+import { useAllMaterials } from "@/features/materials/use-all-materials";
+import type { MaterialListItem } from "@/features/materials/types";
 import { useAllProjects } from "@/features/projects/use-all-projects";
 import type { ProjectListItem } from "@/features/projects/types";
 import { useSupplyPositions } from "./prototype/use-supply-positions";
@@ -30,14 +31,20 @@ interface EnrichedPosition extends StockSupplyPosition {
   projectName: string;
 }
 
-function enrich(position: StockSupplyPosition, projectsById: Map<string, ProjectListItem>): EnrichedPosition | null {
-  const material = getMaterial(position.materialId);
+function enrich(
+  position: StockSupplyPosition,
+  projectsById: Map<string, ProjectListItem>,
+  materialsById: Map<string, MaterialListItem>
+): EnrichedPosition | null {
   const project = projectsById.get(position.projectId);
-  if (!material || !project) return null;
+  if (!project) return null;
+  // §59/§61: an unresolved legacy materialId is shown controlled
+  // ("Material indisponível"), never dropped/crashed.
+  const material = materialsById.get(position.materialId);
   return {
     ...position,
-    materialName: material.name,
-    unitLabel: formatMaterialUnit(material.defaultUnit),
+    materialName: material?.name ?? "Material indisponível",
+    unitLabel: material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : "",
     projectName: project.name,
   };
 }
@@ -334,13 +341,15 @@ const PAGE_SIZE = 15;
 export function StockList() {
   const { positions } = useSupplyPositions();
   const { projects } = useAllProjects();
+  const { materials } = useAllMaterials();
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [page, setPage] = useState(0);
 
   const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
+  const materialsById = new Map((materials ?? []).map((material) => [material.id, material]));
   const enriched = (positions ?? [])
-    .map((position) => enrich(position, projectsById))
+    .map((position) => enrich(position, projectsById, materialsById))
     .filter((position): position is EnrichedPosition => position !== null);
 
   const projectOptions = Array.from(

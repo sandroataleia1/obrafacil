@@ -50,13 +50,15 @@ export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValue
   "obrafacil:employee-work-periods": "object",
   "obrafacil:employee-period-allocations": "object",
 
-  // Fornecedores
-  "obrafacil:suppliers": "object",
-  "obrafacil:suppliers:deleted": "array",
+  // Fornecedores (SUPPLY-FRONTEND-01A: Supplier itself moved to the real
+  // API — "obrafacil:suppliers"/"obrafacil:suppliers:deleted" are no
+  // longer read/written anywhere and are intentionally absent here.)
 
-  // Materiais
-  "obrafacil:materials": "object",
-  "obrafacil:materials:deleted": "array",
+  // Materiais (SUPPLY-FRONTEND-01A: Material itself moved to the real
+  // API — "obrafacil:materials"/"obrafacil:materials:deleted" are no
+  // longer read/written anywhere and are intentionally absent here.
+  // MaterialRequirement/MaterialConsumption remain local prototypes,
+  // keyed by the real Material UUID.)
   "obrafacil:material-requirements": "object",
   "obrafacil:material-requirements:deleted": "array",
   "obrafacil:material-consumptions": "object",

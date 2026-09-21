@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
-import { getSupplier } from "@/features/suppliers/prototype/supplier-store";
+import { useSupplier } from "@/features/suppliers/use-supplier";
 import { useProject } from "@/features/projects/use-project";
 import { formatMaterialUnit } from "@/features/materials/material-unit";
 import { listPayablesByOrigin } from "@/features/payables/prototype/payable-store";
@@ -55,6 +55,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const router = useRouter();
   const { purchaseOrder, items, refresh } = usePurchaseOrder(id);
   const { project } = useProject(purchaseOrder?.projectId ?? "");
+  const { supplier } = useSupplier(purchaseOrder?.supplierId ?? "");
   const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[] | undefined>(undefined);
   const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
   const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
@@ -92,7 +93,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     );
   }
 
-  const supplier = getSupplier(purchaseOrder.supplierId);
   const total = calculatePurchaseOrderTotal(items);
   const status = purchaseOrder.commercialStatus;
   const hasGoodsReceipts = receiptItems.length > 0;
@@ -103,8 +103,14 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   function handleStatusChange(newStatus: PurchaseOrderCommercialStatus, confirmMessage?: string) {
     if (!purchaseOrder) return;
+    // §56: never confirm an order while the Supplier hasn't actually
+    // resolved yet — `undefined` is "still loading", not "missing".
+    if (newStatus === "ordered" && supplier === undefined) {
+      window.alert("Aguarde o carregamento do fornecedor antes de confirmar o pedido.");
+      return;
+    }
     if (confirmMessage && !window.confirm(confirmMessage)) return;
-    const result = changePurchaseOrderStatus(purchaseOrder, newStatus, items, receiptItems ?? [], hasPayables);
+    const result = changePurchaseOrderStatus(purchaseOrder, newStatus, items, receiptItems ?? [], hasPayables, supplier ?? null);
     if (!result.ok) {
       window.alert(result.error);
       return;
@@ -156,7 +162,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     <div className="space-y-6">
       <div className="space-y-1">
         <BackHeader
-          title={supplier?.name ?? "Fornecedor não encontrado"}
+          title={supplier === undefined ? "" : (supplier?.name ?? "Fornecedor indisponível")}
           onBack={() => router.push("/compras")}
         />
       </div>

@@ -11,7 +11,7 @@ import { PageTitle } from "@/components/shared/page-title";
 import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
-import { listSuppliers } from "@/features/suppliers/prototype/supplier-store";
+import { useAllSuppliers } from "@/features/suppliers/use-all-suppliers";
 import { useAllProjects } from "@/features/projects/use-all-projects";
 import { calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
 import { listReceiptItemsByPurchaseOrder } from "./prototype/goods-receipt-item-store";
@@ -257,7 +257,8 @@ export function PurchaseOrderList() {
   const [statusFilter, setStatusFilter] = useState<PurchaseOrderStatusFilter>("all");
   const [mobilePage, setMobilePage] = useState(0);
   const [desktopPage, setDesktopPage] = useState(0);
-  const suppliers = listSuppliers();
+  const { suppliers: allSuppliers } = useAllSuppliers();
+  const suppliers = allSuppliers ?? [];
   const { projects: allProjects } = useAllProjects();
   const projects = allProjects ?? [];
   const searchParams = useSearchParams();

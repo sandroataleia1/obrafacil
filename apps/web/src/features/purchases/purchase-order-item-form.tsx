@@ -15,9 +15,9 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
 import { formatQuantity } from "@/lib/quantity";
-import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { listActiveMaterials, getMaterial } from "@/features/materials/prototype/material-store";
-import type { Material } from "@/features/materials/types";
+import { formatMaterialUnitCode } from "@/features/materials/material-unit";
+import { useAllMaterials } from "@/features/materials/use-all-materials";
+import { useMaterial } from "@/features/materials/use-material";
 import { calculateItemFulfillment, calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
 import { listReceiptItemsByPurchaseOrder } from "./prototype/goods-receipt-item-store";
 import { addPurchaseOrderItem, updatePurchaseOrderItem } from "./prototype/purchase-order";
@@ -38,7 +38,6 @@ export function PurchaseOrderItemForm({
   const { item: existingItem } = usePurchaseOrderItem(itemId ?? "");
   const isEditing = Boolean(itemId);
 
-  const [availableMaterials, setAvailableMaterials] = useState<Material[]>([]);
   const [materialId, setMaterialId] = useState("");
   const [description, setDescription] = useState("");
   const [quantityInput, setQuantityInput] = useState("");
@@ -46,14 +45,12 @@ export function PurchaseOrderItemForm({
   const [error, setError] = useState<string | null>(null);
   const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
 
+  const { materials: activeMaterials, error: materialsError } = useAllMaterials({ active: true });
+  const usedMaterialIds = new Set(listItemsByPurchaseOrder(purchaseOrderId).map((item) => item.materialId));
+  const availableMaterials = (activeMaterials ?? []).filter((material) => !usedMaterialIds.has(material.id));
+
   useEffect(() => {
-    const usedMaterialIds = new Set(
-      listItemsByPurchaseOrder(purchaseOrderId).map((item) => item.materialId)
-    );
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAvailableMaterials(
-      listActiveMaterials().filter((material) => !usedMaterialIds.has(material.id))
-    );
     setReceiptItems(listReceiptItemsByPurchaseOrder(purchaseOrderId));
   }, [purchaseOrderId]);
 
@@ -74,7 +71,7 @@ export function PurchaseOrderItemForm({
     }
   }
 
-  const selectedMaterial = materialId ? getMaterial(materialId) : null;
+  const { material: selectedMaterial } = useMaterial(materialId);
 
   function parseQuantity(raw: string): number | null {
     const normalized = raw.replace(/\./g, "").replace(",", ".").trim();
@@ -104,6 +101,7 @@ export function PurchaseOrderItemForm({
       : addPurchaseOrderItem(
           purchaseOrder,
           { materialId, description, quantity, unitPrice },
+          selectedMaterial ?? null,
           calculatePurchaseOrderFulfillment(orderItems, receiptItems) === "received"
         );
 
@@ -174,7 +172,9 @@ export function PurchaseOrderItemForm({
               </SelectContent>
             </Select>
           )}
-          {!isEditing && availableMaterials.length === 0 ? (
+          {materialsError ? (
+            <p className="text-xs text-destructive">Não foi possível carregar os materiais agora.</p>
+          ) : !isEditing && activeMaterials !== undefined && availableMaterials.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               Todos os materiais ativos já foram adicionados a este pedido.
             </p>
@@ -228,7 +228,7 @@ export function PurchaseOrderItemForm({
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">Unidade</span>
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
-              {selectedMaterial ? formatMaterialUnit(selectedMaterial.defaultUnit) : "—"}
+              {selectedMaterial ? formatMaterialUnitCode(selectedMaterial.unit_code, selectedMaterial.unit_custom_label) : "—"}
             </div>
           </div>
         </div>

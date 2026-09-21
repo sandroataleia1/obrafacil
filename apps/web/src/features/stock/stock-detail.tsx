@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatQuantity } from "@/lib/quantity";
 import { formatDate } from "@/lib/date";
-import { getMaterial } from "@/features/materials/prototype/material-store";
-import { formatMaterialUnit } from "@/features/materials/material-unit";
+import { useMaterial } from "@/features/materials/use-material";
+import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useProject } from "@/features/projects/use-project";
 import { getGoodsReceipt } from "@/features/purchases/prototype/goods-receipt-store";
 import { useStockDetail } from "./prototype/use-stock-detail";
@@ -74,9 +74,9 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
   const { movements, totals } = useStockDetail(projectId, materialId);
 
   const { project } = useProject(projectId);
-  const material = getMaterial(materialId);
+  const { material } = useMaterial(materialId);
 
-  if (project === undefined) return null;
+  if (project === undefined || material === undefined) return null;
 
   if (!project || !material) {
     return (
@@ -91,7 +91,7 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
     );
   }
 
-  const unitLabel = formatMaterialUnit(material.defaultUnit);
+  const unitLabel = formatMaterialUnitCode(material.unit_code, material.unit_custom_label);
   const subtitle = project.name;
   const supply = getProjectMaterialSupplyMetrics(projectId, materialId);
   const withUnit = (value: number) => `${formatQuantity(value)} ${unitLabel}`;

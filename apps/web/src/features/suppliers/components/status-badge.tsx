@@ -1,27 +1,21 @@
 import { cn } from "@/lib/utils";
-import { SUPPLIER_STATUS_LABEL, type SupplierStatus } from "../types";
 
-const STATUS_CLASSES: Record<SupplierStatus, string> = {
+const STATUS_CLASSES = {
   active: "bg-primary/10 text-primary",
   inactive: "bg-muted text-muted-foreground",
 };
 
-export function SupplierStatusBadge({
-  status,
-  className,
-}: {
-  status: SupplierStatus;
-  className?: string;
-}) {
+/** SUPPLY-FRONTEND-01A §74-76. Derives from the real API `active` boolean. */
+export function SupplierStatusBadge({ active, className }: { active: boolean; className?: string }) {
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-medium",
-        STATUS_CLASSES[status],
+        active ? STATUS_CLASSES.active : STATUS_CLASSES.inactive,
         className
       )}
     >
-      {SUPPLIER_STATUS_LABEL[status]}
+      {active ? "Ativo" : "Inativo"}
     </span>
   );
 }

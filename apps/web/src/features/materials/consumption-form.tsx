@@ -10,8 +10,8 @@ import { Package } from "lucide-react";
 import { todayIso } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
 import { useProject } from "@/features/projects/use-project";
-import { formatMaterialUnit } from "./material-unit";
-import { getMaterial } from "./prototype/material-store";
+import { formatMaterialUnitCode } from "./material-unit";
+import { useMaterial } from "./use-material";
 import { calculateAvailableQuantity, registerMaterialConsumption } from "./prototype/material-consumption";
 
 function parseQuantity(raw: string): number | null {
@@ -24,7 +24,7 @@ function parseQuantity(raw: string): number | null {
 export function ConsumptionForm({ projectId, materialId }: { projectId: string; materialId: string }) {
   const router = useRouter();
   const { project, error: projectError, reload: reloadProject } = useProject(projectId);
-  const material = getMaterial(materialId);
+  const { material, error: materialError, reload: reloadMaterial } = useMaterial(materialId);
 
   const [quantityInput, setQuantityInput] = useState("");
   const [consumedAt, setConsumedAt] = useState(todayIso());
@@ -57,6 +57,24 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
     );
   }
 
+  if (materialError) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Material" onBack={() => router.push(`/obras/${projectId}/materiais`)} />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar este material agora.
+          </p>
+          <Button type="button" onClick={reloadMaterial}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (material === undefined) return null;
+
   if (!material) {
     return (
       <div className="space-y-6">
@@ -73,7 +91,7 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
     );
   }
 
-  const unitLabel = formatMaterialUnit(material.defaultUnit);
+  const unitLabel = formatMaterialUnitCode(material.unit_code, material.unit_custom_label);
   const available = calculateAvailableQuantity(projectId, materialId);
 
   function handleSubmit() {
@@ -87,13 +105,16 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
       return;
     }
 
-    const result = registerMaterialConsumption({
-      projectId,
-      materialId,
-      quantity,
-      consumedAt,
-      notes,
-    });
+    const result = registerMaterialConsumption(
+      {
+        projectId,
+        materialId,
+        quantity,
+        consumedAt,
+        notes,
+      },
+      Boolean(material)
+    );
 
     if (!result.ok) {
       setError(result.error);
@@ -112,7 +133,7 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
         />
         <p className="pl-11 text-sm text-muted-foreground">
           {material.name}
-          {material.status === "inactive" ? " (inativo)" : ""} · {project.name}
+          {!material.active ? " (inativo)" : ""} · {project.name}
         </p>
       </div>
 

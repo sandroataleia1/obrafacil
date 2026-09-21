@@ -86,7 +86,6 @@ import { listGoodsReceiptsByPurchaseOrder } from "@/features/purchases/prototype
 import { listStockAdjustmentsByProjectAndMaterial } from "@/features/stock/prototype/stock-adjustment-store";
 import { todayIso } from "@/lib/date";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
-import { getMaterial } from "./material-store";
 import {
   createMaterialConsumptionId,
   deleteMaterialConsumption as deleteMaterialConsumptionRecord,
@@ -305,11 +304,21 @@ export interface MaterialConsumptionInput {
   notes?: string;
 }
 
-export function registerMaterialConsumption(input: MaterialConsumptionInput): MaterialConsumptionResult {
+/**
+ * SUPPLY-FRONTEND-01A §57: Material is now the real API master — this
+ * function no longer imports `material-store.ts` (deleted) or calls any
+ * synchronous local lookup. `materialExists` is the caller's own
+ * API-resolved existence proof (`Boolean(useMaterial(materialId).material)`)
+ * — never faked. Inactive Materials remain consumable (no `active`
+ * check here), matching the pre-existing rule.
+ */
+export function registerMaterialConsumption(
+  input: MaterialConsumptionInput,
+  materialExists: boolean
+): MaterialConsumptionResult {
   // §46: Project existence is no longer synchronously checkable here —
   // see the matching note in `material-requirement.ts`.
-  const material = getMaterial(input.materialId);
-  if (!material) {
+  if (!materialExists) {
     return { ok: false, error: "Material não encontrado." };
   }
   if (input.consumedAt.trim() === "") {

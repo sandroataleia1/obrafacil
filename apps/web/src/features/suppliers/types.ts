@@ -1,50 +1,93 @@
 /**
- * UI/prototype model for Fornecedores (suppliers).
- *
- * `status` is stored directly (not derived) — unlike Payable/Receivable,
- * a Supplier's active/inactive state is a deliberate user decision, not
- * something computable from dates or amounts.
- *
- * Inactivating a Supplier is the normal removal path, not deletion: an
- * inactive Supplier stays fully visible in its own detail screen and in
- * any historical record that references it, it just stops being
- * offered as an option for new work. `deleteSupplier()` exists in the
- * store for this v1 (no PurchaseOrder exists yet to depend on a
- * Supplier), but Task 040 must harden this once PurchaseOrder exists —
- * a Supplier with any PurchaseOrder should no longer be deletable,
- * mirroring the dependency guards already used elsewhere (Payable with
- * Receipt, Receivable with Receipt).
- *
- * Deliberately excluded from this v1: ranking, rating, price tables,
- * contracts — none of those have a real use case yet.
- *
- * NOT the definitive domain contract for the future API — only exists
- * to validate the product experience with mocked/local data.
+ * SUPPLY-FRONTEND-01A. Real API domain contract for Fornecedores —
+ * mirrors `App\Http\Resources\SupplierResource` / `SupplierListResource`
+ * and `Store`/`UpdateSupplierRequest` field-for-field (same discipline
+ * as `features/projects/types.ts`). `phone` is E.164
+ * (`+5511999999999`) — see `supplier-phone.ts` for the BR display
+ * adapter. `document` is canonical digits-only (CPF or CNPJ) — see
+ * `lib/document.ts#formatCpfCnpj` for display.
  */
-
-export type SupplierStatus = "active" | "inactive";
 
 export interface Supplier {
   id: string;
   name: string;
-
-  document?: string;
-  contactName?: string;
-  phone?: string;
-  email?: string;
-  address?: string;
-  notes?: string;
-
-  status: SupplierStatus;
-
-  createdAt: string;
-  updatedAt: string;
+  document: string | null;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  notes: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-export const SUPPLIER_STATUS_LABEL: Record<SupplierStatus, string> = {
-  active: "Ativo",
-  inactive: "Inativo",
-};
+/** A row from GET /api/v1/suppliers — lean shape, mirrors SupplierListResource. */
+export interface SupplierListItem {
+  id: string;
+  name: string;
+  document: string | null;
+  contact_name: string | null;
+  phone: string | null;
+  active: boolean;
+  updated_at: string;
+}
+
+/** Laravel's default paginate() JSON shape. */
+export interface SupplierPaginationResponse {
+  data: SupplierListItem[];
+  meta: {
+    current_page: number;
+    from: number | null;
+    last_page: number;
+    per_page: number;
+    to: number | null;
+    total: number;
+  };
+  links: {
+    first: string | null;
+    last: string | null;
+    prev: string | null;
+    next: string | null;
+  };
+}
+
+/**
+ * POST /api/v1/suppliers. Never `id`/`company_id`/`created_at`/
+ * `updated_at` — `active` defaults to `true` server-side when omitted.
+ * `document`/`phone` must already be canonical (digits-only / E.164)
+ * before reaching this payload — see `lib/document.ts#onlyDigits` and
+ * `supplier-phone.ts#supplierPhoneInputToApi`.
+ */
+export interface SupplierCreatePayload {
+  name: string;
+  document?: string | null;
+  contact_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  active?: boolean;
+}
+
+/** PUT /api/v1/suppliers/{supplier} — `UpdateSupplierRequest` requires every field. */
+export interface SupplierUpdatePayload {
+  name: string;
+  document?: string | null;
+  contact_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  active: boolean;
+}
+
+export interface SupplierListParams {
+  search?: string;
+  page?: number;
+  perPage?: number;
+  active?: boolean;
+}
 
 export const SUPPLIER_STATUS_FILTERS = ["all", "active", "inactive"] as const;
 export type SupplierStatusFilter = (typeof SUPPLIER_STATUS_FILTERS)[number];

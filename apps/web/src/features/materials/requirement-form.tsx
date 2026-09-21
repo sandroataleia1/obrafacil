@@ -13,12 +13,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useProject } from "@/features/projects/use-project";
-import { formatMaterialUnit } from "./material-unit";
-import { listActiveMaterials, getMaterial } from "./prototype/material-store";
+import { formatMaterialUnitCode } from "./material-unit";
+import { useAllMaterials } from "./use-all-materials";
+import { useMaterial } from "./use-material";
 import { listRequirementsByProject } from "./prototype/material-requirement-store";
 import { createRequirement, removeRequirement, updateRequirement } from "./prototype/material-requirement";
 import { useRequirement } from "./prototype/use-requirement";
-import type { Material } from "./types";
 
 export function RequirementForm({
   projectId,
@@ -32,22 +32,18 @@ export function RequirementForm({
   const { requirement: existingRequirement } = useRequirement(requirementId ?? "");
   const isEditing = Boolean(requirementId);
 
-  const [availableMaterials, setAvailableMaterials] = useState<Material[]>([]);
   const [materialId, setMaterialId] = useState("");
   const [quantityInput, setQuantityInput] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isEditing) return;
-    const usedMaterialIds = new Set(
-      listRequirementsByProject(projectId).map((requirement) => requirement.materialId)
-    );
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAvailableMaterials(
-      listActiveMaterials().filter((material) => !usedMaterialIds.has(material.id))
-    );
-  }, [projectId, isEditing]);
+  const { materials: activeMaterials, error: materialsError } = useAllMaterials({ active: true });
+  const { material: selectedMaterial } = useMaterial(materialId);
+
+  const usedMaterialIds = new Set(
+    isEditing ? [] : listRequirementsByProject(projectId).map((requirement) => requirement.materialId)
+  );
+  const availableMaterials = (activeMaterials ?? []).filter((material) => !usedMaterialIds.has(material.id));
 
   useEffect(() => {
     if (!existingRequirement) return;
@@ -59,8 +55,6 @@ export function RequirementForm({
     setQuantityInput(String(existingRequirement.requiredQuantity).replace(".", ","));
     setNotes(existingRequirement.notes ?? "");
   }, [existingRequirement]);
-
-  const selectedMaterial = materialId ? getMaterial(materialId) : null;
 
   function parseQuantity(raw: string): number | null {
     const normalized = raw.replace(/\./g, "").replace(",", ".").trim();
@@ -78,7 +72,7 @@ export function RequirementForm({
 
     const result = existingRequirement
       ? updateRequirement(existingRequirement, { requiredQuantity: quantity, notes })
-      : createRequirement({ projectId, materialId, requiredQuantity: quantity, notes });
+      : createRequirement({ projectId, materialId, requiredQuantity: quantity, notes }, selectedMaterial ?? null);
 
     if (!result.ok) {
       setError(result.error);
@@ -176,7 +170,9 @@ export function RequirementForm({
               </SelectContent>
             </Select>
           )}
-          {!isEditing && availableMaterials.length === 0 ? (
+          {materialsError ? (
+            <p className="text-xs text-destructive">Não foi possível carregar os materiais agora.</p>
+          ) : !isEditing && activeMaterials !== undefined && availableMaterials.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               Todos os materiais ativos já possuem necessidade cadastrada nesta obra.
             </p>
@@ -199,7 +195,7 @@ export function RequirementForm({
             />
             {selectedMaterial ? (
               <span className="shrink-0 text-sm font-medium text-muted-foreground">
-                {formatMaterialUnit(selectedMaterial.defaultUnit)}
+                {formatMaterialUnitCode(selectedMaterial.unit_code, selectedMaterial.unit_custom_label)}
               </span>
             ) : null}
           </div>

@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * SUPPLY-FRONTEND-01A §34. Real API — loading/404/error+retry/success.
+ */
+
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Package } from "lucide-react";
@@ -7,9 +12,10 @@ import { Package } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { formatMaterialUnit } from "./material-unit";
-import { saveMaterial } from "./prototype/material-store";
-import { useMaterial } from "./prototype/use-material";
+import { ApiValidationError } from "@/lib/api-client";
+import { formatMaterialUnitCode } from "./material-unit";
+import { updateMaterial } from "./materials-client";
+import { useMaterial } from "./use-material";
 import { MaterialStatusBadge } from "./components/status-badge";
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -23,28 +29,56 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export function MaterialDetail({ id }: { id: string }) {
   const router = useRouter();
-  const { material, refresh } = useMaterial(id);
+  const { material, error, reload } = useMaterial(id);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+  const [toggling, setToggling] = useState(false);
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Material" onBack={() => router.push("/materiais")} />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar este material agora.
+          </p>
+          <Button type="button" onClick={reload}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (material === undefined) return null;
 
   if (material === null) {
     return (
-      <EmptyState
-        icon={Package}
-        title="Material não encontrado"
-        description="Ele pode ter sido removido ou o link está incorreto."
-      />
+      <EmptyState icon={Package} title="Material não encontrado" description="Ele pode ter sido removido ou o link está incorreto." />
     );
   }
 
-  function handleToggleStatus() {
+  async function handleToggleStatus() {
     if (!material) return;
-    saveMaterial({
-      ...material,
-      status: material.status === "active" ? "inactive" : "active",
-      updatedAt: new Date().toISOString().slice(0, 10),
-    });
-    refresh();
+    setToggling(true);
+    setToggleError(null);
+    try {
+      await updateMaterial(material.id, {
+        name: material.name,
+        unit_code: material.unit_code,
+        unit_custom_label: material.unit_custom_label,
+        notes: material.notes,
+        active: !material.active,
+      });
+      reload();
+    } catch (submitError) {
+      if (submitError instanceof ApiValidationError) {
+        setToggleError(submitError.serverMessage ?? Object.values(submitError.errors)[0]?.[0] ?? "Não foi possível atualizar agora.");
+      } else {
+        setToggleError("Não foi possível atualizar agora.");
+      }
+    } finally {
+      setToggling(false);
+    }
   }
 
   return (
@@ -54,22 +88,24 @@ export function MaterialDetail({ id }: { id: string }) {
       </div>
 
       <div className="pl-11">
-        <MaterialStatusBadge status={material.status} />
+        <MaterialStatusBadge active={material.active} />
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4">
-        <InfoRow label="Unidade padrão" value={formatMaterialUnit(material.defaultUnit)} />
+        <InfoRow label="Unidade" value={formatMaterialUnitCode(material.unit_code, material.unit_custom_label)} />
         {material.notes ? <InfoRow label="Observação" value={material.notes} /> : null}
       </div>
 
+      {toggleError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {toggleError}
+        </p>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-2">
-        <Button
-          variant="outline"
-          nativeButton={false}
-          render={<Link href={`/materiais/${material.id}/editar`}>Editar</Link>}
-        />
-        <Button type="button" variant="outline" onClick={handleToggleStatus}>
-          {material.status === "active" ? "Inativar" : "Ativar"}
+        <Button variant="outline" nativeButton={false} render={<Link href={`/materiais/${material.id}/editar`}>Editar</Link>} />
+        <Button type="button" variant="outline" onClick={() => void handleToggleStatus()} disabled={toggling}>
+          {material.active ? "Inativar" : "Ativar"}
         </Button>
       </div>
     </div>
