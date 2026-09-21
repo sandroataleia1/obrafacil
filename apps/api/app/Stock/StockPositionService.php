@@ -2,6 +2,8 @@
 
 namespace App\Stock;
 
+use App\Models\Material;
+use App\Models\Project;
 use App\Purchases\Quantity;
 use App\Support\CurrentCompanyContext;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -19,6 +21,21 @@ use Illuminate\Support\Facades\DB;
  * §61/§84: `listPositions()` runs a handful of GROUP BY aggregate queries
  * for the WHOLE requested page at once — never one query per pair — so
  * growing the number of rows on a page never multiplies query count.
+ *
+ * SUPPLY-API-01E1 §1-6: this Service's own PUBLIC boundary is now
+ * tenant-safe by construction, not merely because
+ * StockPositionController happens to resolve Project/Material via
+ * Eloquent first (§9 — that Controller-level resolution is preserved as
+ * a harmless, redundant first barrier, but it is no longer the ONLY
+ * barrier). `getPosition()`/`listMovements()` both call `resolvePair()`
+ * — a real `Project::query()->findOrFail()`/`Material::query()->
+ * findOrFail()` under `CompanyScope` — before touching any raw query, so
+ * a foreign pair throws `ModelNotFoundException` instead of silently
+ * returning `zeroMetrics()` or a foreign tenant's movement rows. Every
+ * raw branch in `movementsUnion()` additionally filters on `company_id`
+ * explicitly (§5) — defense in depth that never trusts the caller-passed
+ * UUIDs alone, exactly mirroring why `listPositions()`'s final `projects`/
+ * `materials` joins now also carry a `company_id` predicate (§6).
  */
 class StockPositionService
 {
@@ -50,9 +67,17 @@ class StockPositionService
 
         $pairs = $this->pairsUnion($companyId);
 
+        // §6: `pairsUnion()` is already company-scoped end to end, but the
+        // final joins here carry their OWN explicit `company_id` predicate
+        // too — defense in depth so a corrupted/foreign relational row can
+        // never surface as a cross-tenant disclosure in this read model.
         $query = DB::query()->fromSub($pairs, 'pairs')
-            ->join('projects', 'projects.id', '=', 'pairs.project_id')
-            ->join('materials', 'materials.id', '=', 'pairs.material_id')
+            ->join('projects', function ($join) use ($companyId) {
+                $join->on('projects.id', '=', 'pairs.project_id')->where('projects.company_id', $companyId);
+            })
+            ->join('materials', function ($join) use ($companyId) {
+                $join->on('materials.id', '=', 'pairs.material_id')->where('materials.company_id', $companyId);
+            })
             ->select(
                 'pairs.project_id', 'pairs.material_id',
                 'projects.number as project_number', 'projects.name as project_name',
@@ -78,6 +103,7 @@ class StockPositionService
 
         $paginator->setCollection($paginator->getCollection()->map(function ($row) use ($metricsByPair) {
             $key = "{$row->project_id}::{$row->material_id}";
+            $row->project_number = $this->formatProjectNumber($row->project_number);
 
             return (object) array_merge((array) $row, $metricsByPair[$key] ?? $this->zeroMetrics());
         }));
@@ -86,35 +112,44 @@ class StockPositionService
     }
 
     /**
-     * §62/§64: metrics for a single Project+Material pair. Returns
-     * zero-valued metrics (never a 404) if the pair has no fact at all —
-     * that is a legitimate "nothing here yet" state, not an error.
+     * §62/§64/SUPPLY-API-01E1 §2-3: metrics for a single Project+Material
+     * pair. Returns zero-valued metrics (never a 404) if the SAME-TENANT
+     * pair simply has no fact yet — a legitimate "nothing here yet" state,
+     * not an error. A FOREIGN pair never reaches that branch at all:
+     * `resolvePair()` throws `ModelNotFoundException` first.
      *
      * @return array<string, mixed>
      */
     public function getPosition(string $projectId, string $materialId): array
     {
+        [$project, $material] = $this->resolvePair($projectId, $materialId);
         $companyId = $this->companyContext->id();
-        $pairKeys = collect([['project_id' => $projectId, 'material_id' => $materialId]]);
+        $pairKeys = collect([['project_id' => $project->id, 'material_id' => $material->id]]);
         $metricsByPair = $this->computeMetricsForPairs($companyId, $pairKeys);
 
-        return $metricsByPair["{$projectId}::{$materialId}"] ?? $this->zeroMetrics();
+        return $metricsByPair["{$project->id}::{$material->id}"] ?? $this->zeroMetrics();
     }
 
     /**
-     * §63/§48: paginated movement history for one Project+Material,
-     * ordered `occurred_at DESC`, then `source_created_at DESC`, then
-     * `movement_id DESC` — fully deterministic, never relying on
-     * unordered SQL row order.
+     * §63/§48/SUPPLY-API-01E1 §2/§4-5: paginated movement history for one
+     * Project+Material, ordered `occurred_at DESC`, then
+     * `source_created_at DESC`, then `movement_id DESC` — fully
+     * deterministic, never relying on unordered SQL row order.
+     * `resolvePair()` runs FIRST — a foreign pair throws before
+     * `movementsUnion()` is ever built, so zero rows from any tenant are
+     * materialized for a rejected call.
      *
      * @param  array{page?: int, per_page?: int}  $pagination
      */
     public function listMovements(string $projectId, string $materialId, array $pagination): LengthAwarePaginator
     {
+        [$project, $material] = $this->resolvePair($projectId, $materialId);
+        $companyId = $this->companyContext->id();
+
         $perPage = min((int) ($pagination['per_page'] ?? self::DEFAULT_MOVEMENTS_PER_PAGE), self::MAX_MOVEMENTS_PER_PAGE);
         $page = max(1, (int) ($pagination['page'] ?? 1));
 
-        $union = $this->movementsUnion($projectId, $materialId);
+        $union = $this->movementsUnion($companyId, $project->id, $material->id);
 
         $query = DB::query()->fromSub($union, 'movements')
             ->orderByDesc('occurred_at')
@@ -122,6 +157,28 @@ class StockPositionService
             ->orderByDesc('movement_id');
 
         return $query->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    /**
+     * SUPPLY-API-01E1 §1-2: the SINGLE tenant boundary every public method
+     * taking a `$projectId`/`$materialId` pair goes through. Real Eloquent
+     * `findOrFail()` calls under `CompanyScope` — a pair whose Project or
+     * Material belongs to a different Company (or doesn't exist at all)
+     * throws `ModelNotFoundException` here, before any raw query runs.
+     *
+     * @return array{0: Project, 1: Material}
+     */
+    private function resolvePair(string $projectId, string $materialId): array
+    {
+        $project = Project::query()->findOrFail($projectId);
+        $material = Material::query()->findOrFail($materialId);
+
+        return [$project, $material];
+    }
+
+    private function formatProjectNumber(int|string $number): string
+    {
+        return sprintf('OBR-%06d', (int) $number);
     }
 
     private function pairsUnion(string $companyId): Builder
@@ -300,32 +357,6 @@ class StockPositionService
     }
 
     /**
-     * §53: the cancelled-order contribution to `purchased_quantity` — the
-     * receipts that already physically happened before the order was
-     * cancelled. Computed lazily per pair only when needed; still a
-     * bounded, indexed query (never a loop over unrelated Materials).
-     */
-    private function cancelledReceivedFor(string $companyId, string $pairKey, Collection $projectIds, Collection $materialIds): string
-    {
-        static $cache = null;
-
-        if ($cache === null) {
-            $cache = $this->groupSum(
-                DB::table('goods_receipt_items')
-                    ->join('purchase_order_items', 'purchase_order_items.id', '=', 'goods_receipt_items.purchase_order_item_id')
-                    ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
-                    ->where('goods_receipt_items.company_id', $companyId)
-                    ->where('purchase_orders.commercial_status', 'cancelled')
-                    ->whereIn('purchase_orders.project_id', $projectIds)
-                    ->whereIn('purchase_order_items.material_id', $materialIds),
-                'purchase_orders.project_id', 'purchase_order_items.material_id', 'goods_receipt_items.quantity'
-            );
-        }
-
-        return $cache[$pairKey] ?? '0.000';
-    }
-
-    /**
      * @return array<string, string> keyed by "project_id::material_id"
      */
     private function groupSum(Builder $query, string $projectColumn, string $materialColumn, string $sumColumn): array
@@ -361,12 +392,21 @@ class StockPositionService
         ];
     }
 
-    private function movementsUnion(string $projectId, string $materialId): Builder
+    /**
+     * SUPPLY-API-01E1 §5: every branch filters `company_id` explicitly —
+     * never trusts the caller-passed `$projectId`/`$materialId` UUIDs
+     * alone to keep this union tenant-safe. This is defense in depth on
+     * top of `resolvePair()` (the real boundary, called before this
+     * method is ever reached), not a substitute for it.
+     */
+    private function movementsUnion(string $companyId, string $projectId, string $materialId): Builder
     {
         $goodsReceiptRows = DB::table('goods_receipt_items')
             ->join('purchase_order_items', 'purchase_order_items.id', '=', 'goods_receipt_items.purchase_order_item_id')
             ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
             ->join('goods_receipts', 'goods_receipts.id', '=', 'goods_receipt_items.goods_receipt_id')
+            ->where('goods_receipt_items.company_id', $companyId)
+            ->where('purchase_orders.company_id', $companyId)
             ->where('purchase_orders.project_id', $projectId)
             ->where('purchase_order_items.material_id', $materialId)
             ->selectRaw(
@@ -377,6 +417,7 @@ class StockPositionService
             );
 
         $consumptionRows = DB::table('material_consumptions')
+            ->where('company_id', $companyId)
             ->where('project_id', $projectId)
             ->where('material_id', $materialId)
             ->selectRaw(
@@ -386,6 +427,7 @@ class StockPositionService
             );
 
         $adjustmentRows = DB::table('stock_adjustments')
+            ->where('company_id', $companyId)
             ->where('project_id', $projectId)
             ->where('material_id', $materialId)
             ->selectRaw(

@@ -41,7 +41,7 @@ class StockPositionController extends Controller
 
         $row = (object) array_merge($metrics, [
             'project_id' => $projectModel->id,
-            'project_number' => $projectModel->number,
+            'project_number' => $projectModel->formattedNumber(),
             'project_name' => $projectModel->name,
             'material_id' => $materialModel->id,
             'material_name' => $materialModel->name,
