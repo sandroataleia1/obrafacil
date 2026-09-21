@@ -39,16 +39,15 @@ import { useMaterialRequirements } from "@/features/materials/use-material-requi
 import { requirementQuantityForLegacyPlanning } from "@/features/materials/requirement-quantity";
 import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
 import type { MaterialConsumption } from "@/features/materials/types";
-import { calculatePurchaseOrderFulfillment } from "@/features/purchases/prototype/fulfillment";
-import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
-import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
-import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
+import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
+import { calculateMaterialPlanning, type MaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
 import {
-  calculateMaterialPlanning,
-  calculatePurchaseOrderTotal,
-  type MaterialPlanning,
-} from "@/features/purchases/prototype/purchase-totals";
-import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+  purchaseItemForLegacyPlanning,
+  purchaseOrderForLegacyPlanning,
+  receiptItemsForLegacyPlanning,
+} from "@/features/purchases/purchase-planning-adapter";
+import type { LegacyGoodsReceiptItem, LegacyPurchaseOrder, LegacyPurchaseOrderItem } from "@/features/purchases/prototype/legacy-types";
+import type { PurchaseOrder } from "@/features/purchases/types";
 import { ProjectTeamSummary } from "@/features/projects/team/project-team-summary";
 import { todayIso } from "@/lib/date";
 import { isProjectLate, projectDaysLate } from "./project-schedule";
@@ -201,9 +200,11 @@ export function ProjectDetail({ id }: { id: string }) {
   const [receivables, setReceivables] = useState<Receivable[] | undefined>(undefined);
   const [receipts, setReceipts] = useState<ReceiptModel[] | undefined>(undefined);
   const { requirements, error: requirementsError, reload: reloadRequirements } = useMaterialRequirements(id);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
-  const [purchaseOrderItems, setPurchaseOrderItems] = useState<PurchaseOrderItem[] | undefined>(undefined);
-  const [purchaseReceiptItems, setPurchaseReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
+  const [purchaseOrdersDetail, setPurchaseOrdersDetail] = useState<PurchaseOrder[] | undefined>(undefined);
+  const [purchasesError, setPurchasesError] = useState(false);
+  const [purchaseOrders, setPurchaseOrders] = useState<LegacyPurchaseOrder[] | undefined>(undefined);
+  const [purchaseOrderItems, setPurchaseOrderItems] = useState<LegacyPurchaseOrderItem[] | undefined>(undefined);
+  const [purchaseReceiptItems, setPurchaseReceiptItems] = useState<LegacyGoodsReceiptItem[] | undefined>(undefined);
   const [purchaseConsumptions, setPurchaseConsumptions] = useState<MaterialConsumption[] | undefined>(undefined);
 
   const requestSequence = useRef(0);
@@ -255,17 +256,29 @@ export function ProjectDetail({ id }: { id: string }) {
     void load();
   }, [load]);
 
+  function loadPurchases() {
+    setPurchasesError(false);
+    listPurchaseOrderDetailsForProject(id)
+      .then((orders) => {
+        setPurchaseOrdersDetail(orders);
+        setPurchaseOrders(orders.map(purchaseOrderForLegacyPlanning));
+        setPurchaseOrderItems(orders.flatMap(purchaseItemForLegacyPlanning));
+        setPurchaseReceiptItems(orders.flatMap(receiptItemsForLegacyPlanning));
+      })
+      .catch(() => {
+        setPurchasesError(true);
+      });
+  }
+
   useEffect(() => {
     const projectReceivables = listReceivablesByProject(id);
-    const projectPurchaseOrders = listPurchaseOrdersByProject(id);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPayables(listPayablesByProject(id));
     setReceivables(projectReceivables);
     setReceipts(projectReceivables.flatMap((receivable) => listReceiptsByReceivable(receivable.id)));
-    setPurchaseOrders(projectPurchaseOrders);
-    setPurchaseOrderItems(listItemsByPurchaseOrders(projectPurchaseOrders.map((purchaseOrder) => purchaseOrder.id)));
     setPurchaseConsumptions(listConsumptionsByProject(id));
-    setPurchaseReceiptItems(projectPurchaseOrders.flatMap((purchaseOrder) => listReceiptItemsByPurchaseOrder(purchaseOrder.id)));
+    loadPurchases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   /**
@@ -563,6 +576,15 @@ export function ProjectDetail({ id }: { id: string }) {
               Tentar novamente
             </Button>
           </div>
+        ) : purchasesError ? (
+          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+            <p role="alert" className="text-sm text-muted-foreground">
+              Não foi possível carregar as compras desta obra agora.
+            </p>
+            <Button type="button" onClick={loadPurchases}>
+              Tentar novamente
+            </Button>
+          </div>
         ) : requirements === undefined || purchaseOrders === undefined || purchaseOrderItems === undefined || purchaseReceiptItems === undefined || purchaseConsumptions === undefined ? null : requirements.length > 0 ? (
           <div className="space-y-3">
             <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
@@ -600,46 +622,49 @@ export function ProjectDetail({ id }: { id: string }) {
         <h2 id="project-purchases" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Compras
         </h2>
-        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center gap-6">
-            <div>
-              <p className="text-xs text-muted-foreground">Pedidos realizados</p>
-              <p className="text-lg font-semibold tabular-nums text-foreground">
-                {formatCurrency(
-                  purchaseOrders !== undefined && purchaseOrderItems !== undefined
-                    ? calculatePurchaseOrderTotal(
-                        purchaseOrderItems.filter((item) =>
-                          purchaseOrders.some((purchaseOrder) => purchaseOrder.id === item.purchaseOrderId && purchaseOrder.commercialStatus === "ordered")
-                        )
-                      )
-                    : 0
-                )}
-              </p>
+        {purchasesError ? (
+          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+            <p role="alert" className="text-sm text-muted-foreground">
+              Não foi possível carregar as compras desta obra agora.
+            </p>
+            <Button type="button" onClick={loadPurchases}>
+              Tentar novamente
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+            <div className="flex items-center gap-6">
+              <div>
+                <p className="text-xs text-muted-foreground">Pedidos realizados</p>
+                <p className="text-lg font-semibold tabular-nums text-foreground">
+                  {formatCurrency(
+                    (purchaseOrdersDetail ?? [])
+                      .filter((order) => order.commercial_status === "ordered")
+                      .reduce((sum, order) => sum + Number(order.total), 0)
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Entregas pendentes</p>
+                <p className="text-lg font-semibold tabular-nums text-foreground">
+                  {(purchaseOrdersDetail ?? []).filter(
+                    (order) => order.commercial_status === "ordered" && order.fulfillment_status !== "received"
+                  ).length}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Rascunhos</p>
+                <p className="text-lg font-semibold tabular-nums text-foreground">
+                  {(purchaseOrdersDetail ?? []).filter((order) => order.commercial_status === "draft").length}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Entregas pendentes</p>
-              <p className="text-lg font-semibold tabular-nums text-foreground">
-                {purchaseOrders === undefined || purchaseOrderItems === undefined || purchaseReceiptItems === undefined
-                  ? 0
-                  : purchaseOrders.filter((purchaseOrder) => {
-                      if (purchaseOrder.commercialStatus !== "ordered") return false;
-                      const orderItems = purchaseOrderItems.filter((item) => item.purchaseOrderId === purchaseOrder.id);
-                      return calculatePurchaseOrderFulfillment(orderItems, purchaseReceiptItems) !== "received";
-                    }).length}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Rascunhos</p>
-              <p className="text-lg font-semibold tabular-nums text-foreground">
-                {purchaseOrders?.filter((purchaseOrder) => purchaseOrder.commercialStatus === "draft").length ?? 0}
-              </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" nativeButton={false} render={<Link href={`/compras?projectId=${project.id}`}>Ver compras</Link>} />
+              <Button variant="outline" nativeButton={false} render={<Link href={`/compras/nova?projectId=${project.id}`}>Nova compra</Link>} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Button variant="outline" nativeButton={false} render={<Link href={`/compras?projectId=${project.id}`}>Ver compras</Link>} />
-            <Button variant="outline" nativeButton={false} render={<Link href={`/compras/nova?projectId=${project.id}`}>Nova compra</Link>} />
-          </div>
-        </div>
+        )}
       </section>
 
       {summary ? (

@@ -54,10 +54,7 @@ import {
   listReceivedEventsForProjectMaterial,
 } from "@/features/materials/prototype/material-consumption";
 import { listMaterialConsumptions } from "@/features/materials/prototype/material-consumption-store";
-import { getGoodsReceipt } from "@/features/purchases/prototype/goods-receipt-store";
-import { listAllGoodsReceiptItems } from "@/features/purchases/prototype/goods-receipt-item-store";
-import { getPurchaseOrder } from "@/features/purchases/prototype/purchase-order-store";
-import { getPurchaseOrderItem } from "@/features/purchases/prototype/purchase-order-item-store";
+import { listAllGoodsReceiptShadowEntries } from "@/features/purchases/prototype/goods-receipt-shadow-store";
 import {
   createStockAdjustmentId,
   listAllStockAdjustments,
@@ -176,16 +173,10 @@ export function getStockBalance(projectId: string, materialId: string): number {
 export function listStockPositions(): StockPosition[] {
   const pairs = new Map<string, { projectId: string; materialId: string }>();
 
-  for (const receiptItem of listAllGoodsReceiptItems()) {
-    const orderItem = getPurchaseOrderItem(receiptItem.purchaseOrderItemId);
-    if (!orderItem) continue;
-    const goodsReceipt = getGoodsReceipt(receiptItem.goodsReceiptId);
-    if (!goodsReceipt) continue;
-    const purchaseOrder = getPurchaseOrder(goodsReceipt.purchaseOrderId);
-    if (!purchaseOrder) continue;
-    pairs.set(`${purchaseOrder.projectId}::${orderItem.materialId}`, {
-      projectId: purchaseOrder.projectId,
-      materialId: orderItem.materialId,
+  for (const entry of listAllGoodsReceiptShadowEntries()) {
+    pairs.set(`${entry.projectId}::${entry.materialId}`, {
+      projectId: entry.projectId,
+      materialId: entry.materialId,
     });
   }
 

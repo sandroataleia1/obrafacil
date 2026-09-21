@@ -1,66 +1,55 @@
 "use client";
 
+/**
+ * SUPPLY-FRONTEND-01C. Real API create/edit — items resolve from the
+ * already-loaded `order.items` (no standalone GET-item endpoint exists).
+ * Create excludes already-used material ids and defaults `description`
+ * to `Material.name`; it never builds an Item locally after the 201 —
+ * navigation back to the detail always re-reads the API. Edit shows the
+ * Material fixed (immutable) and displays unit via the item's OWN
+ * snapshot `unit_code`/`unit_custom_label` — never a live Material
+ * lookup for historical unit. Received/remaining guards read the
+ * backend's own `received_quantity`/`remaining_quantity` — the backend
+ * remains the final authority either way.
+ */
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { MoneyField } from "@/components/shared/money-field";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { formatCurrency, parseCurrencyInput } from "@/lib/currency";
-import { formatQuantity } from "@/lib/quantity";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useAllMaterials } from "@/features/materials/use-all-materials";
-import { useMaterial } from "@/features/materials/use-material";
-import { calculateItemFulfillment, calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
-import { listReceiptItemsByPurchaseOrder } from "./prototype/goods-receipt-item-store";
-import { addPurchaseOrderItem, updatePurchaseOrderItem } from "./prototype/purchase-order";
-import { listItemsByPurchaseOrder } from "./prototype/purchase-order-item-store";
-import { usePurchaseOrder } from "./prototype/use-purchase-order";
-import { usePurchaseOrderItem } from "./prototype/use-purchase-order-item";
-import type { GoodsReceiptItem } from "./types";
+import { createPurchaseOrderItem, updatePurchaseOrderItem } from "./purchase-orders-client";
+import { usePurchaseOrder } from "./use-purchase-order";
+import { purchaseDecimalApiToInput, purchaseQuantityInputToApi, purchaseUnitPriceInputToApi } from "./purchase-decimal";
 
-export function PurchaseOrderItemForm({
-  purchaseOrderId,
-  itemId,
-}: {
-  purchaseOrderId: string;
-  itemId?: string;
-}) {
+export function PurchaseOrderItemForm({ purchaseOrderId, itemId }: { purchaseOrderId: string; itemId?: string }) {
   const router = useRouter();
-  const { purchaseOrder } = usePurchaseOrder(purchaseOrderId);
-  const { item: existingItem } = usePurchaseOrderItem(itemId ?? "");
+  const { order, error: orderError, reload: reloadOrder } = usePurchaseOrder(purchaseOrderId);
   const isEditing = Boolean(itemId);
+  const existingItem = order && itemId ? order.items.find((item) => item.id === itemId) : undefined;
 
   const [materialId, setMaterialId] = useState("");
   const [description, setDescription] = useState("");
   const [quantityInput, setQuantityInput] = useState("");
   const [priceInput, setPriceInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
+  const [submitting, setSubmitting] = useState(false);
 
   const { materials: activeMaterials, error: materialsError } = useAllMaterials({ active: true });
-  const usedMaterialIds = new Set(listItemsByPurchaseOrder(purchaseOrderId).map((item) => item.materialId));
+  const usedMaterialIds = new Set((order?.items ?? []).map((item) => item.material.id));
   const availableMaterials = (activeMaterials ?? []).filter((material) => !usedMaterialIds.has(material.id));
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setReceiptItems(listReceiptItemsByPurchaseOrder(purchaseOrderId));
-  }, [purchaseOrderId]);
 
   useEffect(() => {
     if (!existingItem) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMaterialId(existingItem.materialId);
     setDescription(existingItem.description);
-    setQuantityInput(String(existingItem.quantity).replace(".", ","));
-    setPriceInput(String(existingItem.unitPrice).replace(".", ","));
+    setQuantityInput(purchaseDecimalApiToInput(existingItem.quantity));
+    setPriceInput(purchaseDecimalApiToInput(existingItem.unit_price));
   }, [existingItem]);
 
   function handleSelectMaterial(id: string) {
@@ -71,52 +60,85 @@ export function PurchaseOrderItemForm({
     }
   }
 
-  const { material: selectedMaterial } = useMaterial(materialId);
+  async function handleSubmit() {
+    if (!order) return;
 
-  function parseQuantity(raw: string): number | null {
-    const normalized = raw.replace(/\./g, "").replace(",", ".").trim();
-    if (normalized === "") return null;
-    const value = Number(normalized);
-    return Number.isFinite(value) ? value : null;
-  }
-
-  function handleSubmit() {
-    const quantity = parseQuantity(quantityInput);
-    if (quantity === null || quantity <= 0) {
-      setError("Informe uma quantidade maior que zero.");
+    const quantity = purchaseQuantityInputToApi(quantityInput);
+    if (quantity === null) {
+      setError("Informe uma quantidade válida, maior que zero e com até 3 casas decimais.");
       return;
     }
-    const unitPrice = parseCurrencyInput(priceInput) ?? 0;
-
-    if (!purchaseOrder || receiptItems === undefined) return;
-
-    const orderItems = listItemsByPurchaseOrder(purchaseOrderId);
-    const result = existingItem
-      ? updatePurchaseOrderItem(
-          purchaseOrder,
-          existingItem,
-          { description, quantity, unitPrice },
-          calculateItemFulfillment(existingItem, receiptItems).receivedQuantity
-        )
-      : addPurchaseOrderItem(
-          purchaseOrder,
-          { materialId, description, quantity, unitPrice },
-          selectedMaterial ?? null,
-          calculatePurchaseOrderFulfillment(orderItems, receiptItems) === "received"
-        );
-
-    if (!result.ok) {
-      setError(result.error);
+    const unitPrice = purchaseUnitPriceInputToApi(priceInput);
+    if (unitPrice === null) {
+      setError("Informe um preço unitário válido, com até 2 casas decimais.");
       return;
     }
+    if (!isEditing && !materialId) {
+      setError("Selecione um material.");
+      return;
+    }
+
+    setSubmitting(true);
     setError(null);
-    router.push(`/compras/${purchaseOrderId}`);
+
+    try {
+      if (isEditing && existingItem) {
+        await updatePurchaseOrderItem(purchaseOrderId, existingItem.id, {
+          description,
+          quantity,
+          unit_price: unitPrice,
+          updated_at: existingItem.updated_at,
+        });
+      } else {
+        await createPurchaseOrderItem(purchaseOrderId, {
+          material_id: materialId,
+          description,
+          quantity,
+          unit_price: unitPrice,
+        });
+      }
+      setSubmitting(false);
+      router.push(`/compras/${purchaseOrderId}`);
+    } catch (submitError) {
+      setSubmitting(false);
+      if (submitError instanceof ApiError && submitError.status === 409) {
+        setError("A compra foi alterada por outra operação. Os dados foram atualizados.");
+        reloadOrder();
+        return;
+      }
+      if (submitError instanceof ApiValidationError) {
+        const firstMessage =
+          submitError.errors.material_id?.[0] ??
+          submitError.errors.description?.[0] ??
+          submitError.errors.quantity?.[0] ??
+          submitError.errors.unit_price?.[0] ??
+          Object.values(submitError.errors)[0]?.[0];
+        setError(firstMessage ?? submitError.serverMessage ?? "Não foi possível salvar. Verifique os campos.");
+        return;
+      }
+      setError("Não foi possível salvar agora. Tente novamente.");
+    }
   }
 
-  if (purchaseOrder === undefined) return null;
-  if (isEditing && existingItem === undefined) return null;
+  if (orderError) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Compra" onBack={() => router.push("/compras")} />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar esta compra agora.
+          </p>
+          <Button type="button" onClick={reloadOrder}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
-  if (purchaseOrder === null) {
+  if (order === undefined) return null;
+
+  if (order === null) {
     return (
       <div className="space-y-6">
         <BackHeader title="Compra não encontrada" onBack={() => router.push("/compras")} />
@@ -124,18 +146,15 @@ export function PurchaseOrderItemForm({
     );
   }
 
-  if (isEditing && existingItem === null) {
+  if (isEditing && existingItem === undefined) {
     return (
       <div className="space-y-6">
-        <BackHeader
-          title="Item não encontrado"
-          onBack={() => router.push(`/compras/${purchaseOrderId}`)}
-        />
+        <BackHeader title="Item não encontrado" onBack={() => router.push(`/compras/${purchaseOrderId}`)} />
       </div>
     );
   }
 
-  const total = (parseQuantity(quantityInput) ?? 0) * (parseCurrencyInput(priceInput) ?? 0);
+  const selectedNewMaterial = availableMaterials.find((material) => material.id === materialId);
 
   return (
     <div className="space-y-6 pb-6">
@@ -151,15 +170,15 @@ export function PurchaseOrderItemForm({
           <span className="text-sm font-medium text-foreground">Material</span>
           {isEditing ? (
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
-              {selectedMaterial?.name ?? "—"}
+              {existingItem!.material.name}
+              {!existingItem!.material.active ? " (inativo)" : ""}
             </div>
           ) : (
             <Select value={materialId} onValueChange={(value) => handleSelectMaterial(value ?? "")}>
               <SelectTrigger className="h-12 w-full px-4 text-base">
                 <SelectValue placeholder="Selecione um material">
                   {(value: string | null) =>
-                    availableMaterials.find((material) => material.id === value)?.name ??
-                    "Selecione um material"
+                    availableMaterials.find((material) => material.id === value)?.name ?? "Selecione um material"
                   }
                 </SelectValue>
               </SelectTrigger>
@@ -175,9 +194,7 @@ export function PurchaseOrderItemForm({
           {materialsError ? (
             <p className="text-xs text-destructive">Não foi possível carregar os materiais agora.</p>
           ) : !isEditing && activeMaterials !== undefined && availableMaterials.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              Todos os materiais ativos já foram adicionados a este pedido.
-            </p>
+            <p className="text-xs text-muted-foreground">Todos os materiais ativos já foram adicionados a este pedido.</p>
           ) : null}
         </div>
 
@@ -209,52 +226,36 @@ export function PurchaseOrderItemForm({
               placeholder="0"
               className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground tabular-nums outline-none focus:border-primary focus:ring-2 focus:ring-ring"
             />
-            {isEditing && existingItem && receiptItems !== undefined ? (
-              (() => {
-                const itemFulfillment = calculateItemFulfillment(existingItem, receiptItems);
-                if (itemFulfillment.receivedQuantity <= 0) return null;
-                return itemFulfillment.state === "received" ? (
-                  <p className="text-xs text-muted-foreground">
-                    Totalmente recebido — quantidade travada.
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Já recebido: {formatQuantity(itemFulfillment.receivedQuantity)}
-                  </p>
-                );
-              })()
+            {isEditing && existingItem && Number(existingItem.received_quantity) > 0 ? (
+              <p className="text-xs text-muted-foreground">Já recebido: {purchaseDecimalApiToInput(existingItem.received_quantity)}</p>
             ) : null}
           </div>
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">Unidade</span>
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
-              {selectedMaterial ? formatMaterialUnitCode(selectedMaterial.unit_code, selectedMaterial.unit_custom_label) : "—"}
+              {isEditing && existingItem
+                ? formatMaterialUnitCode(existingItem.unit_code, existingItem.unit_custom_label)
+                : selectedNewMaterial
+                  ? formatMaterialUnitCode(selectedNewMaterial.unit_code, selectedNewMaterial.unit_custom_label)
+                  : "—"}
             </div>
           </div>
         </div>
 
-        <MoneyField
-          id="item-unit-price"
-          label="Preço unitário"
-          value={priceInput}
-          onChange={setPriceInput}
-        />
+        <MoneyField id="item-unit-price" label="Preço unitário" value={priceInput} onChange={setPriceInput} />
 
-        <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
-          <span className="text-sm text-muted-foreground">Total do item</span>
-          <span className="text-lg font-semibold tabular-nums text-foreground">
-            {formatCurrency(total)}
-          </span>
-        </div>
-
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
 
       <Button
         type="button"
         size="lg"
-        onClick={handleSubmit}
-        disabled={!isEditing && !materialId}
+        onClick={() => void handleSubmit()}
+        disabled={submitting || (!isEditing && !materialId)}
         className="w-full"
       >
         {isEditing ? "Salvar alterações" : "Adicionar item"}

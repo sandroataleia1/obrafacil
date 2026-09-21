@@ -18,20 +18,13 @@ vi.mock("@/features/materials/material-requirements-client", () => ({
   listMaterialRequirementsForProjects: vi.fn(),
 }));
 
+vi.mock("@/features/purchases/purchase-orders-client", () => ({
+  listPurchaseOrderDetailsForProjects: vi.fn(),
+}));
+
 // Isolate the Requirement-union behavior from Estoque V1's own seed data —
-// physical stock positions and local PurchaseOrders are irrelevant here.
+// physical stock positions are irrelevant here.
 vi.mock("../stock", () => ({ listStockPositions: () => [] }));
-vi.mock("@/features/purchases/prototype/purchase-order-store", () => ({
-  listPurchaseOrders: () => [],
-  listPurchaseOrdersByProject: () => [],
-}));
-vi.mock("@/features/purchases/prototype/purchase-order-item-store", () => ({
-  listItemsByPurchaseOrder: () => [],
-  listItemsByPurchaseOrders: () => [],
-}));
-vi.mock("@/features/purchases/prototype/goods-receipt-item-store", () => ({
-  listReceiptItemsByPurchaseOrder: () => [],
-}));
 vi.mock("@/features/materials/prototype/material-consumption-store", () => ({
   listConsumptionsByProject: () => [],
 }));
@@ -40,6 +33,7 @@ vi.mock("@/features/materials/prototype/material-consumption", () => ({
 }));
 
 import { listMaterialRequirementsForProjects } from "@/features/materials/material-requirements-client";
+import { listPurchaseOrderDetailsForProjects } from "@/features/purchases/purchase-orders-client";
 import { useSupplyPositions } from "../use-supply-positions";
 import type { MaterialRequirement } from "@/features/materials/types";
 
@@ -67,6 +61,7 @@ function requirement(id: string, projectId: string, materialId: string): Materia
 describe("useSupplyPositions — SUPPLY-FRONTEND-01B1 §29 (ST1-ST8)", () => {
   beforeEach(() => {
     vi.mocked(listMaterialRequirementsForProjects).mockReset().mockResolvedValue(new Map());
+    vi.mocked(listPurchaseOrderDetailsForProjects).mockReset().mockResolvedValue(new Map());
     reloadProjects.mockReset();
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
     projectsState.projects = [project("p1")];

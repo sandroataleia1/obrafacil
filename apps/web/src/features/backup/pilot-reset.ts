@@ -1,10 +1,6 @@
 import { customers as seedCustomers } from "@/mocks/customers";
 import { budgets as seedBudgets } from "@/mocks/budgets";
 import { projectCosts as seedProjectCosts } from "@/mocks/project-costs";
-import { purchaseOrders as seedPurchaseOrders } from "@/mocks/purchase-orders";
-import { purchaseOrderItems as seedPurchaseOrderItems } from "@/mocks/purchase-order-items";
-import { goodsReceipts as seedGoodsReceipts } from "@/mocks/goods-receipts";
-import { goodsReceiptItems as seedGoodsReceiptItems } from "@/mocks/goods-receipt-items";
 import { stockAdjustments as seedStockAdjustments } from "@/mocks/stock-adjustments";
 import { materialConsumptions as seedMaterialConsumptions } from "@/mocks/material-consumptions";
 
@@ -36,15 +32,10 @@ export const PILOT_RESET_KEYS: readonly PilotBackupKey[] = [
   // Consumo (MaterialRequirement é API real — não é mais domínio local)
   "obrafacil:material-consumptions",
   "obrafacil:material-consumptions:deleted",
-  // Compras (materiais comprados)
-  "obrafacil:purchase-orders",
-  "obrafacil:purchase-orders:deleted",
-  "obrafacil:purchase-order-items",
-  "obrafacil:purchase-order-items:deleted",
-  "obrafacil:goods-receipts",
-  "obrafacil:goods-receipts:deleted",
-  "obrafacil:goods-receipt-items",
-  "obrafacil:goods-receipt-items:deleted",
+  // Compras (PurchaseOrder/GoodsReceipt são API real desde
+  // SUPPLY-FRONTEND-01C — não são mais domínio local; nunca limpar
+  // browser storage automaticamente não se aplica aqui, pois essas
+  // chaves simplesmente não existem mais)
   // Estoque
   "obrafacil:stock-adjustments",
   "obrafacil:stock-adjustments:deleted",
@@ -64,10 +55,6 @@ const SEED_HIDE_GROUPS: ReadonlyArray<{ deletedKey: PilotBackupKey; ids: readonl
   { deletedKey: "obrafacil:customers:deleted", ids: seedCustomers.map((row) => row.id) },
   { deletedKey: "obrafacil:budgets:deleted", ids: seedBudgets.map((row) => row.id) },
   { deletedKey: "obrafacil:project-costs:deleted", ids: seedProjectCosts.map((row) => row.id) },
-  { deletedKey: "obrafacil:purchase-orders:deleted", ids: seedPurchaseOrders.map((row) => row.id) },
-  { deletedKey: "obrafacil:purchase-order-items:deleted", ids: seedPurchaseOrderItems.map((row) => row.id) },
-  { deletedKey: "obrafacil:goods-receipts:deleted", ids: seedGoodsReceipts.map((row) => row.id) },
-  { deletedKey: "obrafacil:goods-receipt-items:deleted", ids: seedGoodsReceiptItems.map((row) => row.id) },
   { deletedKey: "obrafacil:stock-adjustments:deleted", ids: seedStockAdjustments.map((row) => row.id) },
   { deletedKey: "obrafacil:material-consumptions:deleted", ids: seedMaterialConsumptions.map((row) => row.id) },
 ];

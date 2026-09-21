@@ -2,14 +2,16 @@
 
 /**
  * SUPPLY-FRONTEND-01A §44/§47. Real API — loading/404/error+retry/
- * success. The "Pedidos / Total comprado" numeric summary is REMOVED
- * (not just hidden with a flag) — it was computed from the local
- * PurchaseOrder prototype, which would misrepresent itself as the real
- * Supplier's authoritative purchase history now that Supplier is API-
- * backed. Returns in SUPPLY-FRONTEND-01C once PurchaseOrder itself is
- * API-backed and can be queried for real. The "Ver compras"/"Nova
- * compra" navigation is preserved — that's just routing, not a number
- * that could misrepresent a mixed data source.
+ * success.
+ *
+ * SUPPLY-FRONTEND-01C: the "Pedidos / Total comprado" numeric summary,
+ * REMOVED in SUPPLY-FRONTEND-01A (it was computed from the local
+ * PurchaseOrder prototype, which would have misrepresented itself as
+ * the real Supplier's authoritative purchase history), is RESTORED here
+ * now that PurchaseOrder is itself API-backed —
+ * `listAllPurchaseOrders({supplierId})` is a real, queryable source, not
+ * a local approximation. "Ver compras" now also carries `?supplierId=`
+ * so it lands pre-filtered.
  *
  * SUPPLY-FRONTEND-01A2. Outer-wrapper + keyed-Inner tenant-ownership
  * pattern — see `material-detail.tsx` for the full rationale. Both
@@ -18,7 +20,7 @@
  * even after the Inner that started the request has unmounted.
  */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Truck } from "lucide-react";
@@ -27,9 +29,11 @@ import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ApiValidationError } from "@/lib/api-client";
+import { formatCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { formatCpfCnpj } from "@/lib/document";
 import { useAuth } from "@/features/auth/auth-provider";
+import { listAllPurchaseOrders } from "@/features/purchases/purchase-orders-client";
 import { updateSupplier } from "./suppliers-client";
 import { useSupplier } from "./use-supplier";
 import { supplierPhoneApiToInput } from "./supplier-phone";
@@ -57,6 +61,25 @@ function SupplierDetailInner({
   const { supplier, error, reload } = useSupplier(id);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
+  const [purchaseSummary, setPurchaseSummary] = useState<{ count: number; total: number } | undefined>(undefined);
+  const [purchaseSummaryError, setPurchaseSummaryError] = useState(false);
+
+  function loadPurchaseSummary() {
+    setPurchaseSummaryError(false);
+    listAllPurchaseOrders({ supplierId: id })
+      .then((rows) => {
+        setPurchaseSummary({ count: rows.length, total: rows.reduce((sum, row) => sum + Number(row.total), 0) });
+      })
+      .catch(() => {
+        setPurchaseSummaryError(true);
+      });
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadPurchaseSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (error) {
     return (
@@ -152,8 +175,31 @@ function SupplierDetailInner({
         <h2 id="supplier-purchases" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Compras
         </h2>
+        {purchaseSummaryError ? (
+          <p role="alert" className="text-xs text-destructive">
+            Não foi possível carregar o resumo de compras agora.
+          </p>
+        ) : purchaseSummary ? (
+          <div className="flex items-center gap-6 rounded-xl border border-border bg-card p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Pedidos</p>
+              <p className="text-lg font-semibold tabular-nums text-foreground">{purchaseSummary.count}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Total comprado</p>
+              <p className="text-lg font-semibold tabular-nums text-foreground">
+                {formatCurrency(purchaseSummary.total)}
+              </p>
+            </div>
+          </div>
+        ) : null}
         <div className={supplier.active ? "grid grid-cols-2 gap-2" : undefined}>
-          <Button variant="outline" className={supplier.active ? undefined : "w-full"} nativeButton={false} render={<Link href="/compras">Ver compras</Link>} />
+          <Button
+            variant="outline"
+            className={supplier.active ? undefined : "w-full"}
+            nativeButton={false}
+            render={<Link href={`/compras?supplierId=${supplier.id}`}>Ver compras</Link>}
+          />
           {supplier.active ? (
             <Button variant="outline" nativeButton={false} render={<Link href={`/compras/nova?supplierId=${supplier.id}`}>Nova compra</Link>} />
           ) : null}

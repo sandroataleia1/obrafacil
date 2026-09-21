@@ -10,7 +10,11 @@
  */
 
 import { calculateMaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
-import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+import type {
+  LegacyGoodsReceiptItem as GoodsReceiptItem,
+  LegacyPurchaseOrder as PurchaseOrder,
+  LegacyPurchaseOrderItem as PurchaseOrderItem,
+} from "@/features/purchases/prototype/legacy-types";
 import type { MaterialConsumption, MaterialRequirement } from "@/features/materials/types";
 import { requirementQuantityForLegacyPlanning } from "@/features/materials/requirement-quantity";
 import type { ProjectMaterialsFacts } from "./types";

@@ -65,15 +65,19 @@ export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValue
   "obrafacil:material-consumptions": "object",
   "obrafacil:material-consumptions:deleted": "array",
 
-  // Compras
-  "obrafacil:purchase-orders": "object",
-  "obrafacil:purchase-orders:deleted": "array",
-  "obrafacil:purchase-order-items": "object",
-  "obrafacil:purchase-order-items:deleted": "array",
-  "obrafacil:goods-receipts": "object",
-  "obrafacil:goods-receipts:deleted": "array",
-  "obrafacil:goods-receipt-items": "object",
-  "obrafacil:goods-receipt-items:deleted": "array",
+  // Compras (SUPPLY-FRONTEND-01C: PurchaseOrder/PurchaseOrderItem/
+  // GoodsReceipt/GoodsReceiptItem moved to the real API —
+  // "obrafacil:purchase-orders"/"obrafacil:purchase-order-items"/
+  // "obrafacil:goods-receipts"/"obrafacil:goods-receipt-items" (and
+  // their ":deleted" tombstones) are no longer read/written anywhere
+  // and are intentionally absent here.
+  // "obrafacil:goods-receipt-shadow" is a NEW key introduced this gate
+  // (see `features/purchases/prototype/goods-receipt-shadow-store.ts`)
+  // but is deliberately absent from backup/restore too: it is a
+  // write-through mirror of real API facts for the still-local Stock/
+  // Consumption feature, never a domain record in its own right — it
+  // can always be fully rebuilt by re-reading GoodsReceipt history from
+  // the API, so backup/restore has no reason to touch it.
 
   // Estoque
   "obrafacil:stock-adjustments": "object",

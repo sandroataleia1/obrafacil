@@ -1,48 +1,30 @@
 /**
- * UI/prototype models for Pedidos de Compra (PurchaseOrder).
+ * SUPPLY-FRONTEND-01C. `PurchaseOrder`/`PurchaseOrderItem`/`GoodsReceipt`/
+ * `GoodsReceiptItem` are now the real API domain contract — mirrors
+ * `App\Http\Resources\PurchaseOrderResource` / `PurchaseOrderListResource` /
+ * `PurchaseOrderItemResource` / `GoodsReceiptResource` /
+ * `GoodsReceiptItemResource` and the matching `Store`/`Update`/status-action
+ * Requests field-for-field (same discipline as `features/materials/types.ts`
+ * MaterialRequirement). Never invent a field here without a matching
+ * backend source.
  *
- * `PurchaseOrder` is the commercial decision ("we're buying these
- * items from this Supplier for this Obra"). It stores nothing
- * derivable from other entities: no `supplierName`/`projectName`
- * snapshot (resolved via `supplierId`/`projectId` at read time, same
- * pattern as `Payable`/`Receivable`), no `total` (derived — see
- * `prototype/purchase-totals.ts`), and nothing that depends on
- * entities that don't exist yet in this prototype
- * (`fulfillmentStatus`/`receivedQuantity` belong to GoodsReceipt,
- * `payableId`/`projectCostId` belong to the future Purchase→Payable
- * integration).
+ * The OLD camelCase/local prototype shapes now live in
+ * `prototype/legacy-types.ts` (`Legacy*`), used ONLY by the transitional
+ * `purchase-totals.ts#calculateMaterialPlanning` calculator via
+ * `purchase-planning-adapter.ts`.
  *
- * `commercialStatus` is the only status stored here — a deliberate
- * user decision (draft/ordered/cancelled), not something derived from
- * dates or quantities. It is NOT the same concept as a future
- * "fulfillment status" (not_received/partial/received), which will be
- * entirely derived from GoodsReceipt once that entity exists — mixing
- * the two into one enum would force impossible states (e.g. a
- * cancelled order that is somehow "partially received").
+ * `updated_at` on every mutable resource here is an OPAQUE
+ * optimistic-concurrency token — never `Date`-parsed, truncated, or
+ * reformatted, only ever captured from the last-loaded representation and
+ * echoed back verbatim. `GoodsReceipt` has no `updated_at` — it is an
+ * immutable event (create/delete only, no update endpoint).
  *
- * `projectId` and `supplierId` are both required — this prototype
- * intentionally has no central/administrative stock, so every
- * purchase belongs to exactly one Obra (see Task 038 discovery), and
- * every purchase has exactly one Supplier (no multi-supplier
- * quotation in this v1).
- *
- * `PurchaseOrderItem.materialId` is required — no ad-hoc item without
- * a catalog Material in this v1, so every purchase can safely
- * participate in future received/available/consumed/planned figures.
- * `description` is a snapshot, pre-filled from `Material.name` at the
- * moment the item is added but editable afterward (e.g. "Cimento
- * CP-II 50kg Votoran" as a commercial specification), independent of
- * the catalog Material's own name. `unit` is a mandatory snapshot of
- * `Material.defaultUnit` at that same moment — even though a Material
- * with any MaterialRequirement already has its `defaultUnit` frozen
- * (see `features/materials/prototype/material.ts`), the snapshot still
- * matters for historical integrity independent of that separate rule.
- *
- * NOT the definitive domain contract for the future API — only exists
- * to validate the product experience with mocked/local data.
+ * `quantity`/`unit_price`/`line_total`/`received_quantity`/
+ * `remaining_quantity`/`total` are all decimal STRINGS from the API, never
+ * a binary float — see `purchase-decimal.ts`.
  */
 
-import type { MaterialUnit } from "@/features/materials/types";
+import type { MaterialUnitCode } from "@/features/materials/types";
 
 export type PurchaseOrderCommercialStatus = "draft" | "ordered" | "cancelled";
 
@@ -62,80 +44,168 @@ export const PURCHASE_ORDER_STATUS_FILTER_LABEL: Record<PurchaseOrderStatusFilte
   cancelled: "Canceladas",
 };
 
+export type PurchaseOrderFulfillmentStatus = "not_received" | "partial" | "received";
+
+export const PURCHASE_ORDER_FULFILLMENT_LABEL: Record<PurchaseOrderFulfillmentStatus, string> = {
+  not_received: "Não recebido",
+  partial: "Recebido parcialmente",
+  received: "Recebido",
+};
+
+export interface PurchaseOrderSupplierRef {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+export interface PurchaseOrderProjectRef {
+  id: string;
+  number: string;
+  name: string;
+}
+
+export interface PurchaseOrderMaterialRef {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+/** GET .../{id}, POST, PUT — full detail, includes items and goods_receipts. */
 export interface PurchaseOrder {
   id: string;
+  number: string;
+  commercial_status: PurchaseOrderCommercialStatus;
+  fulfillment_status: PurchaseOrderFulfillmentStatus;
+  supplier: PurchaseOrderSupplierRef;
+  project: PurchaseOrderProjectRef;
+  order_date: string;
+  expected_delivery_date: string | null;
+  notes: string | null;
+  items: PurchaseOrderItem[];
+  goods_receipts: GoodsReceipt[];
+  total: string;
+  created_at: string;
+  updated_at: string;
+}
 
-  supplierId: string;
-  projectId: string;
+/** A row from GET /api/v1/purchase-orders — lean shape, no items/goods_receipts. */
+export interface PurchaseOrderListItem {
+  id: string;
+  number: string;
+  commercial_status: PurchaseOrderCommercialStatus;
+  fulfillment_status: PurchaseOrderFulfillmentStatus;
+  supplier: PurchaseOrderSupplierRef;
+  project: PurchaseOrderProjectRef;
+  order_date: string;
+  expected_delivery_date: string | null;
+  notes: string | null;
+  items_count: number;
+  total: string;
+  created_at: string;
+  updated_at: string;
+}
 
-  orderDate: string;
-  expectedDeliveryDate?: string;
+/** Laravel's default paginate() JSON shape. */
+export interface PurchaseOrderPaginationResponse {
+  data: PurchaseOrderListItem[];
+  meta: {
+    current_page: number;
+    from: number | null;
+    last_page: number;
+    per_page: number;
+    to: number | null;
+    total: number;
+  };
+  links: {
+    first: string | null;
+    last: string | null;
+    prev: string | null;
+    next: string | null;
+  };
+}
 
-  commercialStatus: PurchaseOrderCommercialStatus;
+export interface PurchaseOrderListParams {
+  search?: string;
+  commercialStatus?: PurchaseOrderCommercialStatus;
+  projectId?: string;
+  supplierId?: string;
+  page?: number;
+  perPage?: number;
+}
 
-  notes?: string;
+/** Never send number/commercial_status/items/total/company_id/id/created_at. */
+export interface PurchaseOrderCreatePayload {
+  supplier_id: string;
+  project_id: string;
+  order_date: string;
+  expected_delivery_date?: string | null;
+  notes?: string | null;
+}
 
-  createdAt: string;
-  updatedAt: string;
+/** Requires the opaque `updated_at` token from the last-loaded representation. */
+export interface PurchaseOrderUpdatePayload {
+  supplier_id: string;
+  project_id: string;
+  order_date: string;
+  expected_delivery_date?: string | null;
+  notes?: string | null;
+  updated_at: string;
+}
+
+/** Body for confirm/cancel/return-to-draft, and for DELETE (as the request body). */
+export interface PurchaseOrderConcurrencyPayload {
+  updated_at: string;
 }
 
 export interface PurchaseOrderItem {
   id: string;
-
-  purchaseOrderId: string;
-  materialId: string;
-
+  material: PurchaseOrderMaterialRef;
   description: string;
-
-  unit: MaterialUnit;
-
-  quantity: number;
-  unitPrice: number;
-
-  createdAt: string;
-  updatedAt: string;
+  unit_code: MaterialUnitCode;
+  unit_custom_label: string | null;
+  quantity: string;
+  unit_price: string;
+  line_total: string;
+  received_quantity: string;
+  remaining_quantity: string;
+  fulfillment_status: PurchaseOrderFulfillmentStatus;
+  created_at: string;
+  updated_at: string;
 }
 
-/**
- * `GoodsReceipt` is one physical arrival of materials against a
- * PurchaseOrder — internal name deliberately avoids "Receipt" to not
- * collide with `features/receivables/types.ts#Receipt` (an entirely
- * unrelated cash-received concept). It stores nothing derivable from
- * the PurchaseOrder or its items: no `supplierId`/`projectId` (read
- * via `purchaseOrderId`), no `status`/`total`/`receivedQuantity`
- * (derived — see `prototype/fulfillment.ts`).
- *
- * A GoodsReceipt only records what physically arrived — it never
- * creates a Payable, ProjectCost, or any financial entry. See Task
- * 038 discovery: economic/financial recognition of a purchase still
- * only happens through the existing Payable-paid path, unrelated to
- * physical receipt.
- */
+/** Never send unit_code/unit_custom_label/line_total/received_quantity/remaining_quantity/fulfillment_status. */
+export interface PurchaseOrderItemCreatePayload {
+  material_id: string;
+  description: string;
+  quantity: string;
+  unit_price: string;
+}
+
+/** Material is immutable on update — requires the ITEM's own `updated_at` token, not the order's. */
+export interface PurchaseOrderItemUpdatePayload {
+  description: string;
+  quantity: string;
+  unit_price: string;
+  updated_at: string;
+}
+
+/** `GoodsReceipt` is an immutable event — create/delete only, no `updated_at`. */
 export interface GoodsReceipt {
   id: string;
-
-  purchaseOrderId: string;
-
-  receivedAt: string;
-  notes?: string;
-
-  createdAt: string;
-  updatedAt: string;
+  received_at: string;
+  notes: string | null;
+  items: GoodsReceiptItem[];
+  created_at: string;
 }
 
-/**
- * `purchaseOrderItemId` is the only link — `materialId`/`description`/
- * `unit`/`unitPrice` all resolve through the PurchaseOrderItem it
- * references, never duplicated here. A domain invariant (enforced in
- * `prototype/goods-receipt.ts`, not just the store) guarantees the
- * referenced PurchaseOrderItem always belongs to the same
- * `purchaseOrderId` as this GoodsReceiptItem's own GoodsReceipt.
- */
 export interface GoodsReceiptItem {
   id: string;
+  purchase_order_item_id: string;
+  quantity: string;
+}
 
-  goodsReceiptId: string;
-  purchaseOrderItemId: string;
-
-  quantity: number;
+export interface GoodsReceiptCreatePayload {
+  received_at: string;
+  notes?: string | null;
+  items: { purchase_order_item_id: string; quantity: string }[];
 }

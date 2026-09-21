@@ -1,6 +1,14 @@
 "use client";
 
-import { useState } from "react";
+/**
+ * SUPPLY-FRONTEND-01C. Server-side pagination/filtering replaces the old
+ * client-side filter()/slice() over a locally-held array — mirrors
+ * `features/materials/material-list.tsx`'s discipline exactly, via
+ * `usePurchaseOrderList`. `order.total` (API-computed) is the sole
+ * authority for the displayed value — never recalculated from items.
+ */
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, ClipboardList, Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
@@ -8,50 +16,33 @@ import { ChevronLeft, ChevronRight, ClipboardList, Eye, Pencil, Plus, Search, Tr
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageTitle } from "@/components/shared/page-title";
-import { formatCurrency } from "@/lib/currency";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
+import { decimalStringToBrlDisplay } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
-import { useAllSuppliers } from "@/features/suppliers/use-all-suppliers";
 import { useAllProjects } from "@/features/projects/use-all-projects";
-import { calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
-import { listReceiptItemsByPurchaseOrder } from "./prototype/goods-receipt-item-store";
-import { listItemsByPurchaseOrder } from "./prototype/purchase-order-item-store";
-import { removePurchaseOrder } from "./prototype/purchase-order";
-import { calculatePurchaseOrderTotal } from "./prototype/purchase-totals";
-import { usePurchaseOrders } from "./prototype/use-purchase-orders";
+import { deletePurchaseOrder } from "./purchase-orders-client";
+import { usePurchaseOrderList } from "./use-purchase-orders";
 import { PurchaseOrderStatusBadge } from "./components/status-badge";
 import {
+  PURCHASE_ORDER_FULFILLMENT_LABEL,
   PURCHASE_ORDER_STATUS_FILTERS,
   PURCHASE_ORDER_STATUS_FILTER_LABEL,
-  type PurchaseOrder,
+  type PurchaseOrderListItem,
   type PurchaseOrderStatusFilter,
 } from "./types";
 
-const FULFILLMENT_LABEL: Record<string, string> = {
-  not_received: "Não recebido",
-  partial: "Recebimento parcial",
-  received: "Recebido",
-};
-
-function normalize(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
-}
-
-function matchesFilter(purchaseOrder: PurchaseOrder, filter: PurchaseOrderStatusFilter): boolean {
-  if (filter === "all") return true;
-  return purchaseOrder.commercialStatus === filter;
-}
+const PER_PAGE = 15;
+const SEARCH_DEBOUNCE_MS = 300;
 
 interface RowActionsProps {
-  purchaseOrder: PurchaseOrder;
-  onDelete: (purchaseOrder: PurchaseOrder) => void;
+  purchaseOrder: PurchaseOrderListItem;
+  onDelete: (purchaseOrder: PurchaseOrderListItem) => void;
 }
 
 function RowActions({ purchaseOrder, onDelete }: RowActionsProps) {
-  const status = purchaseOrder.commercialStatus;
+  const status = purchaseOrder.commercial_status;
   return (
     <div className="flex shrink-0 items-center gap-1">
       <Link
@@ -84,43 +75,26 @@ function RowActions({ purchaseOrder, onDelete }: RowActionsProps) {
   );
 }
 
-function PurchaseOrderCard({
-  purchaseOrder,
-  supplierName,
-  projectName,
-  onDelete,
-}: {
-  purchaseOrder: PurchaseOrder;
-  supplierName?: string;
-  projectName?: string;
-  onDelete: (purchaseOrder: PurchaseOrder) => void;
-}) {
-  const items = listItemsByPurchaseOrder(purchaseOrder.id);
-  const receiptItems = listReceiptItemsByPurchaseOrder(purchaseOrder.id);
-  const total = calculatePurchaseOrderTotal(items);
-  const fulfillment = calculatePurchaseOrderFulfillment(items, receiptItems);
-  const showFulfillment =
-    (purchaseOrder.commercialStatus === "ordered" && fulfillment !== "not_received") ||
-    (purchaseOrder.commercialStatus === "cancelled" && fulfillment !== "not_received");
-
+function PurchaseOrderCard({ purchaseOrder, onDelete }: RowActionsProps) {
+  const showFulfillment = purchaseOrder.fulfillment_status !== "not_received";
   return (
     <div className="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-semibold text-foreground">
-            {supplierName ?? "Fornecedor não encontrado"}
-          </p>
-          <PurchaseOrderStatusBadge status={purchaseOrder.commercialStatus} />
+          <p className="truncate text-sm font-semibold text-foreground">{purchaseOrder.supplier.name}</p>
+          <PurchaseOrderStatusBadge status={purchaseOrder.commercial_status} />
         </div>
-        {projectName ? <p className="truncate text-xs text-muted-foreground">{projectName}</p> : null}
+        <p className="truncate text-xs text-muted-foreground">{purchaseOrder.project.name}</p>
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold tabular-nums text-foreground">
-            {formatCurrency(total)}
+            {decimalStringToBrlDisplay(purchaseOrder.total)}
           </span>
-          <span className="text-xs text-muted-foreground">{formatDate(purchaseOrder.orderDate)}</span>
+          <span className="text-xs text-muted-foreground">{formatDate(purchaseOrder.order_date)}</span>
         </div>
         {showFulfillment ? (
-          <p className="text-[11px] text-muted-foreground/70">{FULFILLMENT_LABEL[fulfillment]}</p>
+          <p className="text-[11px] text-muted-foreground/70">
+            {PURCHASE_ORDER_FULFILLMENT_LABEL[purchaseOrder.fulfillment_status]}
+          </p>
         ) : null}
       </div>
       <RowActions purchaseOrder={purchaseOrder} onDelete={onDelete} />
@@ -128,37 +102,22 @@ function PurchaseOrderCard({
   );
 }
 
-const TABLE_ROW_GRID = "lg:grid lg:grid-cols-[minmax(0,1fr)_150px_140px_110px_112px] lg:items-center lg:gap-4";
+const TABLE_ROW_GRID = "grid-cols-[minmax(0,1fr)_150px_140px_110px_112px] items-center gap-4";
 
-function PurchaseOrderTableRow({
-  purchaseOrder,
-  supplierName,
-  projectName,
-  onDelete,
-}: {
-  purchaseOrder: PurchaseOrder;
-  supplierName?: string;
-  projectName?: string;
-  onDelete: (purchaseOrder: PurchaseOrder) => void;
-}) {
-  const items = listItemsByPurchaseOrder(purchaseOrder.id);
-  const total = calculatePurchaseOrderTotal(items);
-
+function PurchaseOrderTableRow({ purchaseOrder, onDelete }: RowActionsProps) {
   return (
-    <div className={cn("flex items-center px-4 py-3.5", TABLE_ROW_GRID)}>
+    <div className={cn("grid px-4 py-3.5", TABLE_ROW_GRID)}>
       <div className="min-w-0 space-y-0.5">
-        <p className="truncate text-sm font-medium text-foreground">
-          {supplierName ?? "Fornecedor não encontrado"}
-        </p>
-        {projectName ? <p className="truncate text-xs text-muted-foreground">{projectName}</p> : null}
+        <p className="truncate text-sm font-medium text-foreground">{purchaseOrder.supplier.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{purchaseOrder.project.name}</p>
       </div>
       <div>
-        <PurchaseOrderStatusBadge status={purchaseOrder.commercialStatus} />
+        <PurchaseOrderStatusBadge status={purchaseOrder.commercial_status} />
       </div>
       <span className="text-sm font-semibold tabular-nums text-foreground">
-        {formatCurrency(total)}
+        {decimalStringToBrlDisplay(purchaseOrder.total)}
       </span>
-      <span className="text-sm text-muted-foreground">{formatDate(purchaseOrder.orderDate)}</span>
+      <span className="text-sm text-muted-foreground">{formatDate(purchaseOrder.order_date)}</span>
       <div className="justify-self-end">
         <RowActions purchaseOrder={purchaseOrder} onDelete={onDelete} />
       </div>
@@ -166,22 +125,12 @@ function PurchaseOrderTableRow({
   );
 }
 
-function PurchaseOrderTable({
-  purchaseOrders,
-  suppliers,
-  projects,
-  onDelete,
-}: {
-  purchaseOrders: PurchaseOrder[];
-  suppliers: { id: string; name: string }[];
-  projects: { id: string; name: string }[];
-  onDelete: (purchaseOrder: PurchaseOrder) => void;
-}) {
+function PurchaseOrderTable({ purchaseOrders, onDelete }: { purchaseOrders: PurchaseOrderListItem[]; onDelete: (purchaseOrder: PurchaseOrderListItem) => void }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div
         className={cn(
-          "border-b border-border px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase",
+          "grid border-b border-border px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase",
           TABLE_ROW_GRID
         )}
       >
@@ -193,57 +142,26 @@ function PurchaseOrderTable({
       </div>
       <div className="divide-y divide-border">
         {purchaseOrders.map((purchaseOrder) => (
-          <PurchaseOrderTableRow
-            key={purchaseOrder.id}
-            purchaseOrder={purchaseOrder}
-            supplierName={suppliers.find((supplier) => supplier.id === purchaseOrder.supplierId)?.name}
-            projectName={projects.find((project) => project.id === purchaseOrder.projectId)?.name}
-            onDelete={onDelete}
-          />
+          <PurchaseOrderTableRow key={purchaseOrder.id} purchaseOrder={purchaseOrder} onDelete={onDelete} />
         ))}
       </div>
     </div>
   );
 }
 
-const MOBILE_PAGE_SIZE = 5;
-const DESKTOP_PAGE_SIZE = 15;
-
-function Pagination({
-  page,
-  totalPages,
-  onChange,
-  className,
-}: {
-  page: number;
-  totalPages: number;
-  onChange: (page: number) => void;
-  className?: string;
-}) {
-  if (totalPages <= 1) return null;
+function Pagination({ page, lastPage, onChange }: { page: number; lastPage: number; onChange: (page: number) => void }) {
+  if (lastPage <= 1) return null;
 
   return (
-    <div className={cn("flex items-center justify-between gap-3", className)}>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => onChange(page - 1)}
-        disabled={page === 0}
-      >
+    <div className="flex items-center justify-between gap-3">
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange(page - 1)} disabled={page <= 1}>
         <ChevronLeft className="size-4" aria-hidden="true" />
         Anterior
       </Button>
       <span className="text-xs text-muted-foreground">
-        Página {page + 1} de {totalPages}
+        Página {page} de {lastPage}
       </span>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => onChange(page + 1)}
-        disabled={page >= totalPages - 1}
-      >
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange(page + 1)} disabled={page >= lastPage}>
         Próxima
         <ChevronRight className="size-4" aria-hidden="true" />
       </Button>
@@ -251,75 +169,87 @@ function Pagination({
   );
 }
 
+interface DeleteState {
+  purchaseOrder: PurchaseOrderListItem;
+  error: string | null;
+}
+
 export function PurchaseOrderList() {
-  const { purchaseOrders, refresh } = usePurchaseOrders();
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") ?? undefined;
+  const supplierId = searchParams.get("supplierId") ?? undefined;
+
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<PurchaseOrderStatusFilter>("all");
-  const [mobilePage, setMobilePage] = useState(0);
-  const [desktopPage, setDesktopPage] = useState(0);
-  const { suppliers: allSuppliers } = useAllSuppliers();
-  const suppliers = allSuppliers ?? [];
+  const [page, setPage] = useState(1);
+  const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
+
   const { projects: allProjects } = useAllProjects();
-  const projects = allProjects ?? [];
-  const searchParams = useSearchParams();
-  const projectId = searchParams.get("projectId");
-  const project = projectId ? (projects ?? []).find((item) => item.id === projectId) : undefined;
+  const project = projectId ? (allProjects ?? []).find((item) => item.id === projectId) : undefined;
 
-  function handleDelete(purchaseOrder: PurchaseOrder) {
-    const confirmed = window.confirm(
-      "Excluir este pedido de compra? Esta ação não pode ser desfeita."
-    );
-    if (!confirmed) return;
-    const result = removePurchaseOrder(purchaseOrder);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
-    }
-    refresh();
-  }
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-  // Project scope is the base filter — commercial-status filter and
-  // search both apply on top of it, never around it (Demo-Ready 003).
-  const scoped = (purchaseOrders ?? []).filter(
-    (purchaseOrder) => !projectId || purchaseOrder.projectId === projectId
-  );
-
-  const normalizedSearch = normalize(search.trim());
-  const filtered = scoped.filter((purchaseOrder) => {
-    if (!matchesFilter(purchaseOrder, statusFilter)) return false;
-    if (normalizedSearch === "") return true;
-    const supplierName = suppliers.find((supplier) => supplier.id === purchaseOrder.supplierId)?.name ?? "";
-    const projectName = projects.find((item) => item.id === purchaseOrder.projectId)?.name ?? "";
-    return (
-      normalize(supplierName).includes(normalizedSearch) ||
-      normalize(projectName).includes(normalizedSearch)
-    );
+  const { response, error, loading, reload } = usePurchaseOrderList({
+    search: search || undefined,
+    commercialStatus: statusFilter === "all" ? undefined : statusFilter,
+    projectId,
+    supplierId,
+    page,
+    perPage: PER_PAGE,
   });
-
-  const newHref = projectId ? `/compras/nova?projectId=${projectId}` : "/compras/nova";
-
-  function updateSearch(value: string) {
-    setSearch(value);
-    setMobilePage(0);
-    setDesktopPage(0);
-  }
 
   function updateStatusFilter(value: PurchaseOrderStatusFilter) {
     setStatusFilter(value);
-    setMobilePage(0);
-    setDesktopPage(0);
+    setPage(1);
   }
 
-  const mobileTotalPages = Math.max(1, Math.ceil(filtered.length / MOBILE_PAGE_SIZE));
-  const desktopTotalPages = Math.max(1, Math.ceil(filtered.length / DESKTOP_PAGE_SIZE));
-  const mobilePurchaseOrders = filtered.slice(
-    mobilePage * MOBILE_PAGE_SIZE,
-    mobilePage * MOBILE_PAGE_SIZE + MOBILE_PAGE_SIZE
-  );
-  const desktopPurchaseOrders = filtered.slice(
-    desktopPage * DESKTOP_PAGE_SIZE,
-    desktopPage * DESKTOP_PAGE_SIZE + DESKTOP_PAGE_SIZE
-  );
+  const newHref = projectId ? `/compras/nova?projectId=${projectId}` : "/compras/nova";
+
+  function handleDelete(purchaseOrder: PurchaseOrderListItem) {
+    setDeleteState({ purchaseOrder, error: null });
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteState) return;
+    const { purchaseOrder } = deleteState;
+    try {
+      await deletePurchaseOrder(purchaseOrder.id, { updated_at: purchaseOrder.updated_at });
+      setDeleteState(null);
+      reload();
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError && deleteError.status === 409) {
+        setDeleteState(null);
+        reload();
+        return;
+      }
+      if (deleteError instanceof ApiError && deleteError.status === 404) {
+        setDeleteState(null);
+        reload();
+        return;
+      }
+      if (deleteError instanceof ApiValidationError) {
+        setDeleteState({
+          purchaseOrder,
+          error: deleteError.serverMessage ?? Object.values(deleteError.errors)[0]?.[0] ?? "Não foi possível excluir agora.",
+        });
+        return;
+      }
+      setDeleteState({ purchaseOrder, error: "Não foi possível excluir agora." });
+    }
+  }
+
+  const items = response?.data ?? [];
+  const lastPage = response?.meta.last_page ?? 1;
+  const isFiltered = search !== "" || statusFilter !== "all";
+  const isEmptyOverall = response !== undefined && items.length === 0 && !isFiltered && page === 1;
+  const isEmptySearch = response !== undefined && items.length === 0 && !isEmptyOverall;
 
   return (
     <div className="space-y-6">
@@ -352,44 +282,55 @@ export function PurchaseOrderList() {
         </Link>
       ) : null}
 
-      {purchaseOrders === undefined || scoped.length === 0 ? null : (
-        <div className="space-y-3">
-          <div className="relative">
-            <Search
-              className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(event) => updateSearch(event.target.value)}
-              placeholder="Buscar por fornecedor ou obra"
-              aria-label="Buscar por fornecedor ou obra"
-              className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {PURCHASE_ORDER_STATUS_FILTERS.map((item) => (
-              <button
-                key={item}
-                type="button"
-                aria-pressed={statusFilter === item}
-                onClick={() => updateStatusFilter(item)}
-                className={
-                  statusFilter === item
-                    ? "rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
-                    : "rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/30"
-                }
-              >
-                {PURCHASE_ORDER_STATUS_FILTER_LABEL[item]}
-              </button>
-            ))}
-          </div>
+      <div className="space-y-3">
+        <div className="relative">
+          <Search
+            className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Buscar por fornecedor, obra ou número"
+            aria-label="Buscar por fornecedor, obra ou número"
+            className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+          />
         </div>
-      )}
 
-      {purchaseOrders === undefined ? null : scoped.length === 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {PURCHASE_ORDER_STATUS_FILTERS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              aria-pressed={statusFilter === item}
+              onClick={() => updateStatusFilter(item)}
+              className={
+                statusFilter === item
+                  ? "rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+                  : "rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/30"
+              }
+            >
+              {PURCHASE_ORDER_STATUS_FILTER_LABEL[item]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar as compras agora.
+          </p>
+          <Button type="button" onClick={() => reload()}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : loading || response === undefined ? (
+        <div className="space-y-3" role="status" aria-busy="true">
+          <span className="sr-only">Carregando compras</span>
+        </div>
+      ) : isEmptyOverall ? (
         <EmptyState
           icon={ClipboardList}
           title={projectId ? "Nenhuma compra para esta obra" : "Nenhuma compra ainda"}
@@ -399,7 +340,7 @@ export function PurchaseOrderList() {
               : "Registre pedidos de compra de materiais para as obras."
           }
         />
-      ) : filtered.length === 0 ? (
+      ) : isEmptySearch ? (
         <EmptyState
           icon={ClipboardList}
           title="Nenhuma compra encontrada"
@@ -408,39 +349,42 @@ export function PurchaseOrderList() {
       ) : (
         <>
           <div className="space-y-3 lg:hidden">
-            {mobilePurchaseOrders.map((purchaseOrder) => (
-              <PurchaseOrderCard
-                key={purchaseOrder.id}
-                purchaseOrder={purchaseOrder}
-                supplierName={
-                  suppliers.find((supplier) => supplier.id === purchaseOrder.supplierId)?.name
-                }
-                projectName={projects.find((project) => project.id === purchaseOrder.projectId)?.name}
-                onDelete={handleDelete}
-              />
+            {items.map((purchaseOrder) => (
+              <PurchaseOrderCard key={purchaseOrder.id} purchaseOrder={purchaseOrder} onDelete={handleDelete} />
             ))}
-            <Pagination page={mobilePage} totalPages={mobileTotalPages} onChange={setMobilePage} />
           </div>
-          <div className="hidden space-y-3 lg:block">
-            <PurchaseOrderTable
-              purchaseOrders={desktopPurchaseOrders}
-              suppliers={suppliers}
-              projects={projects}
-              onDelete={handleDelete}
-            />
-            <Pagination page={desktopPage} totalPages={desktopTotalPages} onChange={setDesktopPage} />
+          <div className="hidden lg:block">
+            <PurchaseOrderTable purchaseOrders={items} onDelete={handleDelete} />
           </div>
+          <Pagination page={response.meta.current_page} lastPage={lastPage} onChange={setPage} />
         </>
       )}
 
-      {purchaseOrders !== undefined && scoped.length === 0 ? (
-        <Button
-          size="lg"
-          className="w-full"
-          nativeButton={false}
-          render={<Link href={newHref}>Registrar primeira compra</Link>}
-        />
+      {response !== undefined && items.length === 0 && !isFiltered ? (
+        <Button size="lg" className="w-full" nativeButton={false} render={<Link href={newHref}>Registrar primeira compra</Link>} />
       ) : null}
+
+      <ConfirmActionDialog
+        open={deleteState !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteState(null);
+        }}
+        title="Excluir pedido de compra?"
+        description={
+          deleteState
+            ? `Excluir o pedido de compra do fornecedor "${deleteState.purchaseOrder.supplier.name}"? Esta ação não pode ser desfeita.`
+            : undefined
+        }
+        confirmLabel="Excluir"
+        destructive
+        onConfirm={handleConfirmDelete}
+      >
+        {deleteState?.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {deleteState.error}
+          </p>
+        ) : null}
+      </ConfirmActionDialog>
     </div>
   );
 }

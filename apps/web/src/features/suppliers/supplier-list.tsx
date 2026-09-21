@@ -19,7 +19,6 @@ import { useAuth } from "@/features/auth/auth-provider";
 import { CreateSupplierDialog } from "./create-supplier-dialog";
 import { deleteSupplier, listSuppliers } from "./suppliers-client";
 import { supplierPhoneApiToInput } from "./supplier-phone";
-import { hasLocalPurchaseOrder } from "./prototype/supplier-local-dependencies";
 import { SupplierStatusBadge } from "./components/status-badge";
 import { SUPPLIER_STATUS_FILTERS, SUPPLIER_STATUS_FILTER_LABEL } from "./types";
 import type { SupplierListItem, SupplierPaginationResponse, SupplierStatusFilter } from "./types";
@@ -229,21 +228,12 @@ export function SupplierList() {
   }, [load]);
 
   function handleDelete(supplier: SupplierListItem) {
-    if (hasLocalPurchaseOrder(supplier.id)) {
-      setDeleteState({
-        companyId: activeCompanyId,
-        supplier,
-        error: "Este fornecedor possui compras vinculadas e não pode ser excluído.",
-      });
-      return;
-    }
     setDeleteState({ companyId: activeCompanyId, supplier, error: null });
   }
 
   async function handleConfirmDelete() {
     if (!deleteState) return;
     const { supplier, companyId: requestCompanyId } = deleteState;
-    if (hasLocalPurchaseOrder(supplier.id)) return;
     try {
       await deleteSupplier(supplier.id);
       if (activeCompanyIdRef.current !== requestCompanyId) return;
@@ -375,7 +365,7 @@ export function SupplierList() {
         }}
         title="Excluir fornecedor?"
         description={
-          deleteState && deleteState.companyId === activeCompanyId && !hasLocalPurchaseOrder(deleteState.supplier.id)
+          deleteState && deleteState.companyId === activeCompanyId
             ? `Excluir o fornecedor "${deleteState.supplier.name}"? Esta ação não pode ser desfeita.`
             : undefined
         }

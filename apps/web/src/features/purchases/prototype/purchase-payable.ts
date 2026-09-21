@@ -41,7 +41,6 @@ import { toCents } from "@/lib/currency";
 import { todayIso } from "@/lib/date";
 import { createPayableId, savePayable } from "@/features/payables/prototype/payable-store";
 import type { Payable } from "@/features/payables/types";
-import type { Supplier } from "@/features/suppliers/types";
 import type { PurchaseOrder } from "../types";
 
 export type GeneratePayableResult = { ok: true; payable: Payable } | { ok: false; error: string };
@@ -53,12 +52,20 @@ export interface GeneratePayableFromPurchaseOrderInput {
   notes?: string;
 }
 
+/**
+ * SUPPLY-FRONTEND-01C: `purchaseOrder.supplier` is now the API's own
+ * embedded `{id, name, active}` ref, already resolved as part of the
+ * PurchaseOrder detail response — no separate Supplier fetch needed
+ * here, only `.name`. `supplier` is `null` only for a defensive caller
+ * that hasn't confirmed the order's supplier resolved (should not
+ * normally happen since it's embedded).
+ */
 export function generatePayableFromPurchaseOrder(
   purchaseOrder: PurchaseOrder,
-  supplier: Supplier | null,
+  supplier: { name: string } | null,
   input: GeneratePayableFromPurchaseOrderInput
 ): GeneratePayableResult {
-  if (purchaseOrder.commercialStatus === "draft") {
+  if (purchaseOrder.commercial_status === "draft") {
     return {
       ok: false,
       error: "Pedidos em rascunho ainda não geram conta a pagar. Confirme o pedido primeiro.",
@@ -82,7 +89,7 @@ export function generatePayableFromPurchaseOrder(
     amount: input.amount,
     category: "materials",
     dueDate: input.dueDate,
-    projectId: purchaseOrder.projectId,
+    projectId: purchaseOrder.project.id,
     notes: input.notes?.trim() || undefined,
     originType: "purchase-order",
     originId: purchaseOrder.id,

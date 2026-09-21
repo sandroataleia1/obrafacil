@@ -52,12 +52,12 @@ import type { MaterialRequirement } from "@/features/materials/types";
 import { calculateAvailableQuantity } from "@/features/materials/prototype/material-consumption";
 import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
 import { calculateMaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
-import { listPurchaseOrders, listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
 import {
-  listItemsByPurchaseOrder,
-  listItemsByPurchaseOrders,
-} from "@/features/purchases/prototype/purchase-order-item-store";
-import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
+  purchaseItemForLegacyPlanning,
+  purchaseOrderForLegacyPlanning,
+  receiptItemsForLegacyPlanning,
+} from "@/features/purchases/purchase-planning-adapter";
+import type { PurchaseOrder } from "@/features/purchases/types";
 import { listStockPositions } from "./stock";
 
 /**
@@ -87,21 +87,29 @@ export interface ProjectMaterialSupplyMetrics {
  * it, and whatever is already contracted but not yet arrived covers
  * the rest. Only the true remainder still needs a new purchase.
  */
+/**
+ * SUPPLY-FRONTEND-01C §45-46: PurchaseOrder/GoodsReceipt are real API
+ * now — `purchaseOrders` is the caller's own already-resolved detail
+ * array (never self-fetched here), mirroring the exact
+ * `requirement`-as-parameter bridge already used for MaterialRequirement
+ * (SUPPLY-FRONTEND-01B1). Bridged into the still-local planning shapes
+ * via `purchase-planning-adapter.ts`, scoped to this one Project.
+ */
 export function getProjectMaterialSupplyMetrics(
   projectId: string,
   materialId: string,
-  requirement: MaterialRequirement | null
+  requirement: MaterialRequirement | null,
+  purchaseOrders: PurchaseOrder[]
 ): ProjectMaterialSupplyMetrics {
-  const purchaseOrders = listPurchaseOrdersByProject(projectId);
-  const items = listItemsByPurchaseOrders(purchaseOrders.map((purchaseOrder) => purchaseOrder.id));
-  const receiptItems = purchaseOrders.flatMap((purchaseOrder) =>
-    listReceiptItemsByPurchaseOrder(purchaseOrder.id)
-  );
+  const projectOrders = purchaseOrders.filter((order) => order.project.id === projectId);
+  const legacyOrders = projectOrders.map(purchaseOrderForLegacyPlanning);
+  const items = projectOrders.flatMap(purchaseItemForLegacyPlanning);
+  const receiptItems = projectOrders.flatMap(receiptItemsForLegacyPlanning);
   const consumptions = listConsumptionsByProject(projectId);
 
   const planning = calculateMaterialPlanning(
     requirement ? requirementQuantityForLegacyPlanning(requirement.required_quantity) : null,
-    purchaseOrders,
+    legacyOrders,
     items,
     receiptItems,
     consumptions,
@@ -171,7 +179,10 @@ export interface StockSupplyPosition extends ProjectMaterialSupplyMetrics {
  * own financial logic (that function is only for the metrics, this
  * loop is only for discovering which pairs to compute metrics for).
  */
-export function listSupplyPositions(requirements: MaterialRequirement[]): StockSupplyPosition[] {
+export function listSupplyPositions(
+  requirements: MaterialRequirement[],
+  purchaseOrders: PurchaseOrder[]
+): StockSupplyPosition[] {
   const pairs = new Map<string, { projectId: string; materialId: string }>();
 
   for (const position of listStockPositions()) {
@@ -188,12 +199,12 @@ export function listSupplyPositions(requirements: MaterialRequirement[]): StockS
     requirementByPair.set(key, requirement);
   }
 
-  for (const purchaseOrder of listPurchaseOrders()) {
-    if (purchaseOrder.commercialStatus !== "ordered") continue;
-    for (const item of listItemsByPurchaseOrder(purchaseOrder.id)) {
-      pairs.set(`${purchaseOrder.projectId}::${item.materialId}`, {
-        projectId: purchaseOrder.projectId,
-        materialId: item.materialId,
+  for (const purchaseOrder of purchaseOrders) {
+    if (purchaseOrder.commercial_status !== "ordered") continue;
+    for (const item of purchaseOrder.items) {
+      pairs.set(`${purchaseOrder.project.id}::${item.material.id}`, {
+        projectId: purchaseOrder.project.id,
+        materialId: item.material.id,
       });
     }
   }
@@ -201,6 +212,6 @@ export function listSupplyPositions(requirements: MaterialRequirement[]): StockS
   return Array.from(pairs.entries()).map(([key, { projectId, materialId }]) => ({
     projectId,
     materialId,
-    ...getProjectMaterialSupplyMetrics(projectId, materialId, requirementByPair.get(key) ?? null),
+    ...getProjectMaterialSupplyMetrics(projectId, materialId, requirementByPair.get(key) ?? null, purchaseOrders),
   }));
 }

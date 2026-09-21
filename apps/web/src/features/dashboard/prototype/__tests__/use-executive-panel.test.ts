@@ -16,8 +16,13 @@ vi.mock("@/features/materials/material-requirements-client", () => ({
   listMaterialRequirementsForProjects: vi.fn(),
 }));
 
+vi.mock("@/features/purchases/purchase-orders-client", () => ({
+  listPurchaseOrderDetailsForProjects: vi.fn(),
+}));
+
 import { listAllProjectsFromApi } from "@/features/projects/projects-client";
 import { listMaterialRequirementsForProjects } from "@/features/materials/material-requirements-client";
+import { listPurchaseOrderDetailsForProjects } from "@/features/purchases/purchase-orders-client";
 import { useExecutivePanel } from "../use-executive-panel";
 import type { ProjectListItem } from "@/features/projects/types";
 import type { MaterialRequirement } from "@/features/materials/types";
@@ -55,6 +60,7 @@ describe("useExecutivePanel — FRONTEND-PROJECTS-01A §14 (TD9)", () => {
   beforeEach(() => {
     vi.mocked(listAllProjectsFromApi).mockReset();
     vi.mocked(listMaterialRequirementsForProjects).mockReset().mockResolvedValue(new Map());
+    vi.mocked(listPurchaseOrderDetailsForProjects).mockReset().mockResolvedValue(new Map());
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
     window.localStorage.clear();
   });
@@ -117,6 +123,7 @@ describe("useExecutivePanel Requirement migration — SUPPLY-FRONTEND-01B1 §28 
   beforeEach(() => {
     vi.mocked(listAllProjectsFromApi).mockReset();
     vi.mocked(listMaterialRequirementsForProjects).mockReset();
+    vi.mocked(listPurchaseOrderDetailsForProjects).mockReset().mockResolvedValue(new Map());
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
     window.localStorage.clear();
   });

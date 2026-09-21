@@ -30,10 +30,6 @@ vi.mock("../suppliers-client", () => ({
   deleteSupplier: vi.fn(),
 }));
 
-vi.mock("../prototype/supplier-local-dependencies", () => ({
-  hasLocalPurchaseOrder: () => false,
-}));
-
 import { deleteSupplier, listSuppliers } from "../suppliers-client";
 
 function item(id: string, name: string): SupplierListItem {

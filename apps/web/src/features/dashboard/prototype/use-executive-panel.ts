@@ -22,9 +22,12 @@ import { listAllEmployees } from "@/features/employees/prototype/employee-store"
 import { listAllWorkPeriods } from "@/features/employees/prototype/work-period-store";
 import { listAllProjectTeamAssignments } from "@/features/projects/team/project-team-assignment-store";
 import { listMaterialRequirementsForProjects } from "@/features/materials/material-requirements-client";
-import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
-import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
-import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
+import { listPurchaseOrderDetailsForProjects } from "@/features/purchases/purchase-orders-client";
+import {
+  purchaseItemForLegacyPlanning,
+  purchaseOrderForLegacyPlanning,
+  receiptItemsForLegacyPlanning,
+} from "@/features/purchases/purchase-planning-adapter";
 import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
 
 import { buildCompanyAnalyticsFacts } from "@/features/analytics/company-analytics";
@@ -76,6 +79,13 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
   // correctly surfaces `error: true` for the whole panel.
   const requirementsByProject = await listMaterialRequirementsForProjects(projects.map((project) => project.id));
 
+  // SUPPLY-FRONTEND-01C: PurchaseOrder/GoodsReceipt are real API now —
+  // fetched per Project via `listPurchaseOrderDetailsForProjects`, then
+  // bridged into the still-local planning shapes via the same adapter
+  // `ProjectRequirementList`/`ProjectDetail` use. A failure on ANY
+  // Project's fetch rejects the whole call, same as Requirements above.
+  const purchasesByProject = await listPurchaseOrderDetailsForProjects(projects.map((project) => project.id));
+
   const projectEntries: ExecutivePanelProjectEntry[] = projects.map((project) => {
     // §44/§45: no legacy Budget prototype lookup — the real Project's
     // `source_budget` never exposes cost/margin (only {id, number,
@@ -85,11 +95,10 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
     // anymore and stays null here, same principle as
     // `buildProjectManagementSummary`'s referenceAmount boundary.
     const costs = listCostsByProject(project.id);
-    const purchaseOrders = listPurchaseOrdersByProject(project.id);
-    const purchaseOrderItems = listItemsByPurchaseOrders(purchaseOrders.map((purchaseOrder) => purchaseOrder.id));
-    const goodsReceiptItems = purchaseOrders.flatMap((purchaseOrder) =>
-      listReceiptItemsByPurchaseOrder(purchaseOrder.id)
-    );
+    const projectPurchaseOrders = purchasesByProject.get(project.id) ?? [];
+    const purchaseOrders = projectPurchaseOrders.map(purchaseOrderForLegacyPlanning);
+    const purchaseOrderItems = projectPurchaseOrders.flatMap(purchaseItemForLegacyPlanning);
+    const goodsReceiptItems = projectPurchaseOrders.flatMap(receiptItemsForLegacyPlanning);
 
     return {
       project,

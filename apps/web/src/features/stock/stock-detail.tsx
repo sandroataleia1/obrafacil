@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Boxes } from "lucide-react";
 
@@ -13,7 +14,8 @@ import { useMaterial } from "@/features/materials/use-material";
 import { useMaterialRequirements } from "@/features/materials/use-material-requirements";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useProject } from "@/features/projects/use-project";
-import { getGoodsReceipt } from "@/features/purchases/prototype/goods-receipt-store";
+import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
+import type { PurchaseOrder } from "@/features/purchases/types";
 import { useStockDetail } from "./prototype/use-stock-detail";
 import { getProjectMaterialSupplyMetrics } from "./prototype/supply-metrics";
 import { STOCK_MOVEMENT_SOURCE_LABEL, type StockMovement } from "./types";
@@ -28,16 +30,14 @@ function InfoField({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+/**
+ * SUPPLY-FRONTEND-01C: the local Purchase/GoodsReceipt stores this used
+ * to resolve a link from are removed — the label-only rendering below is
+ * deliberate (not a regression) until SUPPLY-FRONTEND-01D replaces stock
+ * movements with a real backend read that can carry a genuine link.
+ */
 function movementOrigin(movement: StockMovement): ReactNode {
   if (movement.sourceType === "GOODS_RECEIPT") {
-    const goodsReceipt = getGoodsReceipt(movement.sourceId);
-    if (goodsReceipt) {
-      return (
-        <Link href={`/compras/${goodsReceipt.purchaseOrderId}`} className="text-primary hover:underline">
-          {STOCK_MOVEMENT_SOURCE_LABEL.GOODS_RECEIPT}
-        </Link>
-      );
-    }
     return STOCK_MOVEMENT_SOURCE_LABEL.GOODS_RECEIPT;
   }
   if (movement.sourceType === "CONSUMPTION") {
@@ -81,6 +81,21 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
     error: requirementsError,
     reload: reloadRequirements,
   } = useMaterialRequirements(projectId);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
+  const [purchasesError, setPurchasesError] = useState(false);
+
+  function loadPurchases() {
+    setPurchasesError(false);
+    listPurchaseOrderDetailsForProject(projectId)
+      .then((orders) => setPurchaseOrders(orders))
+      .catch(() => setPurchasesError(true));
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadPurchases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   if (project === undefined || material === undefined) return null;
 
@@ -101,7 +116,9 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
   const subtitle = project.name;
   const requirement = (requirements ?? []).find((item) => item.material.id === materialId) ?? null;
   const supply =
-    requirements !== undefined ? getProjectMaterialSupplyMetrics(projectId, materialId, requirement) : null;
+    requirements !== undefined && purchaseOrders !== undefined
+      ? getProjectMaterialSupplyMetrics(projectId, materialId, requirement, purchaseOrders)
+      : null;
   const withUnit = (value: number) => `${formatQuantity(value)} ${unitLabel}`;
 
   return (
@@ -163,6 +180,15 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
               Não foi possível carregar a necessidade planejada agora.
             </p>
             <Button type="button" onClick={reloadRequirements}>
+              Tentar novamente
+            </Button>
+          </div>
+        ) : purchasesError ? (
+          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+            <p role="alert" className="text-sm text-muted-foreground">
+              Não foi possível carregar as compras desta obra agora.
+            </p>
+            <Button type="button" onClick={loadPurchases}>
               Tentar novamente
             </Button>
           </div>

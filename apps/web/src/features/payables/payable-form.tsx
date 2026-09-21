@@ -21,15 +21,10 @@ import {
   PROJECT_COST_CATEGORY_LABEL,
   type ProjectCostCategory,
 } from "@/features/project-costs/types";
-import { getPurchaseOrder } from "@/features/purchases/prototype/purchase-order-store";
-import { listItemsByPurchaseOrder } from "@/features/purchases/prototype/purchase-order-item-store";
-import { calculatePurchaseOrderTotal } from "@/features/purchases/prototype/purchase-totals";
+import { usePurchaseOrder } from "@/features/purchases/use-purchase-order";
 import { calculatePurchaseFinancialSummary } from "@/features/purchases/prototype/purchase-financial-summary";
 import { generatePayableFromPurchaseOrder } from "@/features/purchases/prototype/purchase-payable";
-import type { PurchaseOrder } from "@/features/purchases/types";
-import { getSupplier } from "@/features/suppliers/suppliers-client";
-import { ApiError } from "@/lib/api-client";
-import type { Supplier } from "@/features/suppliers/types";
+import type { PurchaseOrder, PurchaseOrderSupplierRef } from "@/features/purchases/types";
 import { createPayableId, listPayablesByOrigin, savePayable } from "./prototype/payable-store";
 import { updatePayable } from "./prototype/payable";
 import { usePayable } from "./prototype/use-payable";
@@ -39,7 +34,7 @@ const NO_PROJECT = "none";
 
 interface PurchaseOrderContext {
   purchaseOrder: PurchaseOrder;
-  supplier: Supplier;
+  supplier: PurchaseOrderSupplierRef;
   uncoveredAmount: number;
 }
 
@@ -50,9 +45,13 @@ export function PayableForm({ payableId }: { payableId?: string }) {
   const purchaseOrderId = !isEditing ? searchParams.get("purchaseOrderId") : null;
 
   const { payable: existingPayable } = usePayable(payableId ?? "");
-  const [purchaseOrderContext, setPurchaseOrderContext] = useState<
-    PurchaseOrderContext | null | undefined
-  >(purchaseOrderId ? undefined : null);
+  const {
+    order: purchaseOrder,
+    error: purchaseOrderError,
+  } = usePurchaseOrder(purchaseOrderId ?? "");
+  const [purchaseOrderContext, setPurchaseOrderContext] = useState<PurchaseOrderContext | null | undefined>(
+    purchaseOrderId ? undefined : null
+  );
 
   const { projects: allProjects, error: projectsError } = useAllProjects();
   const projects = allProjects ?? [];
@@ -82,40 +81,25 @@ export function PayableForm({ payableId }: { payableId?: string }) {
 
   useEffect(() => {
     if (!purchaseOrderId) return;
-    const purchaseOrder = getPurchaseOrder(purchaseOrderId);
-    if (!purchaseOrder) {
+    if (purchaseOrderError) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPurchaseOrderContext(null);
       return;
     }
-    // Supplier is now the real API master — resolved async. `cancelled`
-    // guards against writing state after this effect's own dependency
-    // (`purchaseOrderId`) has already changed/unmounted.
-    let cancelled = false;
-    getSupplier(purchaseOrder.supplierId)
-      .then((supplierRecord) => {
-        if (cancelled) return;
-        const purchaseTotal = calculatePurchaseOrderTotal(listItemsByPurchaseOrder(purchaseOrderId));
-        const existingPayables = listPayablesByOrigin("purchase-order", purchaseOrderId);
-        const summary = calculatePurchaseFinancialSummary(purchaseTotal, existingPayables);
-        setPurchaseOrderContext({
-          purchaseOrder,
-          supplier: supplierRecord,
-          uncoveredAmount: summary.uncoveredAmount,
-        });
-      })
-      .catch((fetchError: unknown) => {
-        if (cancelled) return;
-        if (fetchError instanceof ApiError && fetchError.status === 404) {
-          setPurchaseOrderContext(null);
-          return;
-        }
-        setPurchaseOrderContext(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [purchaseOrderId]);
+    if (purchaseOrder === undefined) return;
+    if (purchaseOrder === null) {
+      setPurchaseOrderContext(null);
+      return;
+    }
+    const purchaseTotal = Number(purchaseOrder.total);
+    const existingPayables = listPayablesByOrigin("purchase-order", purchaseOrderId);
+    const summary = calculatePurchaseFinancialSummary(purchaseTotal, existingPayables);
+    setPurchaseOrderContext({
+      purchaseOrder,
+      supplier: purchaseOrder.supplier,
+      uncoveredAmount: summary.uncoveredAmount,
+    });
+  }, [purchaseOrderId, purchaseOrder, purchaseOrderError]);
 
   useEffect(() => {
     if (!purchaseOrderContext) return;
@@ -123,7 +107,7 @@ export function PayableForm({ payableId }: { payableId?: string }) {
     setDescription(`Compra · ${purchaseOrderContext.supplier.name}`);
     setSupplier(purchaseOrderContext.supplier.name);
     setCategory("materials");
-    setProjectId(purchaseOrderContext.purchaseOrder.projectId);
+    setProjectId(purchaseOrderContext.purchaseOrder.project.id);
     if (purchaseOrderContext.uncoveredAmount > 0) {
       setAmountInput(String(purchaseOrderContext.uncoveredAmount).replace(".", ","));
     }

@@ -12,11 +12,14 @@ import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
 import { useProject } from "@/features/projects/use-project";
-import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
-import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
-import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
+import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
 import { calculateMaterialPlanning, type MaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
-import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+import type { LegacyGoodsReceiptItem, LegacyPurchaseOrder, LegacyPurchaseOrderItem } from "@/features/purchases/prototype/legacy-types";
+import {
+  purchaseItemForLegacyPlanning,
+  purchaseOrderForLegacyPlanning,
+  receiptItemsForLegacyPlanning,
+} from "@/features/purchases/purchase-planning-adapter";
 import { formatMaterialUnitCode } from "./material-unit";
 import { useAllMaterials } from "./use-all-materials";
 import { listConsumptionsByProject } from "./prototype/material-consumption-store";
@@ -241,30 +244,34 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
   const { requirements, error: requirementsError, reload: reloadRequirements } = useMaterialRequirements(projectId);
   const { materials: allMaterials } = useAllMaterials();
   const materialById = new Map((allMaterials ?? []).map((material) => [material.id, material]));
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
-  const [purchaseOrderItems, setPurchaseOrderItems] = useState<PurchaseOrderItem[] | undefined>(
-    undefined
-  );
-  const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
+  const [purchaseOrders, setPurchaseOrders] = useState<LegacyPurchaseOrder[] | undefined>(undefined);
+  const [purchaseOrderItems, setPurchaseOrderItems] = useState<LegacyPurchaseOrderItem[] | undefined>(undefined);
+  const [receiptItems, setReceiptItems] = useState<LegacyGoodsReceiptItem[] | undefined>(undefined);
+  const [purchasesError, setPurchasesError] = useState(false);
   const [consumptions, setConsumptions] = useState<MaterialConsumption[] | undefined>(undefined);
 
   function refreshConsumptions() {
     setConsumptions(listConsumptionsByProject(projectId));
   }
 
+  function loadPurchases() {
+    setPurchasesError(false);
+    listPurchaseOrderDetailsForProject(projectId)
+      .then((orders) => {
+        setPurchaseOrders(orders.map(purchaseOrderForLegacyPlanning));
+        setPurchaseOrderItems(orders.flatMap(purchaseItemForLegacyPlanning));
+        setReceiptItems(orders.flatMap(receiptItemsForLegacyPlanning));
+      })
+      .catch(() => {
+        setPurchasesError(true);
+      });
+  }
+
   useEffect(() => {
-    const projectPurchaseOrders = listPurchaseOrdersByProject(projectId);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPurchaseOrders(projectPurchaseOrders);
-    setPurchaseOrderItems(
-      listItemsByPurchaseOrders(projectPurchaseOrders.map((purchaseOrder) => purchaseOrder.id))
-    );
-    setReceiptItems(
-      projectPurchaseOrders.flatMap((purchaseOrder) =>
-        listReceiptItemsByPurchaseOrder(purchaseOrder.id)
-      )
-    );
+    loadPurchases();
     setConsumptions(listConsumptionsByProject(projectId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   if (projectError) {
@@ -345,6 +352,15 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
             Não foi possível carregar as necessidades de materiais agora.
           </p>
           <Button type="button" onClick={reloadRequirements}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : purchasesError ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar as compras desta obra agora.
+          </p>
+          <Button type="button" onClick={loadPurchases}>
             Tentar novamente
           </Button>
         </div>

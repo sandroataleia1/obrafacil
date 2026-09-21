@@ -79,10 +79,7 @@
  * cycle anywhere in this graph.
  */
 
-import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
-import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
-import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
-import { listGoodsReceiptsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-store";
+import { listGoodsReceiptShadowEntriesForProjectMaterial } from "@/features/purchases/prototype/goods-receipt-shadow-store";
 import { listStockAdjustmentsByProjectAndMaterial } from "@/features/stock/prototype/stock-adjustment-store";
 import { todayIso } from "@/lib/date";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
@@ -119,36 +116,25 @@ export interface ConsumedEvent {
   units: number;
 }
 
-/** Every physical-arrival event for this Material at this Project,
- * across every PurchaseOrder regardless of current commercialStatus —
+/**
+ * Every physical-arrival event for this Material at this Project —
  * includes receipts from orders later cancelled (the physical arrival
- * already happened). One entry per GoodsReceiptItem. */
+ * already happened). SUPPLY-FRONTEND-01C: Purchase/GoodsReceipt are now
+ * API-backed; this reads the local write-through mirror
+ * (`goods-receipt-shadow-store.ts`) populated by the real
+ * `GoodsReceiptForm`/`PurchaseOrderDetail` API mutations — never the
+ * (now-removed) local Purchase/Receipt stores directly. One entry per
+ * GoodsReceiptItem line.
+ */
 export function listReceivedEventsForProjectMaterial(
   projectId: string,
   materialId: string
 ): ReceivedEvent[] {
-  const purchaseOrders = listPurchaseOrdersByProject(projectId);
-  const materialItemIds = new Set(
-    listItemsByPurchaseOrders(purchaseOrders.map((order) => order.id))
-      .filter((item) => item.materialId === materialId)
-      .map((item) => item.id)
-  );
-
-  const events: ReceivedEvent[] = [];
-  for (const purchaseOrder of purchaseOrders) {
-    for (const goodsReceipt of listGoodsReceiptsByPurchaseOrder(purchaseOrder.id)) {
-      for (const receiptItem of listReceiptItemsByPurchaseOrder(purchaseOrder.id)) {
-        if (receiptItem.goodsReceiptId !== goodsReceipt.id) continue;
-        if (!materialItemIds.has(receiptItem.purchaseOrderItemId)) continue;
-        events.push({
-          goodsReceiptId: goodsReceipt.id,
-          date: goodsReceipt.receivedAt,
-          units: toQuantityUnits(receiptItem.quantity),
-        });
-      }
-    }
-  }
-  return events;
+  return listGoodsReceiptShadowEntriesForProjectMaterial(projectId, materialId).map((entry) => ({
+    goodsReceiptId: entry.goodsReceiptId,
+    date: entry.receivedAt,
+    units: toQuantityUnits(entry.quantity),
+  }));
 }
 
 /** Every physical-usage event for this Material at this Project. One

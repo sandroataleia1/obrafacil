@@ -1,6 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+/**
+ * SUPPLY-FRONTEND-01C. Fully API-driven — zero local store reads. Status-
+ * action buttons call the real confirm/cancel/return-to-draft/delete
+ * endpoints with the order's own opaque `updated_at` token; a 409 shows a
+ * controlled notice and refetches truth, never a silent retry. Item/
+ * receipt deletes surface the server's own message verbatim (the
+ * GoodsReceipt chronology guard in particular returns a specific 422).
+ *
+ * The old prototype's "Financeiro"/Payable-generation section and its
+ * local `hasPayables` guard are REMOVED here: the Supply backend does not
+ * implement a PurchaseOrder→Payable integration, so a local-only
+ * `hasPayables` rule had no real API authority backing it. Return-to-
+ * draft/cancel/delete guards below rely solely on
+ * `order.goods_receipts.length > 0` (real data) — no new financial
+ * integration is created in this gate; the existing, still-working
+ * Payable "Gerar conta a pagar" flow (unrelated to this guard) is
+ * migrated separately in `payable-form.tsx`/`payable-detail.tsx`.
+ */
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClipboardList, Trash2 } from "lucide-react";
@@ -8,39 +26,23 @@ import { ClipboardList, Trash2 } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { formatCurrency } from "@/lib/currency";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
+import { decimalStringToBrlDisplay } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
-import { formatQuantity } from "@/lib/quantity";
-import { useSupplier } from "@/features/suppliers/use-supplier";
-import { useProject } from "@/features/projects/use-project";
-import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { listPayablesByOrigin } from "@/features/payables/prototype/payable-store";
-import { getPayableStatus } from "@/features/payables/payable-status";
-import { PayableStatusBadge } from "@/features/payables/components/status-badge";
-import type { Payable } from "@/features/payables/types";
-import { calculateItemFulfillment, calculatePurchaseOrderFulfillment } from "./prototype/fulfillment";
+import { formatMaterialUnitCode } from "@/features/materials/material-unit";
+import { purchaseDecimalApiToInput } from "./purchase-decimal";
 import {
-  changePurchaseOrderStatus,
-  removePurchaseOrder,
-  removePurchaseOrderItem,
-} from "./prototype/purchase-order";
-import { removeGoodsReceipt } from "./prototype/goods-receipt";
-import { listGoodsReceiptsByPurchaseOrder } from "./prototype/goods-receipt-store";
-import {
-  listItemsByGoodsReceipt,
-  listReceiptItemsByPurchaseOrder,
-} from "./prototype/goods-receipt-item-store";
-import { calculatePurchaseItemTotal, calculatePurchaseOrderTotal } from "./prototype/purchase-totals";
-import { calculatePurchaseFinancialSummary } from "./prototype/purchase-financial-summary";
-import { usePurchaseOrder } from "./prototype/use-purchase-order";
+  cancelPurchaseOrder,
+  confirmPurchaseOrder,
+  deleteGoodsReceipt,
+  deletePurchaseOrder,
+  deletePurchaseOrderItem,
+  returnPurchaseOrderToDraft,
+} from "./purchase-orders-client";
+import { usePurchaseOrder } from "./use-purchase-order";
+import { removeGoodsReceiptShadowEntriesForReceipt } from "./prototype/goods-receipt-shadow-store";
 import { PurchaseOrderStatusBadge } from "./components/status-badge";
-import type { GoodsReceipt, GoodsReceiptItem, PurchaseOrderCommercialStatus } from "./types";
-
-const FULFILLMENT_LABEL: Record<string, string> = {
-  not_received: "Não recebido",
-  partial: "Parcial",
-  received: "Recebido",
-};
+import { PURCHASE_ORDER_FULFILLMENT_LABEL, type GoodsReceipt } from "./types";
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -51,39 +53,34 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function serverMessageOf(error: unknown, fallback: string): string {
+  if (error instanceof ApiValidationError) {
+    return error.serverMessage ?? Object.values(error.errors)[0]?.[0] ?? fallback;
+  }
+  if (error instanceof ApiError) return error.message || fallback;
+  return fallback;
+}
+
 export function PurchaseOrderDetail({ id }: { id: string }) {
   const router = useRouter();
-  const { purchaseOrder, items, refresh } = usePurchaseOrder(id);
-  const { project } = useProject(purchaseOrder?.projectId ?? "");
-  const { supplier } = useSupplier(purchaseOrder?.supplierId ?? "");
-  const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[] | undefined>(undefined);
-  const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
-  const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
+  const { order, error, reload } = usePurchaseOrder(id);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setGoodsReceipts(listGoodsReceiptsByPurchaseOrder(id));
-    setReceiptItems(listReceiptItemsByPurchaseOrder(id));
-    setPayables(listPayablesByOrigin("purchase-order", id));
-  }, [id]);
-
-  function refreshAll() {
-    refresh();
-    setGoodsReceipts(listGoodsReceiptsByPurchaseOrder(id));
-    setReceiptItems(listReceiptItemsByPurchaseOrder(id));
-    setPayables(listPayablesByOrigin("purchase-order", id));
+  if (error) {
+    return (
+      <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+        <p role="alert" className="text-sm text-muted-foreground">
+          Não foi possível carregar esta compra agora.
+        </p>
+        <Button type="button" onClick={reload}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
   }
 
-  if (
-    purchaseOrder === undefined ||
-    goodsReceipts === undefined ||
-    receiptItems === undefined ||
-    payables === undefined
-  ) {
-    return null;
-  }
+  if (order === undefined) return null;
 
-  if (purchaseOrder === null) {
+  if (order === null) {
     return (
       <EmptyState
         icon={ClipboardList}
@@ -93,188 +90,169 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     );
   }
 
-  const total = calculatePurchaseOrderTotal(items);
-  const status = purchaseOrder.commercialStatus;
-  const hasGoodsReceipts = receiptItems.length > 0;
-  const hasPayables = payables.length > 0;
-  const fulfillment = calculatePurchaseOrderFulfillment(items, receiptItems);
-  const isFullyReceived = fulfillment === "received";
-  const financialSummary = calculatePurchaseFinancialSummary(total, payables);
+  const status = order.commercial_status;
+  const hasGoodsReceipts = order.goods_receipts.length > 0;
+  const isFullyReceived = order.fulfillment_status === "received";
 
-  function handleStatusChange(newStatus: PurchaseOrderCommercialStatus, confirmMessage?: string) {
-    if (!purchaseOrder) return;
-    // §56: never confirm an order while the Supplier hasn't actually
-    // resolved yet — `undefined` is "still loading", not "missing".
-    if (newStatus === "ordered" && supplier === undefined) {
-      window.alert("Aguarde o carregamento do fornecedor antes de confirmar o pedido.");
-      return;
-    }
+  async function handleStatusAction(
+    action: (orderId: string, payload: { updated_at: string }) => Promise<unknown>,
+    confirmMessage?: string
+  ) {
     if (confirmMessage && !window.confirm(confirmMessage)) return;
-    const result = changePurchaseOrderStatus(purchaseOrder, newStatus, items, receiptItems ?? [], hasPayables, supplier ?? null);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
+    try {
+      await action(id, { updated_at: order!.updated_at });
+      reload();
+    } catch (actionError) {
+      if (actionError instanceof ApiError && actionError.status === 409) {
+        window.alert("A compra foi alterada por outra operação. Os dados foram atualizados.");
+        reload();
+        return;
+      }
+      window.alert(serverMessageOf(actionError, "Não foi possível concluir esta ação agora."));
     }
-    refreshAll();
   }
 
-  function handleDeleteItem(itemId: string) {
-    if (!purchaseOrder) return;
-    const item = items.find((entry) => entry.id === itemId);
-    if (!item) return;
-    const itemFulfillment = calculateItemFulfillment(item, receiptItems ?? []);
-    const confirmed = window.confirm(`Remover "${item.description}" deste pedido?`);
+  async function handleDeleteItem(itemId: string, description: string) {
+    const confirmed = window.confirm(`Remover "${description}" deste pedido?`);
     if (!confirmed) return;
-    const result = removePurchaseOrderItem(purchaseOrder, item, itemFulfillment.receivedQuantity);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
+    try {
+      await deletePurchaseOrderItem(id, itemId);
+      reload();
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError && deleteError.status === 409) {
+        window.alert("A compra foi alterada por outra operação. Os dados foram atualizados.");
+        reload();
+        return;
+      }
+      window.alert(serverMessageOf(deleteError, "Não foi possível excluir este item agora."));
     }
-    refreshAll();
   }
 
-  function handleDeletePurchaseOrder() {
-    if (!purchaseOrder) return;
+  async function handleDeletePurchaseOrder() {
     const confirmed = window.confirm("Excluir este pedido de compra? Esta ação não pode ser desfeita.");
     if (!confirmed) return;
-    const result = removePurchaseOrder(purchaseOrder, hasPayables);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
+    try {
+      await deletePurchaseOrder(id, { updated_at: order!.updated_at });
+      router.push("/compras");
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError && deleteError.status === 409) {
+        window.alert("A compra foi alterada por outra operação. Os dados foram atualizados.");
+        reload();
+        return;
+      }
+      window.alert(serverMessageOf(deleteError, "Não foi possível excluir agora."));
     }
-    router.push("/compras");
   }
 
-  function handleDeleteGoodsReceipt(goodsReceipt: GoodsReceipt) {
+  async function handleDeleteGoodsReceipt(goodsReceipt: GoodsReceipt) {
     const confirmed = window.confirm(
-      `Excluir o recebimento de ${formatDate(goodsReceipt.receivedAt)}? Esta ação não pode ser desfeita.`
+      `Excluir o recebimento de ${formatDate(goodsReceipt.received_at)}? Esta ação não pode ser desfeita.`
     );
     if (!confirmed) return;
-    const result = removeGoodsReceipt(goodsReceipt);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
+    try {
+      await deleteGoodsReceipt(id, goodsReceipt.id);
+      removeGoodsReceiptShadowEntriesForReceipt(goodsReceipt.id);
+      reload();
+    } catch (deleteError) {
+      window.alert(
+        serverMessageOf(
+          deleteError,
+          "Não foi possível excluir este recebimento agora."
+        )
+      );
     }
-    refreshAll();
   }
 
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <BackHeader
-          title={supplier === undefined ? "" : (supplier?.name ?? "Fornecedor indisponível")}
-          onBack={() => router.push("/compras")}
-        />
+        <BackHeader title={order.supplier.name} onBack={() => router.push("/compras")} />
       </div>
 
       <div className="flex items-center gap-2 pl-11">
         <PurchaseOrderStatusBadge status={status} />
+        <span className="text-xs font-medium text-muted-foreground">{order.number}</span>
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4">
         <div className="flex items-center justify-between py-1.5">
           <span className="text-sm text-muted-foreground">Obra</span>
-          {project ? (
-            <Link
-              href={`/obras/${project.id}`}
-              className="text-sm font-medium text-primary hover:underline"
-            >
-              {project.name}
-            </Link>
-          ) : (
-            <span className="text-sm font-medium text-foreground">Obra não encontrada</span>
-          )}
+          <Link href={`/obras/${order.project.id}`} className="text-sm font-medium text-primary hover:underline">
+            {order.project.name}
+          </Link>
         </div>
-        <InfoRow label="Data do pedido" value={formatDate(purchaseOrder.orderDate)} />
-        {purchaseOrder.expectedDeliveryDate ? (
-          <InfoRow label="Previsão de entrega" value={formatDate(purchaseOrder.expectedDeliveryDate)} />
+        <InfoRow label="Data do pedido" value={formatDate(order.order_date)} />
+        {order.expected_delivery_date ? (
+          <InfoRow label="Previsão de entrega" value={formatDate(order.expected_delivery_date)} />
         ) : null}
-        {purchaseOrder.notes ? <InfoRow label="Observação" value={purchaseOrder.notes} /> : null}
+        {order.notes ? <InfoRow label="Observação" value={order.notes} /> : null}
       </div>
 
       <section aria-labelledby="purchase-order-items" className="space-y-2.5">
         <div className="flex items-center justify-between gap-3">
-          <h2
-            id="purchase-order-items"
-            className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
-          >
+          <h2 id="purchase-order-items" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             Itens
           </h2>
           {status !== "cancelled" && !isFullyReceived ? (
-            <Button
-              size="sm"
-              variant="outline"
-              nativeButton={false}
-              render={<Link href={`/compras/${id}/itens/novo`}>Adicionar item</Link>}
-            />
+            <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/compras/${id}/itens/novo`}>Adicionar item</Link>} />
           ) : null}
         </div>
 
-        {items.length === 0 ? (
+        {order.items.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum item adicionado ainda.</p>
         ) : (
           <>
             <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
-              {items.map((item) => {
-                const itemFulfillment = calculateItemFulfillment(item, receiptItems ?? []);
-                return (
-                  <div key={item.id} className="flex items-center justify-between gap-3 py-3">
-                    <Link
-                      href={status !== "cancelled" ? `/compras/${id}/itens/${item.id}/editar` : "#"}
-                      className="min-w-0 flex-1"
-                    >
-                      <p className="truncate text-sm font-medium text-foreground">{item.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatQuantity(item.quantity)} {formatMaterialUnit(item.unit)} ×{" "}
-                        {formatCurrency(item.unitPrice)}
-                      </p>
-                    </Link>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatCurrency(calculatePurchaseItemTotal(item))}
-                      </span>
-                      {status !== "cancelled" && itemFulfillment.receivedQuantity === 0 ? (
-                        <button
-                          type="button"
-                          aria-label="Excluir item"
-                          onClick={() => handleDeleteItem(item.id)}
-                          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <Trash2 className="size-4" aria-hidden="true" />
-                        </button>
-                      ) : null}
-                    </div>
+              {order.items.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-3 py-3">
+                  <Link href={status !== "cancelled" ? `/compras/${id}/itens/${item.id}/editar` : "#"} className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">{item.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {purchaseDecimalApiToInput(item.quantity)} {formatMaterialUnitCode(item.unit_code, item.unit_custom_label)} ×{" "}
+                      {decimalStringToBrlDisplay(item.unit_price)}
+                    </p>
+                  </Link>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-semibold tabular-nums text-foreground">
+                      {decimalStringToBrlDisplay(item.line_total)}
+                    </span>
+                    {status !== "cancelled" && Number(item.received_quantity) === 0 ? (
+                      <button
+                        type="button"
+                        aria-label="Excluir item"
+                        onClick={() => void handleDeleteItem(item.id, item.description)}
+                        className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <Trash2 className="size-4" aria-hidden="true" />
+                      </button>
+                    ) : null}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
             <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
               <span className="text-sm font-semibold text-foreground">Total</span>
               <span className="text-lg font-semibold tabular-nums text-foreground">
-                {formatCurrency(total)}
+                {decimalStringToBrlDisplay(order.total)}
               </span>
             </div>
           </>
         )}
       </section>
 
-      {items.length > 0 ? (
+      {order.items.length > 0 ? (
         <section aria-labelledby="purchase-order-receiving" className="space-y-2.5">
           <div className="flex items-center justify-between gap-3">
-            <h2
-              id="purchase-order-receiving"
-              className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
-            >
+            <h2 id="purchase-order-receiving" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
               Recebimento
             </h2>
             <span className="text-xs font-medium text-muted-foreground">
-              {FULFILLMENT_LABEL[fulfillment]}
+              {PURCHASE_ORDER_FULFILLMENT_LABEL[order.fulfillment_status]}
             </span>
           </div>
           <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
-            {items.map((item) => {
-              const itemFulfillment = calculateItemFulfillment(item, receiptItems ?? []);
-              const unitLabel = formatMaterialUnit(item.unit);
+            {order.items.map((item) => {
+              const unitLabel = formatMaterialUnitCode(item.unit_code, item.unit_custom_label);
               const pendingLabel = status === "cancelled" ? "Restante cancelado" : "Pendente";
               return (
                 <div key={item.id} className="space-y-1 py-2.5">
@@ -282,20 +260,20 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">Pedido</span>
                     <span className="text-sm font-semibold tabular-nums text-foreground">
-                      {formatQuantity(item.quantity)} {unitLabel}
+                      {purchaseDecimalApiToInput(item.quantity)} {unitLabel}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">Recebido</span>
                     <span className="text-sm font-semibold tabular-nums text-foreground">
-                      {formatQuantity(itemFulfillment.receivedQuantity)} {unitLabel}
+                      {purchaseDecimalApiToInput(item.received_quantity)} {unitLabel}
                     </span>
                   </div>
-                  {itemFulfillment.remainingQuantity > 0 ? (
+                  {Number(item.remaining_quantity) > 0 ? (
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">{pendingLabel}</span>
                       <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatQuantity(itemFulfillment.remainingQuantity)} {unitLabel}
+                        {purchaseDecimalApiToInput(item.remaining_quantity)} {unitLabel}
                       </span>
                     </div>
                   ) : null}
@@ -314,149 +292,61 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         </section>
       ) : null}
 
-      {goodsReceipts.length > 0 ? (
+      {order.goods_receipts.length > 0 ? (
         <section aria-labelledby="purchase-order-receipts-history" className="space-y-2.5">
-          <h2
-            id="purchase-order-receipts-history"
-            className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
-          >
+          <h2 id="purchase-order-receipts-history" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             Histórico de recebimentos
           </h2>
           <div className="space-y-2">
-            {goodsReceipts.map((goodsReceipt) => {
-              const lines = listItemsByGoodsReceipt(goodsReceipt.id);
-              return (
-                <div
-                  key={goodsReceipt.id}
-                  className="space-y-1.5 rounded-xl border border-border bg-card p-4"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-foreground">
-                      {formatDate(goodsReceipt.receivedAt)}
-                    </p>
-                    <button
-                      type="button"
-                      aria-label="Excluir recebimento"
-                      onClick={() => handleDeleteGoodsReceipt(goodsReceipt)}
-                      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                    </button>
-                  </div>
-                  {lines.map((line) => {
-                    const orderItem = items.find((entry) => entry.id === line.purchaseOrderItemId);
-                    return (
-                      <div key={line.id} className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">
-                          {orderItem?.description ?? "Item removido"}
-                        </span>
-                        <span className="font-medium tabular-nums text-foreground">
-                          {formatQuantity(line.quantity)} {orderItem ? formatMaterialUnit(orderItem.unit) : ""}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {goodsReceipt.notes ? (
-                    <p className="text-xs text-muted-foreground">{goodsReceipt.notes}</p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {status !== "draft" ? (
-        <section aria-labelledby="purchase-order-financial" className="space-y-2.5">
-          <h2
-            id="purchase-order-financial"
-            className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
-          >
-            Financeiro
-          </h2>
-          <div className="rounded-xl border border-border bg-card p-4">
-            <InfoRow label="Valor do pedido" value={formatCurrency(financialSummary.purchaseTotal)} />
-            <InfoRow label="Contas geradas" value={formatCurrency(financialSummary.generatedPayables)} />
-            <InfoRow label="Pago" value={formatCurrency(financialSummary.paidPayables)} />
-            <InfoRow label="Pendente" value={formatCurrency(financialSummary.pendingPayables)} />
-            {financialSummary.uncoveredAmount > 0 ? (
-              <InfoRow label="Ainda sem conta" value={formatCurrency(financialSummary.uncoveredAmount)} />
-            ) : null}
-            {financialSummary.overGeneratedAmount > 0 ? (
-              <InfoRow
-                label="Contas acima do valor do pedido"
-                value={formatCurrency(financialSummary.overGeneratedAmount)}
-              />
-            ) : null}
-          </div>
-          <Button
-            size="lg"
-            className="w-full"
-            nativeButton={false}
-            render={<Link href={`/financeiro/contas-a-pagar/nova?purchaseOrderId=${id}`}>Gerar conta a pagar</Link>}
-          />
-
-          {payables.length > 0 ? (
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Contas</h3>
-              {payables.map((payable) => {
-                const payableStatus = getPayableStatus(payable);
-                return (
-                  <Link
-                    key={payable.id}
-                    href={`/financeiro/contas-a-pagar/${payable.id}`}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30"
+            {order.goods_receipts.map((goodsReceipt) => (
+              <div key={goodsReceipt.id} className="space-y-1.5 rounded-xl border border-border bg-card p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-foreground">{formatDate(goodsReceipt.received_at)}</p>
+                  <button
+                    type="button"
+                    aria-label="Excluir recebimento"
+                    onClick={() => void handleDeleteGoodsReceipt(goodsReceipt)}
+                    className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-foreground">{payable.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {payableStatus === "paid" && payable.paidAt
-                          ? `Pago em ${formatDate(payable.paidAt)}`
-                          : `Vence ${formatDate(payable.dueDate)}`}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatCurrency(payable.amount)}
+                    <Trash2 className="size-4" aria-hidden="true" />
+                  </button>
+                </div>
+                {goodsReceipt.items.map((line) => {
+                  const orderItem = order.items.find((entry) => entry.id === line.purchase_order_item_id);
+                  return (
+                    <div key={line.id} className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{orderItem?.description ?? "Item removido"}</span>
+                      <span className="font-medium tabular-nums text-foreground">
+                        {purchaseDecimalApiToInput(line.quantity)}{" "}
+                        {orderItem ? formatMaterialUnitCode(orderItem.unit_code, orderItem.unit_custom_label) : ""}
                       </span>
-                      <PayableStatusBadge status={payableStatus} />
                     </div>
-                  </Link>
-                );
-              })}
-            </div>
-          ) : null}
+                  );
+                })}
+                {goodsReceipt.notes ? <p className="text-xs text-muted-foreground">{goodsReceipt.notes}</p> : null}
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
 
       <div className="space-y-2">
         {status === "draft" ? (
           <>
-            <Button
-              type="button"
-              size="lg"
-              className="w-full"
-              onClick={() => handleStatusChange("ordered")}
-            >
+            <Button type="button" size="lg" className="w-full" onClick={() => void handleStatusAction(confirmPurchaseOrder)}>
               Confirmar pedido
             </Button>
             <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                nativeButton={false}
-                render={<Link href={`/compras/${id}/editar`}>Editar</Link>}
-              />
+              <Button variant="outline" nativeButton={false} render={<Link href={`/compras/${id}/editar`}>Editar</Link>} />
               <Button
                 type="button"
                 variant="outline"
-                onClick={() =>
-                  handleStatusChange("cancelled", "Cancelar este pedido de compra?")
-                }
+                onClick={() => void handleStatusAction(cancelPurchaseOrder, "Cancelar este pedido de compra?")}
               >
                 Cancelar pedido
               </Button>
             </div>
-            <Button type="button" variant="destructive" className="w-full" onClick={handleDeletePurchaseOrder}>
+            <Button type="button" variant="destructive" className="w-full" onClick={() => void handleDeletePurchaseOrder()}>
               Excluir
             </Button>
           </>
@@ -465,13 +355,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         {status === "ordered" ? (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                nativeButton={false}
-                render={<Link href={`/compras/${id}/editar`}>Editar</Link>}
-              />
-              {!hasGoodsReceipts && !hasPayables ? (
-                <Button type="button" variant="outline" onClick={() => handleStatusChange("draft")}>
+              <Button variant="outline" nativeButton={false} render={<Link href={`/compras/${id}/editar`}>Editar</Link>} />
+              {!hasGoodsReceipts ? (
+                <Button type="button" variant="outline" onClick={() => void handleStatusAction(returnPurchaseOrderToDraft)}>
                   Voltar para rascunho
                 </Button>
               ) : null}
@@ -481,41 +367,26 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 type="button"
                 variant="destructive"
                 className="w-full"
-                onClick={() => handleStatusChange("cancelled", "Cancelar este pedido de compra?")}
+                onClick={() => void handleStatusAction(cancelPurchaseOrder, "Cancelar este pedido de compra?")}
               >
                 Cancelar pedido
               </Button>
             ) : null}
-            {hasGoodsReceipts || hasPayables ? (
+            {hasGoodsReceipts ? (
               <p className="text-center text-xs text-muted-foreground">
-                Este pedido possui {hasGoodsReceipts && hasPayables
-                  ? "recebimentos e contas a pagar"
-                  : hasGoodsReceipts
-                    ? "recebimentos"
-                    : "contas a pagar"}{" "}
-                e não pode voltar para rascunho.
+                Este pedido possui recebimentos e não pode voltar para rascunho.
               </p>
             ) : null}
           </>
         ) : null}
 
         {status === "cancelled" ? (
-          hasGoodsReceipts || hasPayables ? (
+          hasGoodsReceipts ? (
             <p className="text-center text-xs text-muted-foreground">
-              Este pedido possui {hasGoodsReceipts && hasPayables
-                ? "recebimentos históricos e contas a pagar"
-                : hasGoodsReceipts
-                  ? "recebimentos históricos"
-                  : "contas a pagar"}{" "}
-              e não pode voltar para rascunho.
+              Este pedido possui recebimentos históricos e não pode voltar para rascunho.
             </p>
           ) : (
-            <Button
-              type="button"
-              size="lg"
-              className="w-full"
-              onClick={() => handleStatusChange("draft")}
-            >
+            <Button type="button" size="lg" className="w-full" onClick={() => void handleStatusAction(returnPurchaseOrderToDraft)}>
               Reativar para rascunho
             </Button>
           )

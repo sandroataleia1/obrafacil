@@ -42,6 +42,10 @@ vi.mock("@/features/materials/use-material-requirements", () => ({
   }),
 }));
 
+vi.mock("@/features/purchases/purchase-orders-client", () => ({
+  listPurchaseOrderDetailsForProject: vi.fn().mockResolvedValue([]),
+}));
+
 import { ApiError } from "@/lib/api-client";
 import { getProject, updateProject } from "../projects-client";
 import { ProjectDetail } from "../project-detail";

@@ -21,7 +21,11 @@ import { sumCosts } from "@/features/project-costs/prototype/cost-totals";
 import type { ProjectCost } from "@/features/project-costs/types";
 import type { Payable } from "@/features/payables/types";
 import type { Receipt, Receivable } from "@/features/receivables/types";
-import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
+import type {
+  LegacyGoodsReceiptItem as GoodsReceiptItem,
+  LegacyPurchaseOrder as PurchaseOrder,
+  LegacyPurchaseOrderItem as PurchaseOrderItem,
+} from "@/features/purchases/prototype/legacy-types";
 import type { MaterialConsumption, MaterialRequirement } from "@/features/materials/types";
 import { aggregatePayables, aggregateReceivables } from "./financial-analytics";
 import { buildProjectMaterialsFacts } from "./materials-analytics";

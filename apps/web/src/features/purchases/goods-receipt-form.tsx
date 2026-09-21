@@ -1,6 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+/**
+ * SUPPLY-FRONTEND-01C. Real API POST — order must be `commercial_status
+ * == "ordered"`, pending items come from `item.remaining_quantity > 0`,
+ * only positive filled lines are sent, at least 1 line is required.
+ * After a successful 201, this writes through to the local
+ * `goods-receipt-shadow-store` (a NEW key, never one of the removed
+ * legacy ones) so the still-local Stock/Consumption ledger
+ * (SUPPLY-FRONTEND-01D) keeps seeing this arrival — see that store's own
+ * doc comment. Never inserts the created GoodsReceipt into any Purchase-
+ * side local store; navigation back to the detail always re-reads the
+ * API.
+ */
+
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { PackageCheck } from "lucide-react";
@@ -8,39 +21,42 @@ import { PackageCheck } from "lucide-react";
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { formatQuantity } from "@/lib/quantity";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { todayIso } from "@/lib/date";
-import { formatMaterialUnit } from "@/features/materials/material-unit";
-import { calculateItemFulfillment } from "./prototype/fulfillment";
-import { registerGoodsReceipt } from "./prototype/goods-receipt";
-import { listReceiptItemsByPurchaseOrder } from "./prototype/goods-receipt-item-store";
-import { usePurchaseOrder } from "./prototype/use-purchase-order";
-import type { GoodsReceiptItem } from "./types";
-
-function parseQuantity(raw: string): number | null {
-  const normalized = raw.replace(/\./g, "").replace(",", ".").trim();
-  if (normalized === "") return null;
-  const value = Number(normalized);
-  return Number.isFinite(value) ? value : null;
-}
+import { formatMaterialUnitCode } from "@/features/materials/material-unit";
+import { createGoodsReceipt } from "./purchase-orders-client";
+import { usePurchaseOrder } from "./use-purchase-order";
+import { purchaseDecimalApiToInput, purchaseQuantityInputToApi } from "./purchase-decimal";
+import { saveGoodsReceiptShadowEntries } from "./prototype/goods-receipt-shadow-store";
 
 export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string }) {
   const router = useRouter();
-  const { purchaseOrder, items } = usePurchaseOrder(purchaseOrderId);
-  const [receiptItems, setReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
+  const { order, error, reload } = usePurchaseOrder(purchaseOrderId);
   const [receivedAt, setReceivedAt] = useState(todayIso());
   const [notes, setNotes] = useState("");
   const [quantities, setQuantities] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setReceiptItems(listReceiptItemsByPurchaseOrder(purchaseOrderId));
-  }, [purchaseOrderId]);
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Compra" onBack={() => router.push(`/compras/${purchaseOrderId}`)} />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar esta compra agora.
+          </p>
+          <Button type="button" onClick={reload}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
-  if (purchaseOrder === undefined || receiptItems === undefined) return null;
+  if (order === undefined) return null;
 
-  if (purchaseOrder === null) {
+  if (order === null || order.commercial_status !== "ordered") {
     return (
       <div className="space-y-6">
         <BackHeader title="Compra não encontrada" onBack={() => router.push("/compras")} />
@@ -48,40 +64,76 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
     );
   }
 
-  const pendingItems = items
-    .map((item) => ({ item, fulfillment: calculateItemFulfillment(item, receiptItems) }))
-    .filter(({ fulfillment }) => fulfillment.remainingQuantity > 0);
+  const pendingItems = order.items.filter((item) => Number(item.remaining_quantity) > 0);
 
-  function handleSubmit() {
-    if (!purchaseOrder) return;
+  async function handleSubmit() {
     if (receivedAt.trim() === "") {
-      setError("Informe a data do recebimento.");
+      setFormError("Informe a data do recebimento.");
       return;
     }
 
-    const lines = pendingItems
-      .map(({ item }) => ({
-        purchaseOrderItemId: item.id,
-        quantity: parseQuantity(quantities[item.id] ?? "") ?? 0,
-      }))
-      .filter((line) => line.quantity > 0);
+    const lines: { purchase_order_item_id: string; quantity: string }[] = [];
+    for (const item of pendingItems) {
+      const raw = quantities[item.id] ?? "";
+      if (raw.trim() === "") continue;
+      const quantity = purchaseQuantityInputToApi(raw);
+      if (quantity === null) {
+        setFormError("Informe quantidades válidas, maiores que zero e com até 3 casas decimais.");
+        return;
+      }
+      lines.push({ purchase_order_item_id: item.id, quantity });
+    }
 
-    const result = registerGoodsReceipt(purchaseOrder, { receivedAt, notes, items: lines });
-    if (!result.ok) {
-      setError(result.error);
+    if (lines.length === 0) {
+      setFormError("Preencha ao menos um item recebido.");
       return;
     }
-    setError(null);
-    router.push(`/compras/${purchaseOrderId}`);
+
+    setSubmitting(true);
+    setFormError(null);
+
+    try {
+      const receipt = await createGoodsReceipt(purchaseOrderId, {
+        received_at: receivedAt,
+        notes: notes.trim() || null,
+        items: lines,
+      });
+
+      saveGoodsReceiptShadowEntries(
+        receipt.items.map((line) => {
+          const orderItem = order!.items.find((item) => item.id === line.purchase_order_item_id);
+          return {
+            id: line.id,
+            goodsReceiptId: receipt.id,
+            projectId: order!.project.id,
+            materialId: orderItem?.material.id ?? "",
+            receivedAt: receipt.received_at,
+            quantity: Number(line.quantity),
+          };
+        })
+      );
+
+      setSubmitting(false);
+      router.push(`/compras/${purchaseOrderId}`);
+    } catch (submitError) {
+      setSubmitting(false);
+      if (submitError instanceof ApiError && submitError.status === 409) {
+        setFormError("A compra foi alterada por outra operação. Os dados foram atualizados.");
+        reload();
+        return;
+      }
+      if (submitError instanceof ApiValidationError) {
+        setFormError(submitError.serverMessage ?? Object.values(submitError.errors)[0]?.[0] ?? "Não foi possível registrar o recebimento.");
+        return;
+      }
+      setFormError("Não foi possível registrar o recebimento agora. Tente novamente.");
+    }
   }
 
   if (pendingItems.length === 0) {
     return (
       <div className="space-y-6">
-        <BackHeader
-          title="Registrar recebimento"
-          onBack={() => router.push(`/compras/${purchaseOrderId}`)}
-        />
+        <BackHeader title="Registrar recebimento" onBack={() => router.push(`/compras/${purchaseOrderId}`)} />
         <EmptyState
           compact
           icon={PackageCheck}
@@ -95,10 +147,7 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
   return (
     <div className="space-y-6 pb-6">
       <div className="space-y-1">
-        <BackHeader
-          title="Registrar recebimento"
-          onBack={() => router.push(`/compras/${purchaseOrderId}`)}
-        />
+        <BackHeader title="Registrar recebimento" onBack={() => router.push(`/compras/${purchaseOrderId}`)} />
       </div>
 
       <div className="space-y-4">
@@ -131,18 +180,16 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
 
         <div className="space-y-3">
           <span className="text-sm font-medium text-foreground">Itens pendentes</span>
-          <p className="text-xs text-muted-foreground">
-            Preencha apenas os itens que chegaram nesta entrega.
-          </p>
+          <p className="text-xs text-muted-foreground">Preencha apenas os itens que chegaram nesta entrega.</p>
           <div className="space-y-3">
-            {pendingItems.map(({ item, fulfillment }) => {
-              const unitLabel = formatMaterialUnit(item.unit);
+            {pendingItems.map((item) => {
+              const unitLabel = formatMaterialUnitCode(item.unit_code, item.unit_custom_label);
               return (
-                <div key={item.id} className="rounded-xl border border-border bg-card p-4 space-y-2">
+                <div key={item.id} className="space-y-2 rounded-xl border border-border bg-card p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-medium text-foreground">{item.description}</p>
                     <span className="text-xs text-muted-foreground">
-                      Pendente {formatQuantity(fulfillment.remainingQuantity)} {unitLabel}
+                      Pendente {purchaseDecimalApiToInput(item.remaining_quantity)} {unitLabel}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -150,9 +197,7 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
                       type="text"
                       inputMode="decimal"
                       value={quantities[item.id] ?? ""}
-                      onChange={(event) =>
-                        setQuantities((prev) => ({ ...prev, [item.id]: event.target.value }))
-                      }
+                      onChange={(event) => setQuantities((prev) => ({ ...prev, [item.id]: event.target.value }))}
                       placeholder="0"
                       className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground tabular-nums outline-none focus:border-primary focus:ring-2 focus:ring-ring"
                     />
@@ -164,10 +209,14 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
           </div>
         </div>
 
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {formError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {formError}
+          </p>
+        ) : null}
       </div>
 
-      <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
+      <Button type="button" size="lg" onClick={() => void handleSubmit()} disabled={submitting} className="w-full">
         Registrar recebimento
       </Button>
     </div>

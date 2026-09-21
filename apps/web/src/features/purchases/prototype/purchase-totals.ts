@@ -7,19 +7,13 @@
  * MaterialRequirement either.
  */
 
-import { toCents } from "@/lib/currency";
 import { toQuantityUnits } from "@/lib/quantity";
 import type { MaterialConsumption } from "@/features/materials/types";
-import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "../types";
-
-export function calculatePurchaseItemTotal(item: PurchaseOrderItem): number {
-  return toCents(item.quantity * item.unitPrice) / 100;
-}
-
-export function calculatePurchaseOrderTotal(items: PurchaseOrderItem[]): number {
-  const totalCents = items.reduce((sum, item) => sum + toCents(calculatePurchaseItemTotal(item)), 0);
-  return totalCents / 100;
-}
+import type {
+  LegacyGoodsReceiptItem as GoodsReceiptItem,
+  LegacyPurchaseOrder as PurchaseOrder,
+  LegacyPurchaseOrderItem as PurchaseOrderItem,
+} from "./legacy-types";
 
 /**
  * `required`/`remainingToBuy`/`purchasedExcess`/`receivedExcess` are

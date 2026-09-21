@@ -32,14 +32,8 @@ vi.mock("../use-all-materials", () => ({
   useAllMaterials: () => ({ materials: materialsState.materials, error: false, reload: vi.fn() }),
 }));
 
-vi.mock("@/features/purchases/prototype/goods-receipt-item-store", () => ({
-  listReceiptItemsByPurchaseOrder: () => [],
-}));
-vi.mock("@/features/purchases/prototype/purchase-order-store", () => ({
-  listPurchaseOrdersByProject: () => [],
-}));
-vi.mock("@/features/purchases/prototype/purchase-order-item-store", () => ({
-  listItemsByPurchaseOrders: () => [],
+vi.mock("@/features/purchases/purchase-orders-client", () => ({
+  listPurchaseOrderDetailsForProject: () => Promise.resolve([]),
 }));
 vi.mock("../prototype/material-consumption-store", () => ({
   listConsumptionsByProject: () => [],

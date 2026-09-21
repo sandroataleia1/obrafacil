@@ -15,7 +15,7 @@ import { useProject } from "@/features/projects/use-project";
 import { getEmployee } from "@/features/employees/prototype/employee-store";
 import { getWorkPeriod } from "@/features/employees/prototype/work-period-store";
 import { formatPeriodShort } from "@/features/employees/prototype/period-label";
-import { getPurchaseOrder } from "@/features/purchases/prototype/purchase-order-store";
+import { usePurchaseOrder } from "@/features/purchases/use-purchase-order";
 import { PROJECT_COST_CATEGORY_LABEL } from "@/features/project-costs/types";
 import { MarkAsPaidDialog } from "./mark-as-paid-dialog";
 import { removePayable } from "./prototype/payable";
@@ -37,6 +37,8 @@ export function PayableDetail({ id }: { id: string }) {
   const router = useRouter();
   const { payable, refresh } = usePayable(id);
   const { project } = useProject(payable?.projectId ?? "");
+  const isPurchaseOrderOrigin = payable?.originType === "purchase-order" && Boolean(payable.originId);
+  const { order: originPurchaseOrder } = usePurchaseOrder(isPurchaseOrderOrigin ? payable!.originId! : "");
   const [payingOpen, setPayingOpen] = useState(false);
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -61,10 +63,6 @@ export function PayableDetail({ id }: { id: string }) {
       ? getWorkPeriod(payable.originId)
       : null;
   const originEmployee = originWorkPeriod ? getEmployee(originWorkPeriod.employeeId) : null;
-  const originPurchaseOrder =
-    payable.originType === "purchase-order" && payable.originId
-      ? getPurchaseOrder(payable.originId)
-      : null;
 
   function handleConfirmUndoPayment() {
     if (!payable) return;
@@ -140,7 +138,7 @@ export function PayableDetail({ id }: { id: string }) {
               href={`/compras/${originPurchaseOrder.id}`}
               className="text-sm font-medium text-primary hover:underline"
             >
-              Compra · {payable.supplier ?? "Fornecedor"} · {formatDate(originPurchaseOrder.orderDate)}
+              Compra · {payable.supplier ?? "Fornecedor"} · {formatDate(originPurchaseOrder.order_date)}
             </Link>
           </div>
         ) : null}

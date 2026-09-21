@@ -16,6 +16,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useAuth } from "@/features/auth/auth-provider";
 import { useAllProjects } from "@/features/projects/use-all-projects";
 import { listMaterialRequirementsForProjects } from "@/features/materials/material-requirements-client";
+import { listPurchaseOrderDetailsForProjects } from "@/features/purchases/purchase-orders-client";
 import { listSupplyPositions, type StockSupplyPosition } from "./supply-metrics";
 
 interface LoadedPositions {
@@ -51,15 +52,16 @@ export function useSupplyPositions(): {
     const requestCompanyId = activeCompanyId;
     const requestFingerprint = fingerprint;
     setErrorKey(null);
-    listMaterialRequirementsForProjects(projectIds)
-      .then((requirementsByProject) => {
+    Promise.all([listMaterialRequirementsForProjects(projectIds), listPurchaseOrderDetailsForProjects(projectIds)])
+      .then(([requirementsByProject, purchaseOrdersByProject]) => {
         if (requestSequence.current !== requestId) return;
         if (activeCompanyIdRef.current !== requestCompanyId) return;
         const allRequirements = Array.from(requirementsByProject.values()).flat();
+        const allPurchaseOrders = Array.from(purchaseOrdersByProject.values()).flat();
         setLoaded({
           companyId: requestCompanyId,
           fingerprint: requestFingerprint,
-          positions: listSupplyPositions(allRequirements),
+          positions: listSupplyPositions(allRequirements, allPurchaseOrders),
         });
       })
       .catch(() => {
