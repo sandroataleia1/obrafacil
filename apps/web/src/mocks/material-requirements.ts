@@ -1,4 +1,4 @@
-import type { MaterialRequirement } from "@/features/materials/types";
+import type { LegacyMaterialRequirement as MaterialRequirement } from "@/features/materials/prototype/legacy-types";
 
 export const materialRequirements: MaterialRequirement[] = [
   {

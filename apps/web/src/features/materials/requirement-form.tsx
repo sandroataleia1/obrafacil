@@ -1,98 +1,164 @@
 "use client";
 
-import { useEffect, useState } from "react";
+/**
+ * SUPPLY-FRONTEND-01B §15-24. Real API create/edit/delete — no browser
+ * UUID, no `todayIso()` for timestamps, server is authority.
+ * `required_quantity` is a decimal STRING at scale 3 end-to-end; see
+ * `requirement-quantity.ts`. Outer-wrapper + keyed-Inner tenant-ownership
+ * pattern mirrors `MaterialForm`/`SupplierForm`/`MaterialDetail`: the
+ * outer owns `activeCompanyIdRef`/`projectIdRef`/`requirementIdRef`
+ * (written together via `useLayoutEffect`) and force-remounts the Inner
+ * via `key={`${activeCompanyId}:${projectId}:${requirementId ?? "new"}`}`
+ * on any Company/Project/id switch.
+ */
+
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ApiValidationError } from "@/lib/api-client";
+import { useAuth } from "@/features/auth/auth-provider";
 import { useProject } from "@/features/projects/use-project";
 import { formatMaterialUnitCode } from "./material-unit";
 import { useAllMaterials } from "./use-all-materials";
-import { useMaterial } from "./use-material";
-import { listRequirementsByProject } from "./prototype/material-requirement-store";
-import { createRequirement, removeRequirement, updateRequirement } from "./prototype/material-requirement";
-import { useRequirement } from "./prototype/use-requirement";
+import { useMaterialRequirement } from "./use-material-requirement";
+import { useMaterialRequirements } from "./use-material-requirements";
+import {
+  createMaterialRequirement,
+  deleteMaterialRequirement,
+  updateMaterialRequirement,
+} from "./material-requirements-client";
+import { requirementQuantityApiToInput, requirementQuantityInputToApi } from "./requirement-quantity";
 
-export function RequirementForm({
+function RequirementFormInner({
   projectId,
   requirementId,
+  activeCompanyIdRef,
+  projectIdRef,
+  requirementIdRef,
 }: {
   projectId: string;
   requirementId?: string;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  projectIdRef: React.RefObject<string>;
+  requirementIdRef: React.RefObject<string>;
 }) {
   const router = useRouter();
   const { project, error: projectError, reload: reloadProject } = useProject(projectId);
-  const { requirement: existingRequirement } = useRequirement(requirementId ?? "");
+  const {
+    requirement: existingRequirement,
+    error: requirementError,
+    reload: reloadRequirement,
+  } = useMaterialRequirement(projectId, requirementId ?? "");
   const isEditing = Boolean(requirementId);
 
   const [materialId, setMaterialId] = useState("");
   const [quantityInput, setQuantityInput] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const { materials: activeMaterials, error: materialsError } = useAllMaterials({ active: true });
-  const { material: selectedMaterial } = useMaterial(materialId);
+  const { requirements: existingRequirements } = useMaterialRequirements(projectId);
 
   const usedMaterialIds = new Set(
-    isEditing ? [] : listRequirementsByProject(projectId).map((requirement) => requirement.materialId)
+    isEditing ? [] : (existingRequirements ?? []).map((requirement) => requirement.material.id)
   );
   const availableMaterials = (activeMaterials ?? []).filter((material) => !usedMaterialIds.has(material.id));
 
   useEffect(() => {
     if (!existingRequirement) return;
-    // Seed the form once the existing requirement loads from localStorage.
-    // Safe post-mount update (see useRequirement); only runs once the
-    // record becomes available.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMaterialId(existingRequirement.materialId);
-    setQuantityInput(String(existingRequirement.requiredQuantity).replace(".", ","));
+    setMaterialId(existingRequirement.material.id);
+    setQuantityInput(requirementQuantityApiToInput(existingRequirement.required_quantity));
     setNotes(existingRequirement.notes ?? "");
   }, [existingRequirement]);
 
-  function parseQuantity(raw: string): number | null {
-    const normalized = raw.replace(/\./g, "").replace(",", ".").trim();
-    if (normalized === "") return null;
-    const value = Number(normalized);
-    return Number.isFinite(value) ? value : null;
-  }
+  const submitCompanyId = activeCompanyIdRef.current;
+  const submitProjectId = projectIdRef.current;
+  const submitRequirementId = requirementIdRef.current;
 
-  function handleSubmit() {
-    const quantity = parseQuantity(quantityInput);
-    if (quantity === null || quantity <= 0) {
-      setError("Informe uma quantidade maior que zero.");
+  const isStale = useCallback(
+    () =>
+      activeCompanyIdRef.current !== submitCompanyId ||
+      projectIdRef.current !== submitProjectId ||
+      requirementIdRef.current !== submitRequirementId,
+    [activeCompanyIdRef, projectIdRef, requirementIdRef, submitCompanyId, submitProjectId, submitRequirementId]
+  );
+
+  const handleSubmit = useCallback(async () => {
+    if (!isEditing && !materialId) {
+      setError("Selecione um material.");
+      return;
+    }
+    const quantity = requirementQuantityInputToApi(quantityInput);
+    if (quantity === null) {
+      setError("Informe uma quantidade válida, maior que zero e com até 3 casas decimais.");
       return;
     }
 
-    const result = existingRequirement
-      ? updateRequirement(existingRequirement, { requiredQuantity: quantity, notes })
-      : createRequirement({ projectId, materialId, requiredQuantity: quantity, notes }, selectedMaterial ?? null);
-
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
+    setSubmitting(true);
     setError(null);
-    router.push(`/obras/${projectId}/materiais`);
-  }
 
-  function handleDelete() {
+    try {
+      if (isEditing && existingRequirement) {
+        await updateMaterialRequirement(projectId, existingRequirement.id, {
+          required_quantity: quantity,
+          notes: notes.trim() || null,
+        });
+      } else {
+        await createMaterialRequirement(projectId, {
+          material_id: materialId,
+          required_quantity: quantity,
+          notes: notes.trim() || null,
+        });
+      }
+
+      if (isStale()) return;
+      setSubmitting(false);
+      router.push(`/obras/${projectId}/materiais`);
+    } catch (submitError) {
+      if (isStale()) return;
+      setSubmitting(false);
+      if (submitError instanceof ApiValidationError) {
+        const firstMessage =
+          submitError.errors.material_id?.[0] ??
+          submitError.errors.required_quantity?.[0] ??
+          submitError.errors.notes?.[0] ??
+          Object.values(submitError.errors)[0]?.[0];
+        setError(firstMessage ?? submitError.serverMessage ?? "Não foi possível salvar. Verifique os campos.");
+        return;
+      }
+      setError("Não foi possível salvar agora. Tente novamente.");
+    }
+  }, [isEditing, materialId, quantityInput, notes, existingRequirement, projectId, isStale, router]);
+
+  async function handleDelete() {
     if (!existingRequirement) return;
     const confirmed = window.confirm(
-      `Remover a necessidade de "${selectedMaterial?.name ?? "este material"}" nesta obra?`
+      `Remover a necessidade de "${existingRequirement.material.name}" nesta obra?`
     );
     if (!confirmed) return;
-    removeRequirement(existingRequirement);
-    router.push(`/obras/${projectId}/materiais`);
-  }
 
-  if (isEditing && existingRequirement === undefined) return null;
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteMaterialRequirement(projectId, existingRequirement.id);
+      if (isStale()) return;
+      router.push(`/obras/${projectId}/materiais`);
+    } catch (deleteError) {
+      if (isStale()) return;
+      setDeleting(false);
+      if (deleteError instanceof ApiValidationError) {
+        setError(deleteError.serverMessage ?? Object.values(deleteError.errors)[0]?.[0] ?? "Não foi possível excluir agora.");
+        return;
+      }
+      setError("Não foi possível excluir agora.");
+    }
+  }
 
   if (projectError) {
     return (
@@ -120,19 +186,44 @@ export function RequirementForm({
     );
   }
 
-  if (isEditing && existingRequirement === null) {
+  if (isEditing && requirementError) {
     return (
       <div className="space-y-6">
-        <BackHeader
-          title="Material não encontrado"
-          onBack={() => router.push(`/obras/${projectId}/materiais`)}
-        />
-        <p className="pl-11 text-sm text-muted-foreground">
-          Ele pode ter sido removido ou o link está incorreto.
-        </p>
+        <BackHeader title="Material" onBack={() => router.push(`/obras/${projectId}/materiais`)} />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar esta necessidade agora.
+          </p>
+          <Button type="button" onClick={reloadRequirement}>
+            Tentar novamente
+          </Button>
+        </div>
       </div>
     );
   }
+
+  if (isEditing && existingRequirement === undefined) return null;
+
+  if (isEditing && existingRequirement === null) {
+    return (
+      <div className="space-y-6">
+        <BackHeader title="Material não encontrado" onBack={() => router.push(`/obras/${projectId}/materiais`)} />
+        <p className="pl-11 text-sm text-muted-foreground">Ele pode ter sido removido ou o link está incorreto.</p>
+      </div>
+    );
+  }
+
+  const selectedNewMaterial = (activeMaterials ?? []).find((material) => material.id === materialId) ?? null;
+  const selectedMaterialLabel =
+    isEditing && existingRequirement
+      ? `${existingRequirement.material.name}${existingRequirement.material.active ? "" : " (inativo)"}`
+      : "—";
+  const selectedMaterialUnit =
+    isEditing && existingRequirement
+      ? formatMaterialUnitCode(existingRequirement.material.unit_code, existingRequirement.material.unit_custom_label)
+      : selectedNewMaterial
+        ? formatMaterialUnitCode(selectedNewMaterial.unit_code, selectedNewMaterial.unit_custom_label)
+        : "";
 
   return (
     <div className="space-y-6 pb-6">
@@ -149,15 +240,14 @@ export function RequirementForm({
           <span className="text-sm font-medium text-foreground">Material</span>
           {isEditing ? (
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
-              {selectedMaterial?.name ?? "—"}
+              {selectedMaterialLabel}
             </div>
           ) : (
             <Select value={materialId} onValueChange={(value) => setMaterialId(value ?? "")}>
               <SelectTrigger className="h-12 w-full px-4 text-base">
                 <SelectValue placeholder="Selecione um material">
                   {(value: string | null) =>
-                    availableMaterials.find((material) => material.id === value)?.name ??
-                    "Selecione um material"
+                    availableMaterials.find((material) => material.id === value)?.name ?? "Selecione um material"
                   }
                 </SelectValue>
               </SelectTrigger>
@@ -193,10 +283,8 @@ export function RequirementForm({
               placeholder="0"
               className="w-full min-w-0 bg-transparent text-xl font-semibold text-foreground tabular-nums outline-none placeholder:text-muted-foreground/50"
             />
-            {selectedMaterial ? (
-              <span className="shrink-0 text-sm font-medium text-muted-foreground">
-                {formatMaterialUnitCode(selectedMaterial.unit_code, selectedMaterial.unit_custom_label)}
-              </span>
+            {selectedMaterialUnit ? (
+              <span className="shrink-0 text-sm font-medium text-muted-foreground">{selectedMaterialUnit}</span>
             ) : null}
           </div>
         </div>
@@ -215,24 +303,52 @@ export function RequirementForm({
           />
         </div>
 
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
 
       <Button
         type="button"
         size="lg"
-        onClick={handleSubmit}
-        disabled={!isEditing && !materialId}
+        onClick={() => void handleSubmit()}
+        disabled={submitting || (!isEditing && (!materialId || materialsError))}
         className="w-full"
       >
         {isEditing ? "Salvar alterações" : "Adicionar material"}
       </Button>
 
       {isEditing ? (
-        <Button type="button" variant="destructive" className="w-full" onClick={handleDelete}>
+        <Button type="button" variant="destructive" className="w-full" disabled={deleting} onClick={() => void handleDelete()}>
           Excluir
         </Button>
       ) : null}
     </div>
+  );
+}
+
+export function RequirementForm({ projectId, requirementId }: { projectId: string; requirementId?: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const projectIdRef = useRef(projectId);
+  const requirementIdRef = useRef(requirementId ?? "new");
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    projectIdRef.current = projectId;
+    requirementIdRef.current = requirementId ?? "new";
+  }, [activeCompanyId, projectId, requirementId]);
+
+  return (
+    <RequirementFormInner
+      key={`${activeCompanyId}:${projectId}:${requirementId ?? "new"}`}
+      projectId={projectId}
+      requirementId={requirementId}
+      activeCompanyIdRef={activeCompanyIdRef}
+      projectIdRef={projectIdRef}
+      requirementIdRef={requirementIdRef}
+    />
   );
 }

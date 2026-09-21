@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   hasAnyLocalMaterialDependency,
   hasLocalConsumption,
-  hasLocalMaterialRequirement,
   hasLocalPurchaseOrderItem,
   hasLocalStockAdjustment,
 } from "../prototype/material-local-dependencies";
@@ -15,11 +14,15 @@ import { saveStockAdjustment } from "@/features/stock/prototype/stock-adjustment
 const MATERIAL_ID = "material-1";
 
 /**
- * SUPPLY-FRONTEND-01A §28-29, MF14/MF15/DC-adjacent. Proves the
- * transitional local-dependency helper reads ONLY the four local child
- * stores it's documented to — never Material master identity itself.
+ * SUPPLY-FRONTEND-01A §28-29 / SUPPLY-FRONTEND-01B §32-34 (TG1-TG4).
+ * Proves the transitional local-dependency helper now reads ONLY the
+ * THREE remaining local child stores (PurchaseOrderItem/Consumption/
+ * StockAdjustment) — MaterialRequirement is real API now, and the
+ * backend's own 422 guard (`MaterialRequirementService`) protects
+ * unit-change/delete against it; duplicating that check locally would
+ * just re-run a rule the server already enforces.
  */
-describe("material-local-dependencies — SUPPLY-FRONTEND-01A §28-29", () => {
+describe("material-local-dependencies — SUPPLY-FRONTEND-01B §32-34", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -28,7 +31,7 @@ describe("material-local-dependencies — SUPPLY-FRONTEND-01A §28-29", () => {
     expect(hasAnyLocalMaterialDependency(MATERIAL_ID)).toBe(false);
   });
 
-  it("hasLocalMaterialRequirement detects a local MaterialRequirement", () => {
+  it("TG1: a local (legacy) MaterialRequirement is NO LONGER a local dependency — hasLocalMaterialRequirement is gone", () => {
     saveRequirement({
       id: "req-1",
       projectId: "project-1",
@@ -38,11 +41,10 @@ describe("material-local-dependencies — SUPPLY-FRONTEND-01A §28-29", () => {
       updatedAt: "2026-09-10",
     });
 
-    expect(hasLocalMaterialRequirement(MATERIAL_ID)).toBe(true);
-    expect(hasAnyLocalMaterialDependency(MATERIAL_ID)).toBe(true);
+    expect(hasAnyLocalMaterialDependency(MATERIAL_ID)).toBe(false);
   });
 
-  it("hasLocalPurchaseOrderItem detects a local PurchaseOrderItem", () => {
+  it("TG2: hasLocalPurchaseOrderItem still detects and still blocks", () => {
     savePurchaseOrderItem({
       id: "item-1",
       purchaseOrderId: "po-1",
@@ -59,7 +61,7 @@ describe("material-local-dependencies — SUPPLY-FRONTEND-01A §28-29", () => {
     expect(hasAnyLocalMaterialDependency(MATERIAL_ID)).toBe(true);
   });
 
-  it("hasLocalConsumption detects a local MaterialConsumption", () => {
+  it("TG3: hasLocalConsumption still detects and still blocks", () => {
     saveMaterialConsumption({
       id: "cons-1",
       projectId: "project-1",
@@ -74,7 +76,7 @@ describe("material-local-dependencies — SUPPLY-FRONTEND-01A §28-29", () => {
     expect(hasAnyLocalMaterialDependency(MATERIAL_ID)).toBe(true);
   });
 
-  it("hasLocalStockAdjustment detects a local StockAdjustment", () => {
+  it("TG4: hasLocalStockAdjustment still detects and still blocks", () => {
     saveStockAdjustment({
       id: "adj-1",
       projectId: "project-1",
@@ -91,11 +93,14 @@ describe("material-local-dependencies — SUPPLY-FRONTEND-01A §28-29", () => {
   });
 
   it("a different Material is unaffected by another Material's local dependency", () => {
-    saveRequirement({
-      id: "req-1",
-      projectId: "project-1",
+    savePurchaseOrderItem({
+      id: "item-2",
+      purchaseOrderId: "po-1",
       materialId: MATERIAL_ID,
-      requiredQuantity: 10,
+      description: "Cimento",
+      unit: { code: "sc" },
+      quantity: 10,
+      unitPrice: 25,
       createdAt: "2026-09-10",
       updatedAt: "2026-09-10",
     });

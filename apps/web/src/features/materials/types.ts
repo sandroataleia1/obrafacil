@@ -131,28 +131,91 @@ export interface MaterialUnit {
 }
 
 /**
- * Legacy frontend prototype child contract (localStorage) — the master
- * Material itself is API-backed (see `Material` above). Preserved
- * unchanged in shape from before this gate; only `material.ts`'s
- * synchronous `getMaterial()` lookups around it were removed.
+ * SUPPLY-FRONTEND-01B. MaterialRequirement is now the real API domain
+ * contract — mirrors `App\Http\Resources\MaterialRequirementResource`
+ * field-for-field. `material` is the LIVE relation (never a snapshot), so
+ * a Material rename/reactivation shows up immediately; it may be
+ * `active: false` for a Requirement created before the Material was
+ * deactivated — the Requirement stays fully listable/editable/deletable
+ * regardless. `required_quantity` is a decimal STRING at scale 3 (e.g.
+ * `"1.000"`, `"2.500"`) — never converted to `number` here; `number` is
+ * only ever produced transiently at the boundary with the still-local
+ * Purchase/Stock planning calculator (see
+ * `requirement-quantity.ts#requirementQuantityForLegacyPlanning`).
+ *
+ * The OLD camelCase/`localStorage` shape (`projectId`/`materialId`/
+ * `requiredQuantity: number`) moved to
+ * `prototype/legacy-types.ts#LegacyMaterialRequirement` — it remains the
+ * data source for a few out-of-scope local consumers (Dashboard,
+ * Analytics, Stock supply-metrics); see that file's doc comment. Two
+ * models exist ONLY because those consumers are explicitly out of this
+ * gate's scope — every migrated screen uses this one.
  */
 export interface MaterialRequirement {
   id: string;
+  project_id: string;
+  material: {
+    id: string;
+    name: string;
+    unit_code: MaterialUnitCode;
+    unit_custom_label: string | null;
+    active: boolean;
+  };
+  required_quantity: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
-  projectId: string;
-  materialId: string;
-
-  requiredQuantity: number;
-
-  notes?: string;
-
-  createdAt: string;
-  updatedAt: string;
+/** Laravel's default paginate() JSON shape. */
+export interface MaterialRequirementPaginationResponse {
+  data: MaterialRequirement[];
+  meta: {
+    current_page: number;
+    from: number | null;
+    last_page: number;
+    per_page: number;
+    to: number | null;
+    total: number;
+  };
+  links: {
+    first: string | null;
+    last: string | null;
+    prev: string | null;
+    next: string | null;
+  };
 }
 
 /**
- * Legacy frontend prototype child contract (localStorage) — same note
- * as `MaterialRequirement` above.
+ * POST /api/v1/projects/{project}/material-requirements. Never `id`/
+ * `company_id`/`project_id`/`material`/`unit_code`/`unit_custom_label`/
+ * `created_at`/`updated_at` — `project_id` always comes from the route.
+ */
+export interface MaterialRequirementCreatePayload {
+  material_id: string;
+  required_quantity: string;
+  notes?: string | null;
+}
+
+/**
+ * PUT /api/v1/projects/{project}/material-requirements/{requirement} —
+ * `material_id`/`project_id` are immutable once created (delete + recreate
+ * is the supported path for "wrong Material").
+ */
+export interface MaterialRequirementUpdatePayload {
+  required_quantity: string;
+  notes?: string | null;
+}
+
+export interface MaterialRequirementListParams {
+  page?: number;
+  perPage?: number;
+}
+
+/**
+ * Legacy frontend prototype child contract (localStorage) — still local
+ * as of this gate (SUPPLY-FRONTEND-01B only migrates MaterialRequirement;
+ * MaterialConsumption/PurchaseOrder/StockAdjustment remain local).
  */
 export interface MaterialConsumption {
   id: string;

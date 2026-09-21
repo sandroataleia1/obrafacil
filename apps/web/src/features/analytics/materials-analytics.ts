@@ -11,7 +11,8 @@
 
 import { calculateMaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
-import type { MaterialConsumption, MaterialRequirement } from "@/features/materials/types";
+import type { MaterialConsumption } from "@/features/materials/types";
+import type { LegacyMaterialRequirement as MaterialRequirement } from "@/features/materials/prototype/legacy-types";
 import type { ProjectMaterialsFacts } from "./types";
 
 export function buildProjectMaterialsFacts(

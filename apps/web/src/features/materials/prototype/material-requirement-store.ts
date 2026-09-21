@@ -1,16 +1,16 @@
 /**
- * Prototype browser persistence for MaterialRequirement (planned
- * material needs per Obra). Layered on top of seed data in
- * `src/mocks/material-requirements.ts`.
- *
- * This store only persists — the (projectId, materialId) uniqueness
- * invariant and existence checks live in `material-requirement.ts`,
- * not here (mirrors `receivable-store.ts` vs `receivable.ts`).
+ * SUPPLY-FRONTEND-01B — MaterialRequirement itself is now the real API
+ * domain (`features/materials/material-requirements-client.ts`). This
+ * store survives ONLY as the transitional data source for the OUT-OF-
+ * SCOPE local consumers listed in `./legacy-types.ts`'s doc comment
+ * (Dashboard executive panel, Obra detail widget, Analytics, Stock
+ * supply-metrics) — see that file for the full rationale. No migrated
+ * Requirement screen may import this module.
  */
 
 import { materialRequirements as seedRequirements } from "@/mocks/material-requirements";
 import { demoDataEnabled } from "@/lib/pilot-config";
-import type { MaterialRequirement } from "../types";
+import type { LegacyMaterialRequirement as MaterialRequirement } from "./legacy-types";
 
 const STORAGE_KEY = "obrafacil:material-requirements";
 const DELETED_KEY = "obrafacil:material-requirements:deleted";

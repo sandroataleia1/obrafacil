@@ -21,7 +21,8 @@ import { formatMaterialUnitCode } from "./material-unit";
 import { useAllMaterials } from "./use-all-materials";
 import { listConsumptionsByProject } from "./prototype/material-consumption-store";
 import { removeMaterialConsumption } from "./prototype/material-consumption";
-import { useRequirements } from "./prototype/use-requirements";
+import { useMaterialRequirements } from "./use-material-requirements";
+import { requirementQuantityForLegacyPlanning } from "./requirement-quantity";
 import type { MaterialConsumption, MaterialListItem, MaterialRequirement } from "./types";
 
 function PlanningRow({
@@ -237,7 +238,7 @@ function MaterialPlanningCard({
 export function ProjectRequirementList({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { project, error: projectError, reload: reloadProject } = useProject(projectId);
-  const { requirements } = useRequirements(projectId);
+  const { requirements, error: requirementsError, reload: reloadRequirements } = useMaterialRequirements(projectId);
   const { materials: allMaterials } = useAllMaterials();
   const materialById = new Map((allMaterials ?? []).map((material) => [material.id, material]));
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
@@ -305,13 +306,13 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
     receiptItems !== undefined &&
     consumptions !== undefined;
 
-  // Union of every Material relevant to this Obra — planned (has a
-  // MaterialRequirement) and/or purchased (appears in a PurchaseOrderItem
-  // of an order for this Obra). A Material bought without ever being
-  // planned must still show up here (see Task 042 spec) — it just shows
-  // "Não planejado" instead of a required quantity.
+  // Union of every Material relevant to this Obra — planned (has a real,
+  // API-backed MaterialRequirement) and/or purchased (appears in a
+  // PurchaseOrderItem of an order for this Obra). A Material bought
+  // without ever being planned must still show up here (see Task 042
+  // spec) — it just shows "Não planejado" instead of a required quantity.
   const requirementByMaterial = new Map(
-    (requirements ?? []).map((requirement) => [requirement.materialId, requirement])
+    (requirements ?? []).map((requirement) => [requirement.material.id, requirement])
   );
   const materialIds = new Set<string>([
     ...requirementByMaterial.keys(),
@@ -338,7 +339,16 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
         />
       </div>
 
-      {!dataReady ? null : materialIds.size === 0 ? (
+      {requirementsError ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar as necessidades de materiais agora.
+          </p>
+          <Button type="button" onClick={reloadRequirements}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : !dataReady ? null : materialIds.size === 0 ? (
         <div className="space-y-3">
           <EmptyState
             icon={Package}
@@ -357,7 +367,7 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
           {Array.from(materialIds).map((materialId) => {
             const requirement = requirementByMaterial.get(materialId) ?? null;
             const planning = calculateMaterialPlanning(
-              requirement?.requiredQuantity ?? null,
+              requirement ? requirementQuantityForLegacyPlanning(requirement.required_quantity) : null,
               purchaseOrders!,
               purchaseOrderItems!,
               receiptItems!,
