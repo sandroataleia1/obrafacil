@@ -2,6 +2,21 @@
 
 /**
  * SUPPLY-FRONTEND-01A §34. Real API — loading/404/error+retry/success.
+ *
+ * SUPPLY-FRONTEND-01A2. Outer-wrapper + keyed-Inner tenant-ownership
+ * pattern (mirrors `ProjectEditForm`/`MaterialForm`): the outer
+ * `MaterialDetail` owns BOTH `activeCompanyIdRef` and `idRef` (both
+ * written together via the same `useLayoutEffect`) and force-remounts
+ * `MaterialDetailInner` via `key={`${activeCompanyId}:${id}`}` on either a
+ * Company switch or an id change. The remount is what actually resets
+ * `toggleError`/`toggling` — 01A1 only stopped a stale Promise from
+ * WRITING new state, it never cleared state already sitting there for
+ * the OLD Company/Material once the tenant/id changed. Both refs live in
+ * the OUTER component (never re-created per Inner instance) so the
+ * stale-request guard keeps working for an in-flight Promise whose Inner
+ * has already unmounted — a ref-per-Inner-instance would freeze at the
+ * OLD id forever and could never detect an id-only switch (the Inner that
+ * captured it is dead and never sees the new id).
  */
 
 import { useLayoutEffect, useRef, useState } from "react";
@@ -28,20 +43,19 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function MaterialDetail({ id }: { id: string }) {
+function MaterialDetailInner({
+  id,
+  activeCompanyIdRef,
+  idRef,
+}: {
+  id: string;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  idRef: React.RefObject<string>;
+}) {
   const router = useRouter();
-  const auth = useAuth();
-  const activeCompanyId = auth.activeCompany?.id;
   const { material, error, reload } = useMaterial(id);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
-
-  const activeCompanyIdRef = useRef(activeCompanyId);
-  const idRef = useRef(id);
-  useLayoutEffect(() => {
-    activeCompanyIdRef.current = activeCompanyId;
-    idRef.current = id;
-  }, [activeCompanyId, id]);
 
   if (error) {
     return (
@@ -126,4 +140,17 @@ export function MaterialDetail({ id }: { id: string }) {
       </div>
     </div>
   );
+}
+
+export function MaterialDetail({ id }: { id: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const idRef = useRef(id);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    idRef.current = id;
+  }, [activeCompanyId, id]);
+
+  return <MaterialDetailInner key={`${activeCompanyId}:${id}`} id={id} activeCompanyIdRef={activeCompanyIdRef} idRef={idRef} />;
 }

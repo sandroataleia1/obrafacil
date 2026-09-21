@@ -50,7 +50,8 @@ function supplier(overrides: Partial<Supplier> = {}): Supplier {
 
 /**
  * SUPPLY-FRONTEND-01A1 §10/§21. SupplierDetail mirrors MaterialDetail's
- * toggle-mutation tenant-race proof exactly.
+ * toggle-mutation tenant-race proof exactly. Kept from 01A1 — still holds
+ * after the 01A2 remount fix.
  */
 describe("SupplierDetail toggle tenant ownership — SUPPLY-FRONTEND-01A1 §10/§21", () => {
   beforeEach(() => {
@@ -97,6 +98,116 @@ describe("SupplierDetail toggle tenant ownership — SUPPLY-FRONTEND-01A1 §10/�
     await new Promise((r) => setTimeout(r, 0));
 
     expect(screen.queryByText(/não foi possível atualizar agora/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * SUPPLY-FRONTEND-01A2 §5/§6/§7. The actual blocker this round closes —
+ * mirrors `material-detail.test.tsx` exactly.
+ */
+describe("SupplierDetail detail mutation state ownership — SUPPLY-FRONTEND-01A2 §5/§6/§7", () => {
+  beforeEach(() => {
+    vi.mocked(updateSupplier).mockReset();
+    reload.mockReset();
+    authState.activeCompany = { id: "company-a", name: "Empresa A" };
+    supplierState.supplier = supplier();
+    supplierState.error = false;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("§5: a pending toggle under Company A/Supplier A never leaves Supplier B's toggle button disabled after switching to B", async () => {
+    const user = userEvent.setup();
+    let resolveUpdate!: (value: Supplier) => void;
+    vi.mocked(updateSupplier).mockReturnValueOnce(new Promise((resolve) => { resolveUpdate = resolve; }));
+
+    const { rerender } = render(<SupplierDetail id="s1" />);
+    await user.click(screen.getByRole("button", { name: /inativar/i }));
+    expect(screen.getByRole("button", { name: /inativar/i })).toBeDisabled();
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    supplierState.supplier = supplier({ id: "s2", name: "Fornecedor B" });
+    rerender(<SupplierDetail id="s2" />);
+
+    expect(screen.getByRole("button", { name: /inativar/i })).not.toBeDisabled();
+
+    resolveUpdate(supplier({ active: false }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.getByRole("button", { name: /inativar/i })).not.toBeDisabled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("§6: an existing toggleError shown under Company A never appears on Supplier B's render after switching to B", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSupplier).mockRejectedValueOnce(new ApiNetworkError());
+
+    const { rerender } = render(<SupplierDetail id="s1" />);
+    await user.click(screen.getByRole("button", { name: /inativar/i }));
+    await screen.findByText(/não foi possível atualizar agora/i);
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    supplierState.supplier = supplier({ id: "s2", name: "Fornecedor B" });
+    rerender(<SupplierDetail id="s2" />);
+
+    expect(screen.queryByText(/não foi possível atualizar agora/i)).not.toBeInTheDocument();
+  });
+
+  it("§7: same Company, id switch A→B clears a pending toggling flag and an existing toggleError", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSupplier).mockReturnValueOnce(new Promise(() => {}));
+
+    const { rerender } = render(<SupplierDetail id="s1" />);
+    await user.click(screen.getByRole("button", { name: /inativar/i }));
+    expect(screen.getByRole("button", { name: /inativar/i })).toBeDisabled();
+
+    supplierState.supplier = supplier({ id: "s2", name: "Fornecedor B" });
+    rerender(<SupplierDetail id="s2" />);
+
+    expect(screen.getByRole("button", { name: /inativar/i })).not.toBeDisabled();
+    expect(screen.queryByText(/não foi possível atualizar agora/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * SUPPLY-FRONTEND-01A2 §8. The fix must not break the normal, same-
+ * Company/same-id flow.
+ */
+describe("SupplierDetail current-request regression — SUPPLY-FRONTEND-01A2 §8", () => {
+  beforeEach(() => {
+    vi.mocked(updateSupplier).mockReset();
+    reload.mockReset();
+    authState.activeCompany = { id: "company-a", name: "Empresa A" };
+    supplierState.supplier = supplier();
+    supplierState.error = false;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("a normal (non-stale) success calls reload() and re-enables the button", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSupplier).mockResolvedValueOnce(supplier({ active: false }));
+
+    render(<SupplierDetail id="s1" />);
+    await user.click(screen.getByRole("button", { name: /inativar/i }));
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /inativar/i })).not.toBeDisabled();
+  });
+
+  it("a normal (non-stale) error keeps showing the message", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSupplier).mockRejectedValueOnce(new ApiNetworkError());
+
+    render(<SupplierDetail id="s1" />);
+    await user.click(screen.getByRole("button", { name: /inativar/i }));
+
+    expect(await screen.findByText(/não foi possível atualizar agora/i)).toBeInTheDocument();
   });
 });
 

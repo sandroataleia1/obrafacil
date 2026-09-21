@@ -10,6 +10,12 @@
  * API-backed and can be queried for real. The "Ver compras"/"Nova
  * compra" navigation is preserved — that's just routing, not a number
  * that could misrepresent a mixed data source.
+ *
+ * SUPPLY-FRONTEND-01A2. Outer-wrapper + keyed-Inner tenant-ownership
+ * pattern — see `material-detail.tsx` for the full rationale. Both
+ * `activeCompanyIdRef` and `idRef` live in the OUTER component (never
+ * per-Inner) so the stale-request guard still detects an id-only switch
+ * even after the Inner that started the request has unmounted.
  */
 
 import { useLayoutEffect, useRef, useState } from "react";
@@ -38,20 +44,19 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function SupplierDetail({ id }: { id: string }) {
+function SupplierDetailInner({
+  id,
+  activeCompanyIdRef,
+  idRef,
+}: {
+  id: string;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  idRef: React.RefObject<string>;
+}) {
   const router = useRouter();
-  const auth = useAuth();
-  const activeCompanyId = auth.activeCompany?.id;
   const { supplier, error, reload } = useSupplier(id);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
-
-  const activeCompanyIdRef = useRef(activeCompanyId);
-  const idRef = useRef(id);
-  useLayoutEffect(() => {
-    activeCompanyIdRef.current = activeCompanyId;
-    idRef.current = id;
-  }, [activeCompanyId, id]);
 
   if (error) {
     return (
@@ -156,4 +161,17 @@ export function SupplierDetail({ id }: { id: string }) {
       </section>
     </div>
   );
+}
+
+export function SupplierDetail({ id }: { id: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const idRef = useRef(id);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    idRef.current = id;
+  }, [activeCompanyId, id]);
+
+  return <SupplierDetailInner key={`${activeCompanyId}:${id}`} id={id} activeCompanyIdRef={activeCompanyIdRef} idRef={idRef} />;
 }
