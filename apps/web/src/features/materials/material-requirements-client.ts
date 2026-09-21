@@ -86,3 +86,22 @@ export async function listAllMaterialRequirements(projectId: string): Promise<Ma
   }
   return all;
 }
+
+/**
+ * SUPPLY-FRONTEND-01B1 §11. Frontend-only helper for callers that need
+ * Requirements across SEVERAL already-resolved Projects (Executive
+ * Panel, Stock's transitional bridge) — there is no company-wide
+ * Requirements endpoint, so this simply fans out
+ * `listAllMaterialRequirements` per Project. Never caches globally and
+ * is never itself a source of truth — every call re-fetches from the
+ * API. A failure on ANY Project's fetch rejects the whole call (never
+ * silently substitutes `[]` for that Project).
+ */
+export async function listMaterialRequirementsForProjects(
+  projectIds: string[]
+): Promise<Map<string, MaterialRequirement[]>> {
+  const entries = await Promise.all(
+    projectIds.map(async (projectId) => [projectId, await listAllMaterialRequirements(projectId)] as const)
+  );
+  return new Map(entries);
+}

@@ -5,12 +5,13 @@
  * field (same discipline as `features/projects/types.ts`). Never invent
  * a field here without a matching backend source.
  *
- * `MaterialRequirement`/`MaterialConsumption` below are UNCHANGED — they
- * remain a legacy frontend prototype child contract (localStorage,
- * SUPPLY-FRONTEND-01B/01C will migrate them). The master Material itself
- * is API-backed as of this gate; these children only ever store a
- * `materialId` string and resolve the real identity via the API
- * (`useMaterial`/`useAllMaterials`), never a second local Material model.
+ * `MaterialRequirement` is ALSO the real API domain contract as of
+ * SUPPLY-FRONTEND-01B/01B1 (see its own doc comment below).
+ * `MaterialConsumption` remains a legacy frontend prototype child
+ * contract (localStorage, a future gate will migrate it) — it only ever
+ * stores a `materialId` string and resolves the real identity via the
+ * API (`useMaterial`/`useAllMaterials`), never a second local Material
+ * model.
  */
 
 export const MATERIAL_UNIT_CODES = [
@@ -143,13 +144,12 @@ export interface MaterialUnit {
  * Purchase/Stock planning calculator (see
  * `requirement-quantity.ts#requirementQuantityForLegacyPlanning`).
  *
- * The OLD camelCase/`localStorage` shape (`projectId`/`materialId`/
- * `requiredQuantity: number`) moved to
- * `prototype/legacy-types.ts#LegacyMaterialRequirement` — it remains the
- * data source for a few out-of-scope local consumers (Dashboard,
- * Analytics, Stock supply-metrics); see that file's doc comment. Two
- * models exist ONLY because those consumers are explicitly out of this
- * gate's scope — every migrated screen uses this one.
+ * SUPPLY-FRONTEND-01B1: the OLD camelCase/`localStorage` shape
+ * (`projectId`/`materialId`/`requiredQuantity: number`, formerly in a
+ * separate "legacy types" module) is GONE — every consumer (ProjectDetail,
+ * the Dashboard Executive Panel, Analytics, Stock's supply-metrics) now
+ * uses this one real API shape. This is the only MaterialRequirement
+ * model in the frontend.
  */
 export interface MaterialRequirement {
   id: string;

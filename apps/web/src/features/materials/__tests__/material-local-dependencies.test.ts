@@ -6,7 +6,6 @@ import {
   hasLocalPurchaseOrderItem,
   hasLocalStockAdjustment,
 } from "../prototype/material-local-dependencies";
-import { saveRequirement } from "../prototype/material-requirement-store";
 import { saveMaterialConsumption } from "../prototype/material-consumption-store";
 import { savePurchaseOrderItem } from "@/features/purchases/prototype/purchase-order-item-store";
 import { saveStockAdjustment } from "@/features/stock/prototype/stock-adjustment-store";
@@ -14,33 +13,22 @@ import { saveStockAdjustment } from "@/features/stock/prototype/stock-adjustment
 const MATERIAL_ID = "material-1";
 
 /**
- * SUPPLY-FRONTEND-01A §28-29 / SUPPLY-FRONTEND-01B §32-34 (TG1-TG4).
+ * SUPPLY-FRONTEND-01A §28-29 / SUPPLY-FRONTEND-01B1 §32-34 (TG1-TG4).
  * Proves the transitional local-dependency helper now reads ONLY the
  * THREE remaining local child stores (PurchaseOrderItem/Consumption/
- * StockAdjustment) — MaterialRequirement is real API now, and the
- * backend's own 422 guard (`MaterialRequirementService`) protects
- * unit-change/delete against it; duplicating that check locally would
- * just re-run a rule the server already enforces.
+ * StockAdjustment) — MaterialRequirement is real API now (the legacy
+ * local store no longer even EXISTS as of 01B1 — `hasLocalMaterialRequirement`
+ * and its store were both deleted), and the backend's own 422 guard
+ * (`MaterialRequirementService`) protects unit-change/delete against it;
+ * duplicating that check locally would just re-run a rule the server
+ * already enforces.
  */
-describe("material-local-dependencies — SUPPLY-FRONTEND-01B §32-34", () => {
+describe("material-local-dependencies — SUPPLY-FRONTEND-01B1 §32-34", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
   it("hasAnyLocalMaterialDependency is false with zero local children", () => {
-    expect(hasAnyLocalMaterialDependency(MATERIAL_ID)).toBe(false);
-  });
-
-  it("TG1: a local (legacy) MaterialRequirement is NO LONGER a local dependency — hasLocalMaterialRequirement is gone", () => {
-    saveRequirement({
-      id: "req-1",
-      projectId: "project-1",
-      materialId: MATERIAL_ID,
-      requiredQuantity: 10,
-      createdAt: "2026-09-10",
-      updatedAt: "2026-09-10",
-    });
-
     expect(hasAnyLocalMaterialDependency(MATERIAL_ID)).toBe(false);
   });
 

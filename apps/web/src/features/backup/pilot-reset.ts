@@ -6,7 +6,6 @@ import { purchaseOrderItems as seedPurchaseOrderItems } from "@/mocks/purchase-o
 import { goodsReceipts as seedGoodsReceipts } from "@/mocks/goods-receipts";
 import { goodsReceiptItems as seedGoodsReceiptItems } from "@/mocks/goods-receipt-items";
 import { stockAdjustments as seedStockAdjustments } from "@/mocks/stock-adjustments";
-import { materialRequirements as seedMaterialRequirements } from "@/mocks/material-requirements";
 import { materialConsumptions as seedMaterialConsumptions } from "@/mocks/material-consumptions";
 
 import { PILOT_BACKUP_STORAGE_KEYS } from "./pilot-backup-keys";
@@ -34,9 +33,7 @@ export const PILOT_RESET_KEYS: readonly PilotBackupKey[] = [
   // Cálculos (custos de obra)
   "obrafacil:project-costs",
   "obrafacil:project-costs:deleted",
-  // Necessidade de material / consumo (ligados a obras e compras)
-  "obrafacil:material-requirements",
-  "obrafacil:material-requirements:deleted",
+  // Consumo (MaterialRequirement é API real — não é mais domínio local)
   "obrafacil:material-consumptions",
   "obrafacil:material-consumptions:deleted",
   // Compras (materiais comprados)
@@ -72,7 +69,6 @@ const SEED_HIDE_GROUPS: ReadonlyArray<{ deletedKey: PilotBackupKey; ids: readonl
   { deletedKey: "obrafacil:goods-receipts:deleted", ids: seedGoodsReceipts.map((row) => row.id) },
   { deletedKey: "obrafacil:goods-receipt-items:deleted", ids: seedGoodsReceiptItems.map((row) => row.id) },
   { deletedKey: "obrafacil:stock-adjustments:deleted", ids: seedStockAdjustments.map((row) => row.id) },
-  { deletedKey: "obrafacil:material-requirements:deleted", ids: seedMaterialRequirements.map((row) => row.id) },
   { deletedKey: "obrafacil:material-consumptions:deleted", ids: seedMaterialConsumptions.map((row) => row.id) },
 ];
 

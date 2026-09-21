@@ -52,11 +52,11 @@ function HeaderActions() {
 export default function HomePage() {
   const auth = useAuth();
   const { summary, error: summaryError, reload: reloadSummary } = useDashboardSummary();
-  const supplySummary = useDashboardSupplySummary();
+  const { summary: supplySummary, error: supplySummaryError, reload: reloadSupplySummary } = useDashboardSupplySummary();
 
   if (auth.user === null) return null;
 
-  if (summaryError) {
+  if (summaryError || supplySummaryError) {
     return (
       <div className="space-y-4">
         <EmptyState
@@ -64,7 +64,13 @@ export default function HomePage() {
           title="Não foi possível carregar o painel agora"
           description="Verifique sua conexão e tente novamente."
         />
-        <Button type="button" onClick={reloadSummary}>
+        <Button
+          type="button"
+          onClick={() => {
+            if (summaryError) reloadSummary();
+            if (supplySummaryError) reloadSupplySummary();
+          }}
+        >
           Tentar novamente
         </Button>
       </div>

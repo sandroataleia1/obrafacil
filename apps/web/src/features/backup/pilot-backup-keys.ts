@@ -57,10 +57,11 @@ export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValue
   // Materiais (SUPPLY-FRONTEND-01A: Material itself moved to the real
   // API — "obrafacil:materials"/"obrafacil:materials:deleted" are no
   // longer read/written anywhere and are intentionally absent here.
-  // MaterialRequirement/MaterialConsumption remain local prototypes,
-  // keyed by the real Material UUID.)
-  "obrafacil:material-requirements": "object",
-  "obrafacil:material-requirements:deleted": "array",
+  // SUPPLY-FRONTEND-01B1: MaterialRequirement is ALSO the real API now —
+  // "obrafacil:material-requirements"/"obrafacil:material-requirements:deleted"
+  // are no longer read/written anywhere and are intentionally absent
+  // here too. MaterialConsumption remains a local prototype, keyed by
+  // the real Material UUID.)
   "obrafacil:material-consumptions": "object",
   "obrafacil:material-consumptions:deleted": "array",
 

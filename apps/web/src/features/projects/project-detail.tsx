@@ -35,9 +35,8 @@ import { listReceiptsByReceivable } from "@/features/receivables/prototype/recei
 import type { Receipt as ReceiptModel, Receivable } from "@/features/receivables/types";
 import { formatQuantity } from "@/lib/quantity";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
-import { useAllMaterials } from "@/features/materials/use-all-materials";
-import { listRequirementsByProject } from "@/features/materials/prototype/material-requirement-store";
-import type { LegacyMaterialRequirement } from "@/features/materials/prototype/legacy-types";
+import { useMaterialRequirements } from "@/features/materials/use-material-requirements";
+import { requirementQuantityForLegacyPlanning } from "@/features/materials/requirement-quantity";
 import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
 import type { MaterialConsumption } from "@/features/materials/types";
 import { calculatePurchaseOrderFulfillment } from "@/features/purchases/prototype/fulfillment";
@@ -198,11 +197,10 @@ export function ProjectDetail({ id }: { id: string }) {
   const [statusActionError, setStatusActionError] = useState<string | null>(null);
 
   const { costs } = useProjectCosts(id);
-  const { materials: allMaterials } = useAllMaterials();
   const [payables, setPayables] = useState<Payable[] | undefined>(undefined);
   const [receivables, setReceivables] = useState<Receivable[] | undefined>(undefined);
   const [receipts, setReceipts] = useState<ReceiptModel[] | undefined>(undefined);
-  const [requirements, setRequirements] = useState<LegacyMaterialRequirement[] | undefined>(undefined);
+  const { requirements, error: requirementsError, reload: reloadRequirements } = useMaterialRequirements(id);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
   const [purchaseOrderItems, setPurchaseOrderItems] = useState<PurchaseOrderItem[] | undefined>(undefined);
   const [purchaseReceiptItems, setPurchaseReceiptItems] = useState<GoodsReceiptItem[] | undefined>(undefined);
@@ -264,7 +262,6 @@ export function ProjectDetail({ id }: { id: string }) {
     setPayables(listPayablesByProject(id));
     setReceivables(projectReceivables);
     setReceipts(projectReceivables.flatMap((receivable) => listReceiptsByReceivable(receivable.id)));
-    setRequirements(listRequirementsByProject(id));
     setPurchaseOrders(projectPurchaseOrders);
     setPurchaseOrderItems(listItemsByPurchaseOrders(projectPurchaseOrders.map((purchaseOrder) => purchaseOrder.id)));
     setPurchaseConsumptions(listConsumptionsByProject(id));
@@ -557,24 +554,32 @@ export function ProjectDetail({ id }: { id: string }) {
             Materiais
           </h2>
         </div>
-        {requirements === undefined || purchaseOrders === undefined || purchaseOrderItems === undefined || purchaseReceiptItems === undefined || purchaseConsumptions === undefined ? null : requirements.length > 0 ? (
+        {requirementsError ? (
+          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+            <p role="alert" className="text-sm text-muted-foreground">
+              Não foi possível carregar as necessidades de materiais agora.
+            </p>
+            <Button type="button" onClick={reloadRequirements}>
+              Tentar novamente
+            </Button>
+          </div>
+        ) : requirements === undefined || purchaseOrders === undefined || purchaseOrderItems === undefined || purchaseReceiptItems === undefined || purchaseConsumptions === undefined ? null : requirements.length > 0 ? (
           <div className="space-y-3">
             <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
               {requirements.map((requirement) => {
-                const material = (allMaterials ?? []).find((item) => item.id === requirement.materialId) ?? null;
                 const planning = calculateMaterialPlanning(
-                  requirement.requiredQuantity,
+                  requirementQuantityForLegacyPlanning(requirement.required_quantity),
                   purchaseOrders,
                   purchaseOrderItems,
                   purchaseReceiptItems,
                   purchaseConsumptions,
-                  requirement.materialId
+                  requirement.material.id
                 );
-                const unitLabel = material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : "";
+                const unitLabel = formatMaterialUnitCode(requirement.material.unit_code, requirement.material.unit_custom_label);
                 return (
                   <MaterialSummaryItem
                     key={requirement.id}
-                    materialName={material?.name ?? "Material indisponível"}
+                    materialName={requirement.material.name}
                     unitLabel={unitLabel}
                     planning={planning}
                   />

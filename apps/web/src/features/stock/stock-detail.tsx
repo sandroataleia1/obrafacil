@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { formatQuantity } from "@/lib/quantity";
 import { formatDate } from "@/lib/date";
 import { useMaterial } from "@/features/materials/use-material";
+import { useMaterialRequirements } from "@/features/materials/use-material-requirements";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useProject } from "@/features/projects/use-project";
 import { getGoodsReceipt } from "@/features/purchases/prototype/goods-receipt-store";
@@ -75,6 +76,11 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
 
   const { project } = useProject(projectId);
   const { material } = useMaterial(materialId);
+  const {
+    requirements,
+    error: requirementsError,
+    reload: reloadRequirements,
+  } = useMaterialRequirements(projectId);
 
   if (project === undefined || material === undefined) return null;
 
@@ -93,7 +99,9 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
 
   const unitLabel = formatMaterialUnitCode(material.unit_code, material.unit_custom_label);
   const subtitle = project.name;
-  const supply = getProjectMaterialSupplyMetrics(projectId, materialId);
+  const requirement = (requirements ?? []).find((item) => item.material.id === materialId) ?? null;
+  const supply =
+    requirements !== undefined ? getProjectMaterialSupplyMetrics(projectId, materialId, requirement) : null;
   const withUnit = (value: number) => `${formatQuantity(value)} ${unitLabel}`;
 
   return (
@@ -149,46 +157,57 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
         >
           Cobertura da necessidade
         </h2>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="grid grid-cols-2 gap-4">
-            <InfoField
-              label="Necessário"
-              value={supply.required === null ? "Não definido" : withUnit(supply.required)}
-            />
-            <InfoField label="Comprado" value={withUnit(supply.purchased)} />
-            <InfoField label="Recebido" value={withUnit(supply.received)} />
-            <InfoField
-              label="A receber"
-              value={
-                <span className={supply.pendingReceipt > 0 ? "text-amber-700 dark:text-amber-400" : undefined}>
-                  {withUnit(supply.pendingReceipt)}
-                </span>
-              }
-            />
-            <InfoField label="Consumido" value={withUnit(supply.consumed)} />
-            <InfoField label="Estoque atual" value={withUnit(supply.stock)} />
+        {requirementsError ? (
+          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+            <p role="alert" className="text-sm text-muted-foreground">
+              Não foi possível carregar a necessidade planejada agora.
+            </p>
+            <Button type="button" onClick={reloadRequirements}>
+              Tentar novamente
+            </Button>
           </div>
-          <div className="mt-2 border-t border-border pt-2">
-            <InfoField
-              label="Falta comprar"
-              value={
-                supply.missingToPurchase === null ? (
-                  "—"
-                ) : (
-                  <span
-                    className={
-                      supply.missingToPurchase > 0
-                        ? "text-base font-semibold text-destructive"
-                        : "text-base font-semibold text-foreground"
-                    }
-                  >
-                    {withUnit(supply.missingToPurchase)}
+        ) : supply === null ? null : (
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="grid grid-cols-2 gap-4">
+              <InfoField
+                label="Necessário"
+                value={supply.required === null ? "Não definido" : withUnit(supply.required)}
+              />
+              <InfoField label="Comprado" value={withUnit(supply.purchased)} />
+              <InfoField label="Recebido" value={withUnit(supply.received)} />
+              <InfoField
+                label="A receber"
+                value={
+                  <span className={supply.pendingReceipt > 0 ? "text-amber-700 dark:text-amber-400" : undefined}>
+                    {withUnit(supply.pendingReceipt)}
                   </span>
-                )
-              }
-            />
+                }
+              />
+              <InfoField label="Consumido" value={withUnit(supply.consumed)} />
+              <InfoField label="Estoque atual" value={withUnit(supply.stock)} />
+            </div>
+            <div className="mt-2 border-t border-border pt-2">
+              <InfoField
+                label="Falta comprar"
+                value={
+                  supply.missingToPurchase === null ? (
+                    "—"
+                  ) : (
+                    <span
+                      className={
+                        supply.missingToPurchase > 0
+                          ? "text-base font-semibold text-destructive"
+                          : "text-base font-semibold text-foreground"
+                      }
+                    >
+                      {withUnit(supply.missingToPurchase)}
+                    </span>
+                  )
+                }
+              />
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       <section aria-labelledby="stock-movements" className="space-y-2.5">

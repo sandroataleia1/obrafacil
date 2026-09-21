@@ -11,8 +11,8 @@
 
 import { calculateMaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
 import type { GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem } from "@/features/purchases/types";
-import type { MaterialConsumption } from "@/features/materials/types";
-import type { LegacyMaterialRequirement as MaterialRequirement } from "@/features/materials/prototype/legacy-types";
+import type { MaterialConsumption, MaterialRequirement } from "@/features/materials/types";
+import { requirementQuantityForLegacyPlanning } from "@/features/materials/requirement-quantity";
 import type { ProjectMaterialsFacts } from "./types";
 
 export function buildProjectMaterialsFacts(
@@ -27,12 +27,12 @@ export function buildProjectMaterialsFacts(
 
   for (const requirement of requirements) {
     const planning = calculateMaterialPlanning(
-      requirement.requiredQuantity,
+      requirementQuantityForLegacyPlanning(requirement.required_quantity),
       purchaseOrders,
       purchaseOrderItems,
       goodsReceiptItems,
       consumptions,
-      requirement.materialId
+      requirement.material.id
     );
     if (planning.remainingToBuy !== null && planning.remainingToBuy > 0) pendingToBuyCount += 1;
     if (planning.remainingToReceive > 0) pendingToReceiveCount += 1;

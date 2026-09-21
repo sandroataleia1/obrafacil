@@ -339,7 +339,7 @@ function StockTable({ positions }: { positions: EnrichedPosition[] }) {
 const PAGE_SIZE = 15;
 
 export function StockList() {
-  const { positions } = useSupplyPositions();
+  const { positions, error: positionsError, reload: reloadPositions } = useSupplyPositions();
   const { projects } = useAllProjects();
   const { materials } = useAllMaterials();
   const [search, setSearch] = useState("");
@@ -404,7 +404,16 @@ export function StockList() {
         />
       </div>
 
-      {positions === undefined || enriched.length === 0 ? null : (
+      {positionsError ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar o planejamento de materiais agora.
+          </p>
+          <Button type="button" onClick={reloadPositions}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : positions === undefined || enriched.length === 0 ? null : (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
           <div className="relative flex-1">
             <Search
@@ -429,7 +438,7 @@ export function StockList() {
         </div>
       )}
 
-      {positions === undefined ? null : enriched.length === 0 ? (
+      {positionsError ? null : positions === undefined ? null : enriched.length === 0 ? (
         <EmptyState
           icon={Boxes}
           title="Nenhum material a acompanhar ainda"

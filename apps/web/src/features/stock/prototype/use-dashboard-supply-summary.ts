@@ -1,19 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+/**
+ * SUPPLY-FRONTEND-01B1. Derives the dashboard summary from
+ * `useSupplyPositions()` (now async/tenant-safe, real Requirement API)
+ * instead of its own synchronous read — never a second, independent
+ * fetch of the same data.
+ */
+
+import { useMemo } from "react";
 
 import { getDashboardSupplySummary, type DashboardSupplySummary } from "./dashboard-supply-summary";
+import { useSupplyPositions } from "./use-supply-positions";
 
-/** `undefined` until read on mount — same post-mount-read pattern as
- * `useSupplyPositions`/`useDashboardSummary`, avoids a hydration
- * mismatch against the localStorage-backed stores it reads from. */
-export function useDashboardSupplySummary() {
-  const [summary, setSummary] = useState<DashboardSupplySummary | undefined>(undefined);
+export function useDashboardSupplySummary(): {
+  summary: DashboardSupplySummary | undefined;
+  error: boolean;
+  reload: () => void;
+} {
+  const { positions, error, reload } = useSupplyPositions();
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSummary(getDashboardSupplySummary());
-  }, []);
+  const summary = useMemo(
+    () => (positions === undefined ? undefined : getDashboardSupplySummary(positions)),
+    [positions]
+  );
 
-  return summary;
+  return { summary, error, reload };
 }

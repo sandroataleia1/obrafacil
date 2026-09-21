@@ -29,10 +29,37 @@ vi.mock("../projects-client", () => ({
   updateProject: vi.fn(),
 }));
 
+const requirementsState: { requirements: unknown[] | undefined; error: boolean } = {
+  requirements: [],
+  error: false,
+};
+const reloadRequirements = vi.fn();
+vi.mock("@/features/materials/use-material-requirements", () => ({
+  useMaterialRequirements: () => ({
+    requirements: requirementsState.requirements,
+    error: requirementsState.error,
+    reload: reloadRequirements,
+  }),
+}));
+
 import { ApiError } from "@/lib/api-client";
 import { getProject, updateProject } from "../projects-client";
 import { ProjectDetail } from "../project-detail";
 import type { Project } from "../types";
+import type { MaterialRequirement } from "@/features/materials/types";
+
+function requirement(overrides: Partial<MaterialRequirement> = {}): MaterialRequirement {
+  return {
+    id: "req-1",
+    project_id: "proj-1",
+    material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: true },
+    required_quantity: "1.000",
+    notes: null,
+    created_at: "2026-09-10T00:00:00Z",
+    updated_at: "2026-09-10T00:00:00Z",
+    ...overrides,
+  };
+}
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -58,7 +85,10 @@ describe("ProjectDetail", () => {
     vi.mocked(getProject).mockReset();
     vi.mocked(updateProject).mockReset();
     push.mockReset();
+    reloadRequirements.mockReset();
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
+    requirementsState.requirements = [];
+    requirementsState.error = false;
     window.localStorage.clear();
   });
 
@@ -176,7 +206,7 @@ describe("ProjectDetail", () => {
     const { rerender } = render(<ProjectDetail id="proj-1" />);
     authState.activeCompany = { id: "company-b", name: "Empresa B" };
     rerender(<ProjectDetail id="proj-1" />);
-    await screen.findByText(/Obra B/);
+    await screen.findAllByText(/Obra B/);
 
     resolveA(project({ name: "Obra A" }));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -210,7 +240,7 @@ describe("ProjectDetail", () => {
     authState.activeCompany = { id: "company-b", name: "Empresa B" };
     rerender(<ProjectDetail id="proj-1" />);
     resolvePut(project({ status: "in_progress", updated_at: "2026-09-02T00:00:00.000000Z" }));
-    await screen.findByText(/Obra B/);
+    await screen.findAllByText(/Obra B/);
 
     expect(screen.getByRole("button", { name: "Planejamento" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: "Em andamento" })?.getAttribute("aria-pressed")).not.toBe("true");
@@ -241,7 +271,7 @@ describe("ProjectDetail", () => {
     authState.activeCompany = { id: "company-b", name: "Empresa B" };
     rerender(<ProjectDetail id="proj-1" />);
     rejectPut(new ApiError(409, "Conflict"));
-    await screen.findByText(/Obra B/);
+    await screen.findAllByText(/Obra B/);
 
     expect(screen.queryByText(/A obra foi alterada por outra pessoa/)).not.toBeInTheDocument();
   });
@@ -254,5 +284,72 @@ describe("ProjectDetail", () => {
     await screen.findByText(/OBR-000001/);
     await screen.findByText("Valor do orçamento");
     expect(screen.getAllByText("R$ 2.000,00").length).toBeGreaterThan(0);
+  });
+
+  /**
+   * SUPPLY-FRONTEND-01B1 §4-7/§27 (PD1-PD7). The "Materiais" section now
+   * sources Requirements from the real API — never the removed legacy
+   * local store.
+   */
+  describe("Materiais section — SUPPLY-FRONTEND-01B1 §27 (PD1-PD7)", () => {
+    it("PD1: a real API Requirement appears using requirement.material's live relation", async () => {
+      vi.mocked(getProject).mockResolvedValue(project());
+      requirementsState.requirements = [requirement()];
+      render(<ProjectDetail id="proj-1" />);
+      await screen.findByText(/OBR-000001/);
+      expect(await screen.findByText("Cimento")).toBeInTheDocument();
+    });
+
+    it("PD2: a real empty [] response shows the empty-planning state", async () => {
+      vi.mocked(getProject).mockResolvedValue(project());
+      requirementsState.requirements = [];
+      render(<ProjectDetail id="proj-1" />);
+      await screen.findByText(/OBR-000001/);
+      expect(await screen.findByText(/nenhum material planejado/i)).toBeInTheDocument();
+    });
+
+    it("PD3/PD4: an API error shows a retry message, never the empty-planning state", async () => {
+      vi.mocked(getProject).mockResolvedValue(project());
+      requirementsState.requirements = undefined;
+      requirementsState.error = true;
+      render(<ProjectDetail id="proj-1" />);
+      await screen.findByText(/OBR-000001/);
+      expect(await screen.findByText(/não foi possível carregar as necessidades de materiais agora/i)).toBeInTheDocument();
+      expect(screen.queryByText(/nenhum material planejado/i)).not.toBeInTheDocument();
+    });
+
+    it("PD4: the retry button calls reload()", async () => {
+      vi.mocked(getProject).mockResolvedValue(project());
+      requirementsState.requirements = undefined;
+      requirementsState.error = true;
+      const user = userEvent.setup();
+      render(<ProjectDetail id="proj-1" />);
+      await screen.findByText(/OBR-000001/);
+      const buttons = await screen.findAllByRole("button", { name: /tentar novamente/i });
+      await user.click(buttons[buttons.length - 1]);
+      expect(reloadRequirements).toHaveBeenCalledTimes(1);
+    });
+
+    it("PD5: required_quantity bridges to the local planning calculator without changing the API decimal string", async () => {
+      vi.mocked(getProject).mockResolvedValue(project());
+      requirementsState.requirements = [requirement({ required_quantity: "8.500" })];
+      const user = userEvent.setup();
+      render(<ProjectDetail id="proj-1" />);
+      await screen.findByText(/OBR-000001/);
+      const materialButton = (await screen.findByText("Cimento")).closest("button");
+      expect(materialButton).not.toBeNull();
+      await user.click(materialButton!);
+      expect((await screen.findAllByText(/8,5/)).length).toBeGreaterThan(0);
+    });
+
+    it("PD6: a Requirement whose Material relation is inactive still renders", async () => {
+      vi.mocked(getProject).mockResolvedValue(project());
+      requirementsState.requirements = [
+        requirement({ material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: false } }),
+      ];
+      render(<ProjectDetail id="proj-1" />);
+      await screen.findByText(/OBR-000001/);
+      expect(await screen.findByText("Cimento")).toBeInTheDocument();
+    });
   });
 });

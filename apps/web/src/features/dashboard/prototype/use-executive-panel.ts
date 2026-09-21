@@ -21,7 +21,7 @@ import { listAllProjectCosts, listCostsByProject } from "@/features/project-cost
 import { listAllEmployees } from "@/features/employees/prototype/employee-store";
 import { listAllWorkPeriods } from "@/features/employees/prototype/work-period-store";
 import { listAllProjectTeamAssignments } from "@/features/projects/team/project-team-assignment-store";
-import { listRequirementsByProject } from "@/features/materials/prototype/material-requirement-store";
+import { listMaterialRequirementsForProjects } from "@/features/materials/material-requirements-client";
 import { listPurchaseOrdersByProject } from "@/features/purchases/prototype/purchase-order-store";
 import { listItemsByPurchaseOrders } from "@/features/purchases/prototype/purchase-order-item-store";
 import { listReceiptItemsByPurchaseOrder } from "@/features/purchases/prototype/goods-receipt-item-store";
@@ -69,6 +69,13 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
     workforcePeriod: period,
   });
 
+  // SUPPLY-FRONTEND-01B1 §8-10: MaterialRequirement is real API now —
+  // fetched per Project via `listMaterialRequirementsForProjects`. A
+  // failure on ANY Project's Requirements rejects the whole call (never
+  // silently substitutes `[]`), so the outer `load()`'s `.catch()`
+  // correctly surfaces `error: true` for the whole panel.
+  const requirementsByProject = await listMaterialRequirementsForProjects(projects.map((project) => project.id));
+
   const projectEntries: ExecutivePanelProjectEntry[] = projects.map((project) => {
     // §44/§45: no legacy Budget prototype lookup — the real Project's
     // `source_budget` never exposes cost/margin (only {id, number,
@@ -93,7 +100,7 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
         payables,
         receivables,
         receiptsFor,
-        materialRequirements: listRequirementsByProject(project.id),
+        materialRequirements: requirementsByProject.get(project.id) ?? [],
         purchaseOrders,
         purchaseOrderItems,
         goodsReceiptItems,

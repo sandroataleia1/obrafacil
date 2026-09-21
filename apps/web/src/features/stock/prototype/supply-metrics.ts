@@ -47,7 +47,8 @@
  */
 
 import { toQuantityUnits } from "@/lib/quantity";
-import { findRequirement, listRequirements } from "@/features/materials/prototype/material-requirement-store";
+import { requirementQuantityForLegacyPlanning } from "@/features/materials/requirement-quantity";
+import type { MaterialRequirement } from "@/features/materials/types";
 import { calculateAvailableQuantity } from "@/features/materials/prototype/material-consumption";
 import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
 import { calculateMaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
@@ -88,7 +89,8 @@ export interface ProjectMaterialSupplyMetrics {
  */
 export function getProjectMaterialSupplyMetrics(
   projectId: string,
-  materialId: string
+  materialId: string,
+  requirement: MaterialRequirement | null
 ): ProjectMaterialSupplyMetrics {
   const purchaseOrders = listPurchaseOrdersByProject(projectId);
   const items = listItemsByPurchaseOrders(purchaseOrders.map((purchaseOrder) => purchaseOrder.id));
@@ -96,10 +98,9 @@ export function getProjectMaterialSupplyMetrics(
     listReceiptItemsByPurchaseOrder(purchaseOrder.id)
   );
   const consumptions = listConsumptionsByProject(projectId);
-  const requirement = findRequirement(projectId, materialId);
 
   const planning = calculateMaterialPlanning(
-    requirement?.requiredQuantity ?? null,
+    requirement ? requirementQuantityForLegacyPlanning(requirement.required_quantity) : null,
     purchaseOrders,
     items,
     receiptItems,
@@ -170,7 +171,7 @@ export interface StockSupplyPosition extends ProjectMaterialSupplyMetrics {
  * own financial logic (that function is only for the metrics, this
  * loop is only for discovering which pairs to compute metrics for).
  */
-export function listSupplyPositions(): StockSupplyPosition[] {
+export function listSupplyPositions(requirements: MaterialRequirement[]): StockSupplyPosition[] {
   const pairs = new Map<string, { projectId: string; materialId: string }>();
 
   for (const position of listStockPositions()) {
@@ -180,11 +181,11 @@ export function listSupplyPositions(): StockSupplyPosition[] {
     });
   }
 
-  for (const requirement of listRequirements()) {
-    pairs.set(`${requirement.projectId}::${requirement.materialId}`, {
-      projectId: requirement.projectId,
-      materialId: requirement.materialId,
-    });
+  const requirementByPair = new Map<string, MaterialRequirement>();
+  for (const requirement of requirements) {
+    const key = `${requirement.project_id}::${requirement.material.id}`;
+    pairs.set(key, { projectId: requirement.project_id, materialId: requirement.material.id });
+    requirementByPair.set(key, requirement);
   }
 
   for (const purchaseOrder of listPurchaseOrders()) {
@@ -197,9 +198,9 @@ export function listSupplyPositions(): StockSupplyPosition[] {
     }
   }
 
-  return Array.from(pairs.values()).map(({ projectId, materialId }) => ({
+  return Array.from(pairs.entries()).map(([key, { projectId, materialId }]) => ({
     projectId,
     materialId,
-    ...getProjectMaterialSupplyMetrics(projectId, materialId),
+    ...getProjectMaterialSupplyMetrics(projectId, materialId, requirementByPair.get(key) ?? null),
   }));
 }
