@@ -30,3 +30,22 @@ export function supplierPhoneInputToApi(input: string): string | null {
 
 /** Re-exported for the input's own onChange mask — same helper every other BR phone field uses. */
 export { formatPhoneInput };
+
+/**
+ * SUPPLY-FRONTEND-01A1 §25. `formatPhoneInput` (from `lib/phone.ts`) was
+ * built for BR-local digit-by-digit typing and mis-slices a pasted E.164
+ * string (e.g. "+5511999999999") because it does not strip the country
+ * code first. This wraps it: a pasted value starting with "+55" (or the
+ * bare "55" + 11/10 digit DDD+number combo pasted without the plus) is
+ * normalized through the same E.164 pipeline used on save/load before
+ * falling back to `formatPhoneInput` for ordinary BR-local typing. The
+ * shared `lib/phone.ts` helper itself is intentionally left untouched.
+ */
+export function supplierPhoneInputMask(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (raw.trim().startsWith("+55") || (digits.startsWith("55") && (digits.length === 12 || digits.length === 13))) {
+    const display = supplierPhoneApiToInput(`+${digits}`);
+    if (display) return display;
+  }
+  return formatPhoneInput(raw);
+}

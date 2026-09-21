@@ -18,7 +18,7 @@ import { formatCpfCnpj, onlyDigits } from "@/lib/document";
 import { useAuth } from "@/features/auth/auth-provider";
 import { createSupplier, updateSupplier } from "./suppliers-client";
 import { useSupplier } from "./use-supplier";
-import { formatPhoneInput, supplierPhoneApiToInput, supplierPhoneInputToApi } from "./supplier-phone";
+import { supplierPhoneApiToInput, supplierPhoneInputMask, supplierPhoneInputToApi } from "./supplier-phone";
 import type { Supplier } from "./types";
 
 function fieldErrorFor(error: ApiValidationError, field: string): string | undefined {
@@ -37,7 +37,7 @@ function SupplierFormInner({
   activeCompanyIdRef: React.RefObject<string | undefined>;
 }) {
   const router = useRouter();
-  const { supplier: existingSupplier, error: loadError } = useSupplier(supplierId ?? "");
+  const { supplier: existingSupplier, error: loadError, reload: reloadSupplier } = useSupplier(supplierId ?? "");
   const isEditing = Boolean(supplierId);
 
   const [name, setName] = useState("");
@@ -129,6 +129,9 @@ function SupplierFormInner({
           <p role="alert" className="text-sm text-muted-foreground">
             Não foi possível carregar este fornecedor agora.
           </p>
+          <Button type="button" onClick={reloadSupplier}>
+            Tentar novamente
+          </Button>
         </div>
       </div>
     );
@@ -212,7 +215,7 @@ function SupplierFormInner({
             type="text"
             inputMode="tel"
             value={phone}
-            onChange={(event) => setPhone(formatPhoneInput(event.target.value))}
+            onChange={(event) => setPhone(supplierPhoneInputMask(event.target.value))}
             placeholder="(11) 99999-9999"
             className="w-full rounded-xl border border-border bg-card px-4 py-3 text-base text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
           />

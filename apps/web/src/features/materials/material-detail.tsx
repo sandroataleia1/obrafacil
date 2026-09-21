@@ -4,7 +4,7 @@
  * SUPPLY-FRONTEND-01A §34. Real API — loading/404/error+retry/success.
  */
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Package } from "lucide-react";
@@ -13,6 +13,7 @@ import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ApiValidationError } from "@/lib/api-client";
+import { useAuth } from "@/features/auth/auth-provider";
 import { formatMaterialUnitCode } from "./material-unit";
 import { updateMaterial } from "./materials-client";
 import { useMaterial } from "./use-material";
@@ -29,9 +30,18 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export function MaterialDetail({ id }: { id: string }) {
   const router = useRouter();
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
   const { material, error, reload } = useMaterial(id);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
+
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const idRef = useRef(id);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    idRef.current = id;
+  }, [activeCompanyId, id]);
 
   if (error) {
     return (
@@ -59,6 +69,8 @@ export function MaterialDetail({ id }: { id: string }) {
 
   async function handleToggleStatus() {
     if (!material) return;
+    const requestCompanyId = activeCompanyIdRef.current;
+    const requestId = idRef.current;
     setToggling(true);
     setToggleError(null);
     try {
@@ -69,15 +81,19 @@ export function MaterialDetail({ id }: { id: string }) {
         notes: material.notes,
         active: !material.active,
       });
+      if (activeCompanyIdRef.current !== requestCompanyId || idRef.current !== requestId) return;
       reload();
     } catch (submitError) {
+      if (activeCompanyIdRef.current !== requestCompanyId || idRef.current !== requestId) return;
       if (submitError instanceof ApiValidationError) {
         setToggleError(submitError.serverMessage ?? Object.values(submitError.errors)[0]?.[0] ?? "Não foi possível atualizar agora.");
       } else {
         setToggleError("Não foi possível atualizar agora.");
       }
     } finally {
-      setToggling(false);
+      if (activeCompanyIdRef.current === requestCompanyId && idRef.current === requestId) {
+        setToggling(false);
+      }
     }
   }
 

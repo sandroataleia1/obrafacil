@@ -12,7 +12,7 @@
  * that could misrepresent a mixed data source.
  */
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Truck } from "lucide-react";
@@ -23,6 +23,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ApiValidationError } from "@/lib/api-client";
 import { formatDate } from "@/lib/date";
 import { formatCpfCnpj } from "@/lib/document";
+import { useAuth } from "@/features/auth/auth-provider";
 import { updateSupplier } from "./suppliers-client";
 import { useSupplier } from "./use-supplier";
 import { supplierPhoneApiToInput } from "./supplier-phone";
@@ -39,9 +40,18 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export function SupplierDetail({ id }: { id: string }) {
   const router = useRouter();
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
   const { supplier, error, reload } = useSupplier(id);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
+
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const idRef = useRef(id);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    idRef.current = id;
+  }, [activeCompanyId, id]);
 
   if (error) {
     return (
@@ -69,6 +79,8 @@ export function SupplierDetail({ id }: { id: string }) {
 
   async function handleToggleStatus() {
     if (!supplier) return;
+    const requestCompanyId = activeCompanyIdRef.current;
+    const requestId = idRef.current;
     setToggling(true);
     setToggleError(null);
     try {
@@ -82,15 +94,19 @@ export function SupplierDetail({ id }: { id: string }) {
         notes: supplier.notes,
         active: !supplier.active,
       });
+      if (activeCompanyIdRef.current !== requestCompanyId || idRef.current !== requestId) return;
       reload();
     } catch (submitError) {
+      if (activeCompanyIdRef.current !== requestCompanyId || idRef.current !== requestId) return;
       if (submitError instanceof ApiValidationError) {
         setToggleError(submitError.serverMessage ?? Object.values(submitError.errors)[0]?.[0] ?? "Não foi possível atualizar agora.");
       } else {
         setToggleError("Não foi possível atualizar agora.");
       }
     } finally {
-      setToggling(false);
+      if (activeCompanyIdRef.current === requestCompanyId && idRef.current === requestId) {
+        setToggling(false);
+      }
     }
   }
 

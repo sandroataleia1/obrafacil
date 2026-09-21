@@ -39,7 +39,7 @@ function MaterialFormInner({
   activeCompanyIdRef: React.RefObject<string | undefined>;
 }) {
   const router = useRouter();
-  const { material: existingMaterial, error: loadError } = useMaterial(materialId ?? "");
+  const { material: existingMaterial, error: loadError, reload: reloadMaterial } = useMaterial(materialId ?? "");
   const isEditing = Boolean(materialId);
 
   const [name, setName] = useState("");
@@ -121,6 +121,9 @@ function MaterialFormInner({
           <p role="alert" className="text-sm text-muted-foreground">
             Não foi possível carregar este material agora.
           </p>
+          <Button type="button" onClick={reloadMaterial}>
+            Tentar novamente
+          </Button>
         </div>
       </div>
     );

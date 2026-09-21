@@ -51,3 +51,42 @@ describe("no Material/Supplier master localStorage — SUPPLY-FRONTEND-01A §77"
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * SUPPLY-FRONTEND-01A1 §24. Global audit — zero runtime import of the
+ * removed master prototype modules (`materials/prototype/material` /
+ * `suppliers/prototype/supplier-store`) and zero use of the removed
+ * master localStorage keys ANYWHERE under `apps/web/src`, not just inside
+ * `features/materials`/`features/suppliers`. A dependent module (e.g. a
+ * Requirement/PurchaseOrder selector) importing the old prototype master
+ * directly instead of `useAllMaterials`/`useAllSuppliers` would be
+ * exactly the kind of stale-data regression this proves is absent.
+ */
+describe("no Material/Supplier master localStorage — SUPPLY-FRONTEND-01A1 §24 (global audit)", () => {
+  it("zero runtime file under apps/web/src imports the removed master prototype modules or reads/writes the removed keys", () => {
+    const srcDir = join(__dirname, "../../../");
+    const files = collectFiles(srcDir);
+    const offenders: string[] = [];
+
+    const forbiddenImportPatterns = [
+      /from\s+["'].*materials\/prototype\/material["']/,
+      /from\s+["'].*suppliers\/prototype\/supplier-store["']/,
+    ];
+
+    for (const file of files) {
+      const content = readFileSync(file, "utf-8");
+      for (const pattern of FORBIDDEN_PATTERNS) {
+        if (content.includes(pattern)) {
+          offenders.push(`${file}: ${pattern}`);
+        }
+      }
+      for (const pattern of forbiddenImportPatterns) {
+        if (pattern.test(content)) {
+          offenders.push(`${file}: ${pattern}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  }, 15000);
+});

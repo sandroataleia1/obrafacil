@@ -155,6 +155,12 @@ interface LoadedList {
   response: MaterialPaginationResponse;
 }
 
+interface DeleteState {
+  companyId: string | undefined;
+  material: MaterialListItem;
+  error: string | null;
+}
+
 export function MaterialList() {
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
@@ -167,8 +173,7 @@ export function MaterialList() {
   const [statusFilter, setStatusFilter] = useState<MaterialStatusFilter>("all");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
-  const [deletingMaterial, setDeletingMaterial] = useState<MaterialListItem | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
 
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
@@ -227,36 +232,42 @@ export function MaterialList() {
 
   function handleDelete(material: MaterialListItem) {
     if (hasAnyLocalMaterialDependency(material.id)) {
-      setDeleteError(
-        "Este material possui registros locais vinculados e não pode ser excluído enquanto esses módulos ainda não foram migrados."
-      );
-      setDeletingMaterial(material);
+      setDeleteState({
+        companyId: activeCompanyId,
+        material,
+        error:
+          "Este material possui registros locais vinculados e não pode ser excluído enquanto esses módulos ainda não foram migrados.",
+      });
       return;
     }
-    setDeleteError(null);
-    setDeletingMaterial(material);
+    setDeleteState({ companyId: activeCompanyId, material, error: null });
   }
 
   async function handleConfirmDelete() {
-    if (!deletingMaterial) return;
-    if (hasAnyLocalMaterialDependency(deletingMaterial.id)) return;
+    if (!deleteState) return;
+    const { material, companyId: requestCompanyId } = deleteState;
+    if (hasAnyLocalMaterialDependency(material.id)) return;
     try {
-      await deleteMaterial(deletingMaterial.id);
-      setDeletingMaterial(null);
-      setDeleteError(null);
+      await deleteMaterial(material.id);
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      setDeleteState(null);
       void load();
     } catch (error) {
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       if (error instanceof ApiValidationError) {
-        setDeleteError(error.serverMessage ?? Object.values(error.errors)[0]?.[0] ?? "Não foi possível excluir agora.");
+        setDeleteState({
+          companyId: requestCompanyId,
+          material,
+          error: error.serverMessage ?? Object.values(error.errors)[0]?.[0] ?? "Não foi possível excluir agora.",
+        });
         return;
       }
       if (error instanceof ApiError && error.status === 404) {
-        setDeletingMaterial(null);
-        setDeleteError(null);
+        setDeleteState(null);
         void load();
         return;
       }
-      setDeleteError("Não foi possível excluir agora.");
+      setDeleteState({ companyId: requestCompanyId, material, error: "Não foi possível excluir agora." });
     }
   }
 
@@ -360,26 +371,25 @@ export function MaterialList() {
       <CreateMaterialDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={() => void load()} />
 
       <ConfirmActionDialog
-        open={deletingMaterial !== null}
+        open={deleteState !== null && deleteState.companyId === activeCompanyId}
         onOpenChange={(open) => {
           if (!open) {
-            setDeletingMaterial(null);
-            setDeleteError(null);
+            setDeleteState(null);
           }
         }}
         title="Excluir material?"
         description={
-          deletingMaterial && !hasAnyLocalMaterialDependency(deletingMaterial.id)
-            ? `Excluir o material "${deletingMaterial.name}"? Esta ação não pode ser desfeita.`
+          deleteState && deleteState.companyId === activeCompanyId && !hasAnyLocalMaterialDependency(deleteState.material.id)
+            ? `Excluir o material "${deleteState.material.name}"? Esta ação não pode ser desfeita.`
             : undefined
         }
         confirmLabel="Excluir"
         destructive
         onConfirm={handleConfirmDelete}
       >
-        {deleteError ? (
+        {deleteState && deleteState.companyId === activeCompanyId && deleteState.error ? (
           <p role="alert" className="text-sm text-destructive">
-            {deleteError}
+            {deleteState.error}
           </p>
         ) : null}
       </ConfirmActionDialog>

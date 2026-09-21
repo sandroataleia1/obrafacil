@@ -153,6 +153,12 @@ interface LoadedList {
   response: SupplierPaginationResponse;
 }
 
+interface DeleteState {
+  companyId: string | undefined;
+  supplier: SupplierListItem;
+  error: string | null;
+}
+
 export function SupplierList() {
   const auth = useAuth();
   const activeCompanyId = auth.activeCompany?.id;
@@ -165,8 +171,7 @@ export function SupplierList() {
   const [statusFilter, setStatusFilter] = useState<SupplierStatusFilter>("all");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
-  const [deletingSupplier, setDeletingSupplier] = useState<SupplierListItem | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
 
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
@@ -225,34 +230,41 @@ export function SupplierList() {
 
   function handleDelete(supplier: SupplierListItem) {
     if (hasLocalPurchaseOrder(supplier.id)) {
-      setDeleteError("Este fornecedor possui compras vinculadas e não pode ser excluído.");
-      setDeletingSupplier(supplier);
+      setDeleteState({
+        companyId: activeCompanyId,
+        supplier,
+        error: "Este fornecedor possui compras vinculadas e não pode ser excluído.",
+      });
       return;
     }
-    setDeleteError(null);
-    setDeletingSupplier(supplier);
+    setDeleteState({ companyId: activeCompanyId, supplier, error: null });
   }
 
   async function handleConfirmDelete() {
-    if (!deletingSupplier) return;
-    if (hasLocalPurchaseOrder(deletingSupplier.id)) return;
+    if (!deleteState) return;
+    const { supplier, companyId: requestCompanyId } = deleteState;
+    if (hasLocalPurchaseOrder(supplier.id)) return;
     try {
-      await deleteSupplier(deletingSupplier.id);
-      setDeletingSupplier(null);
-      setDeleteError(null);
+      await deleteSupplier(supplier.id);
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
+      setDeleteState(null);
       void load();
     } catch (error) {
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       if (error instanceof ApiValidationError) {
-        setDeleteError(error.serverMessage ?? Object.values(error.errors)[0]?.[0] ?? "Não foi possível excluir agora.");
+        setDeleteState({
+          companyId: requestCompanyId,
+          supplier,
+          error: error.serverMessage ?? Object.values(error.errors)[0]?.[0] ?? "Não foi possível excluir agora.",
+        });
         return;
       }
       if (error instanceof ApiError && error.status === 404) {
-        setDeletingSupplier(null);
-        setDeleteError(null);
+        setDeleteState(null);
         void load();
         return;
       }
-      setDeleteError("Não foi possível excluir agora.");
+      setDeleteState({ companyId: requestCompanyId, supplier, error: "Não foi possível excluir agora." });
     }
   }
 
@@ -355,26 +367,25 @@ export function SupplierList() {
       <CreateSupplierDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={() => void load()} />
 
       <ConfirmActionDialog
-        open={deletingSupplier !== null}
+        open={deleteState !== null && deleteState.companyId === activeCompanyId}
         onOpenChange={(open) => {
           if (!open) {
-            setDeletingSupplier(null);
-            setDeleteError(null);
+            setDeleteState(null);
           }
         }}
         title="Excluir fornecedor?"
         description={
-          deletingSupplier && !hasLocalPurchaseOrder(deletingSupplier.id)
-            ? `Excluir o fornecedor "${deletingSupplier.name}"? Esta ação não pode ser desfeita.`
+          deleteState && deleteState.companyId === activeCompanyId && !hasLocalPurchaseOrder(deleteState.supplier.id)
+            ? `Excluir o fornecedor "${deleteState.supplier.name}"? Esta ação não pode ser desfeita.`
             : undefined
         }
         confirmLabel="Excluir"
         destructive
         onConfirm={handleConfirmDelete}
       >
-        {deleteError ? (
+        {deleteState && deleteState.companyId === activeCompanyId && deleteState.error ? (
           <p role="alert" className="text-sm text-destructive">
-            {deleteError}
+            {deleteState.error}
           </p>
         ) : null}
       </ConfirmActionDialog>
