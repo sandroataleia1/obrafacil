@@ -88,7 +88,12 @@ export interface PurchaseOrder {
   updated_at: string;
 }
 
-/** A row from GET /api/v1/purchase-orders — lean shape, no items/goods_receipts. */
+/**
+ * A row from GET /api/v1/purchase-orders — lean shape, no items/
+ * goods_receipts. SUPPLY-FRONTEND-01C1 §22: no `notes` — mirrors
+ * `PurchaseOrderListResource` field-for-field, which never includes it
+ * (only the full detail `PurchaseOrderResource` does).
+ */
 export interface PurchaseOrderListItem {
   id: string;
   number: string;
@@ -98,7 +103,6 @@ export interface PurchaseOrderListItem {
   project: PurchaseOrderProjectRef;
   order_date: string;
   expected_delivery_date: string | null;
-  notes: string | null;
   items_count: number;
   total: string;
   created_at: string;

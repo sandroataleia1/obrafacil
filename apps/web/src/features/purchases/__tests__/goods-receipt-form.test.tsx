@@ -1,9 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
+const authState: { activeCompany: { id: string; name: string } | null } = {
+  activeCompany: { id: "company-a", name: "Empresa A" },
+};
+vi.mock("@/features/auth/auth-provider", () => ({
+  useAuth: () => authState,
+}));
 
 vi.mock("../purchase-orders-client", () => ({
   createGoodsReceipt: vi.fn(),
@@ -15,12 +22,7 @@ vi.mock("../use-purchase-order", () => ({
   usePurchaseOrder: () => ({ order: orderState.order, error: orderState.error, reload }),
 }));
 
-vi.mock("../prototype/goods-receipt-shadow-store", () => ({
-  saveGoodsReceiptShadowEntries: vi.fn(),
-}));
-
 import { createGoodsReceipt } from "../purchase-orders-client";
-import { saveGoodsReceiptShadowEntries as saveShadowEntries } from "../prototype/goods-receipt-shadow-store";
 import { GoodsReceiptForm } from "../goods-receipt-form";
 import type { PurchaseOrder, PurchaseOrderItem } from "../types";
 
@@ -64,20 +66,21 @@ function order(overrides: Partial<PurchaseOrder> = {}): PurchaseOrder {
 }
 
 /**
- * SUPPLY-FRONTEND-01C. Order must be `ordered`; pending items come from
- * `item.remaining_quantity > 0`; at least 1 filled line is required; a
- * successful POST writes through to the local shadow store (never
- * inserts the created GoodsReceipt into any Purchase-side local store)
- * and navigates back to the order detail (re-reading API truth).
+ * SUPPLY-FRONTEND-01C1 §12/§18/TM10. Order must be `ordered`; pending
+ * items come from `item.remaining_quantity > 0`; at least 1 filled line
+ * is required; a successful POST writes NOTHING to localStorage (zero
+ * shadow, zero mirror) and navigates back to the order detail
+ * (re-reading API truth). A POST that resolves after a Company switch
+ * produces zero navigation.
  */
-describe("GoodsReceiptForm — SUPPLY-FRONTEND-01C", () => {
+describe("GoodsReceiptForm — SUPPLY-FRONTEND-01C1", () => {
   beforeEach(() => {
     push.mockReset();
     reload.mockReset();
-    vi.mocked(saveShadowEntries).mockReset();
     vi.mocked(createGoodsReceipt).mockReset();
     orderState.order = undefined;
     orderState.error = false;
+    authState.activeCompany = { id: "company-a", name: "Empresa A" };
   });
 
   afterEach(() => {
@@ -114,7 +117,7 @@ describe("GoodsReceiptForm — SUPPLY-FRONTEND-01C", () => {
     expect(createGoodsReceipt).not.toHaveBeenCalled();
   });
 
-  it("a successful submit sends only positive filled lines, writes the shadow store, and navigates to the order detail", async () => {
+  it("SH10: a successful submit writes zero localStorage of any kind and navigates to the order detail (re-reading API truth)", async () => {
     orderState.order = order();
     vi.mocked(createGoodsReceipt).mockResolvedValue({
       id: "gr-1",
@@ -124,6 +127,8 @@ describe("GoodsReceiptForm — SUPPLY-FRONTEND-01C", () => {
       created_at: "2026-09-12T00:00:00Z",
     });
 
+    const setItemSpy = vi.spyOn(window.localStorage.__proto__, "setItem");
+
     const user = userEvent.setup();
     render(<GoodsReceiptForm purchaseOrderId="po-1" />);
 
@@ -131,21 +136,45 @@ describe("GoodsReceiptForm — SUPPLY-FRONTEND-01C", () => {
     await user.type(quantityInput, "5");
     await user.click(screen.getByRole("button", { name: /registrar recebimento/i }));
 
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/compras/po-1"));
+
     expect(createGoodsReceipt).toHaveBeenCalledWith("po-1", {
       received_at: expect.any(String),
       notes: null,
       items: [{ purchase_order_item_id: "item-1", quantity: "5" }],
     });
-    expect(saveShadowEntries).toHaveBeenCalledWith([
-      {
-        id: "gri-1",
-        goodsReceiptId: "gr-1",
-        projectId: "proj-1",
-        materialId: "mat-1",
-        receivedAt: "2026-09-12",
-        quantity: 5,
-      },
-    ]);
-    expect(push).toHaveBeenCalledWith("/compras/po-1");
+    expect(setItemSpy).not.toHaveBeenCalled();
+    setItemSpy.mockRestore();
+  });
+
+  it("TM10: a Receipt POST that resolves after switching Company produces zero navigation", async () => {
+    orderState.order = order();
+    let resolveCreate!: (value: Awaited<ReturnType<typeof createGoodsReceipt>>) => void;
+    vi.mocked(createGoodsReceipt).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+
+    const user = userEvent.setup();
+    const { rerender } = render(<GoodsReceiptForm purchaseOrderId="po-1" />);
+
+    const quantityInput = await screen.findByPlaceholderText("0");
+    await user.type(quantityInput, "5");
+    await user.click(screen.getByRole("button", { name: /registrar recebimento/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<GoodsReceiptForm purchaseOrderId="po-1" />);
+
+    resolveCreate({
+      id: "gr-1",
+      received_at: "2026-09-12",
+      notes: null,
+      items: [{ id: "gri-1", purchase_order_item_id: "item-1", quantity: "5.000" }],
+      created_at: "2026-09-12T00:00:00Z",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(push).not.toHaveBeenCalled();
   });
 });

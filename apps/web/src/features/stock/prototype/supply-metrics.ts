@@ -57,6 +57,7 @@ import {
   purchaseOrderForLegacyPlanning,
   receiptItemsForLegacyPlanning,
 } from "@/features/purchases/purchase-planning-adapter";
+import { purchaseOrdersToReceivedEvents } from "@/features/purchases/purchase-received-events";
 import type { PurchaseOrder } from "@/features/purchases/types";
 import { listStockPositions } from "./stock";
 
@@ -116,7 +117,8 @@ export function getProjectMaterialSupplyMetrics(
     materialId
   );
 
-  const stock = calculateAvailableQuantity(projectId, materialId);
+  const receivedEvents = purchaseOrdersToReceivedEvents(projectOrders);
+  const stock = calculateAvailableQuantity(projectId, materialId, receivedEvents);
 
   const purchasedUnits = toQuantityUnits(planning.purchased);
   const receivedUnits = toQuantityUnits(planning.received);
@@ -184,8 +186,9 @@ export function listSupplyPositions(
   purchaseOrders: PurchaseOrder[]
 ): StockSupplyPosition[] {
   const pairs = new Map<string, { projectId: string; materialId: string }>();
+  const allReceivedEvents = purchaseOrdersToReceivedEvents(purchaseOrders);
 
-  for (const position of listStockPositions()) {
+  for (const position of listStockPositions(allReceivedEvents)) {
     pairs.set(`${position.projectId}::${position.materialId}`, {
       projectId: position.projectId,
       materialId: position.materialId,

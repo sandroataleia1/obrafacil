@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Boxes } from "lucide-react";
 
@@ -11,6 +11,9 @@ import { formatQuantity } from "@/lib/quantity";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useAllMaterials } from "@/features/materials/use-all-materials";
 import { useAllProjects } from "@/features/projects/use-all-projects";
+import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
+import { purchaseOrdersToReceivedEvents } from "@/features/purchases/purchase-received-events";
+import type { PurchaseOrder } from "@/features/purchases/types";
 import { createStockAdjustment, getStockBalance } from "./prototype/stock";
 import type { StockAdjustmentType } from "./types";
 
@@ -115,8 +118,43 @@ export function AdjustStockForm() {
   const project = effectiveProjectId ? (projects.find((item) => item.id === effectiveProjectId) ?? null) : null;
   const material = effectiveMaterialId ? (materials.find((item) => item.id === effectiveMaterialId) ?? null) : null;
   const unitLabel = material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : null;
+
+  // SUPPLY-FRONTEND-01C1 §5/§7: PurchaseOrder/GoodsReceipt are real API
+  // — fetched fresh for whichever Obra is effectively selected, never a
+  // local mirror. `purchasesError` fails CLOSED: the balance is hidden
+  // (never shown as if received=0) and `handleConfirm` refuses to
+  // validate against an incomplete ledger.
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
+  const [purchasesError, setPurchasesError] = useState(false);
+
+  function loadPurchases() {
+    if (!effectiveProjectId) {
+      setPurchaseOrders(undefined);
+      setPurchasesError(false);
+      return;
+    }
+    setPurchasesError(false);
+    listPurchaseOrderDetailsForProject(effectiveProjectId)
+      .then((orders) => setPurchaseOrders(orders))
+      .catch(() => setPurchasesError(true));
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPurchaseOrders(undefined);
+    loadPurchases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveProjectId]);
+
+  const receivedEvents = useMemo(
+    () => (purchaseOrders ? purchaseOrdersToReceivedEvents(purchaseOrders) : []),
+    [purchaseOrders]
+  );
+
   const currentBalance =
-    project && material ? getStockBalance(effectiveProjectId, effectiveMaterialId) : null;
+    project && material && purchaseOrders !== undefined
+      ? getStockBalance(effectiveProjectId, effectiveMaterialId, receivedEvents)
+      : null;
 
   function destination(): string {
     // Came from a specific detail page -> return to that same detail.
@@ -143,6 +181,17 @@ export function AdjustStockForm() {
       setError("Informe uma quantidade maior que zero.");
       return;
     }
+    // §7: never validate an ADJUSTMENT_OUT (or any adjustment) against
+    // an incomplete ledger — a pending/failed Purchase fetch blocks the
+    // write entirely, fail-closed.
+    if (purchasesError) {
+      setError("Não foi possível carregar os recebimentos agora. Tente novamente.");
+      return;
+    }
+    if (purchaseOrders === undefined) {
+      setError("Aguarde o carregamento dos recebimentos antes de confirmar.");
+      return;
+    }
 
     const result = createStockAdjustment(
       {
@@ -153,7 +202,8 @@ export function AdjustStockForm() {
         occurredAt,
         reason,
       },
-      Boolean(material)
+      Boolean(material),
+      receivedEvents
     );
     if (!result.ok) {
       setError(result.error);
@@ -238,7 +288,16 @@ export function AdjustStockForm() {
           </div>
         )}
 
-        {material && currentBalance !== null ? (
+        {material && purchasesError ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3.5 py-2.5">
+            <p role="alert" className="text-xs text-muted-foreground">
+              Não foi possível carregar os recebimentos agora.
+            </p>
+            <button type="button" onClick={loadPurchases} className="shrink-0 text-xs font-medium text-primary hover:underline">
+              Tentar novamente
+            </button>
+          </div>
+        ) : material && currentBalance !== null ? (
           <div className="rounded-lg border border-border bg-muted/30 px-3.5 py-2.5">
             <p className="text-xs font-medium text-muted-foreground">Saldo atual</p>
             <p className="text-base font-semibold tabular-nums text-foreground">

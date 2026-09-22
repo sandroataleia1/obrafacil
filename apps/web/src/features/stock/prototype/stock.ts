@@ -3,15 +3,22 @@
  * is never persisted, never a mutable field. It is always computed from
  * three sources at read time:
  *
- * - GoodsReceiptItem (physical arrival) — already the source of truth
- *   for "how much arrived", read via `listReceivedEventsForProjectMaterial`
- *   (features/materials/prototype/material-consumption.ts), never
- *   duplicated into a second record here.
+ * - GoodsReceiptItem (physical arrival) — real API data (SUPPLY-
+ *   FRONTEND-01C/01C1). This module never fetches or mirrors it: every
+ *   function below that needs it takes a `receivedEvents: ReceivedEvent[]`
+ *   PARAMETER, which the caller derives fresh from an already-fetched
+ *   `PurchaseOrder[]` via `purchaseOrdersToReceivedEvents`
+ *   (`features/purchases/purchase-received-events.ts`). No local store,
+ *   no localStorage mirror, no cache — see that gate's report for the
+ *   root-cause proof of why a local mirror can never stay correct.
  * - MaterialConsumption (physical usage) — already the source of truth
- *   for "how much was used", read via `listConsumedEventsForProjectMaterial`,
- *   same file, same non-duplication rule.
+ *   for "how much was used", read via `listConsumedEventsForProjectMaterial`
+ *   (features/materials/prototype/material-consumption.ts), same
+ *   non-duplication rule — still a local prototype until SUPPLY-
+ *   FRONTEND-01D.
  * - StockAdjustment (this feature's one new entity) — manual
- *   corrections that don't originate from either of the above.
+ *   corrections that don't originate from either of the above, still a
+ *   local prototype until SUPPLY-FRONTEND-01D.
  *
  * --- Estoque 1A: one ledger, not two formulas ---
  *
@@ -51,10 +58,9 @@ import {
   isTimelineValid,
   listConsumedEventsForProjectMaterial,
   listLedgerEventsForProjectMaterial,
-  listReceivedEventsForProjectMaterial,
 } from "@/features/materials/prototype/material-consumption";
 import { listMaterialConsumptions } from "@/features/materials/prototype/material-consumption-store";
-import { listAllGoodsReceiptShadowEntries } from "@/features/purchases/prototype/goods-receipt-shadow-store";
+import { filterReceivedEventsForProjectMaterial, type ReceivedEvent } from "@/features/purchases/purchase-received-events";
 import {
   createStockAdjustmentId,
   listAllStockAdjustments,
@@ -76,8 +82,12 @@ function sortMovementsDesc(a: StockMovement, b: StockMovement): number {
  * Material pair. Card/list/detail/balance all consume this — none of
  * them re-derive entradas/saídas independently.
  */
-export function listStockMovements(projectId: string, materialId: string): StockMovement[] {
-  const received: StockMovement[] = listReceivedEventsForProjectMaterial(projectId, materialId).map(
+export function listStockMovements(
+  projectId: string,
+  materialId: string,
+  receivedEvents: ReceivedEvent[]
+): StockMovement[] {
+  const received: StockMovement[] = filterReceivedEventsForProjectMaterial(receivedEvents, projectId, materialId).map(
     (event) => ({
       id: `goods-receipt:${event.goodsReceiptId}`,
       projectId,
@@ -139,10 +149,14 @@ export interface StockTotals {
  * below, which delegates the same way, so `getStockTotals` cannot
  * recurse through it).
  */
-export function getStockTotals(projectId: string, materialId: string): StockTotals {
+export function getStockTotals(
+  projectId: string,
+  materialId: string,
+  receivedEvents: ReceivedEvent[]
+): StockTotals {
   let inUnits = 0;
   let outUnits = 0;
-  for (const movement of listStockMovements(projectId, materialId)) {
+  for (const movement of listStockMovements(projectId, materialId, receivedEvents)) {
     const units = toQuantityUnits(movement.quantity);
     if (movement.type === "IN" || movement.type === "ADJUSTMENT_IN") {
       inUnits += units;
@@ -153,14 +167,14 @@ export function getStockTotals(projectId: string, materialId: string): StockTota
   return {
     totalIn: inUnits / 1000,
     totalOut: outUnits / 1000,
-    balance: calculateAvailableQuantity(projectId, materialId),
+    balance: calculateAvailableQuantity(projectId, materialId, receivedEvents),
   };
 }
 
 /** Delegates directly to the canonical balance function — never
  * recalculates entradas/saídas independently (Estoque 1B). */
-export function getStockBalance(projectId: string, materialId: string): number {
-  return calculateAvailableQuantity(projectId, materialId);
+export function getStockBalance(projectId: string, materialId: string, receivedEvents: ReceivedEvent[]): number {
+  return calculateAvailableQuantity(projectId, materialId, receivedEvents);
 }
 
 /**
@@ -170,13 +184,13 @@ export function getStockBalance(projectId: string, materialId: string): number {
  * exists in the catalog — only pairs with real history appear (Pilot-
  * Ready "Estoque Básico por Obra" §13).
  */
-export function listStockPositions(): StockPosition[] {
+export function listStockPositions(receivedEvents: ReceivedEvent[]): StockPosition[] {
   const pairs = new Map<string, { projectId: string; materialId: string }>();
 
-  for (const entry of listAllGoodsReceiptShadowEntries()) {
-    pairs.set(`${entry.projectId}::${entry.materialId}`, {
-      projectId: entry.projectId,
-      materialId: entry.materialId,
+  for (const event of receivedEvents) {
+    pairs.set(`${event.projectId}::${event.materialId}`, {
+      projectId: event.projectId,
+      materialId: event.materialId,
     });
   }
 
@@ -197,7 +211,7 @@ export function listStockPositions(): StockPosition[] {
   return Array.from(pairs.values()).map(({ projectId, materialId }) => ({
     projectId,
     materialId,
-    ...getStockTotals(projectId, materialId),
+    ...getStockTotals(projectId, materialId, receivedEvents),
   }));
 }
 
@@ -233,7 +247,11 @@ export interface StockAdjustmentInput {
  * (`Boolean(useMaterial(materialId).material)`) — never faked. Any
  * Material (including inactive) can be selected for an adjustment (§58).
  */
-export function createStockAdjustment(input: StockAdjustmentInput, materialExists: boolean): StockAdjustmentResult {
+export function createStockAdjustment(
+  input: StockAdjustmentInput,
+  materialExists: boolean,
+  receivedEvents: ReceivedEvent[]
+): StockAdjustmentResult {
   // §46: Project existence is no longer synchronously checkable here —
   // see the matching note in `material-requirement.ts`.
   if (!materialExists) {
@@ -252,7 +270,7 @@ export function createStockAdjustment(input: StockAdjustmentInput, materialExist
   const quantityUnits = toQuantityUnits(input.quantity);
   const signedUnits = input.type === "ADJUSTMENT_IN" ? quantityUnits : -quantityUnits;
   const candidateEvents = [
-    ...listLedgerEventsForProjectMaterial(input.projectId, input.materialId),
+    ...listLedgerEventsForProjectMaterial(input.projectId, input.materialId, receivedEvents),
     { date: input.occurredAt, units: signedUnits },
   ];
   if (!isTimelineValid(candidateEvents)) {

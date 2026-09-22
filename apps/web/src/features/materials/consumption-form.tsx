@@ -1,6 +1,19 @@
 "use client";
 
-import { useState } from "react";
+/**
+ * SUPPLY-FRONTEND-01C1 §4/§6/§7: PurchaseOrder/GoodsReceipt are real
+ * API — this form fetches every PurchaseOrder for this Project
+ * (`listPurchaseOrderDetailsForProject`) fresh on mount, derives
+ * received events via `purchaseOrdersToReceivedEvents`, and passes them
+ * explicitly into `calculateAvailableQuantity`/`registerMaterialConsumption`
+ * — neither function does any fetching or local-store reading of its
+ * own. A Purchase/Receipt API failure fails CLOSED: "Disponível" is
+ * hidden (never shown as `0`) and the submit button is disabled with a
+ * controlled retry message, never silently treated as "nothing
+ * available".
+ */
+
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { BackHeader } from "@/components/shared/back-header";
@@ -10,6 +23,9 @@ import { Package } from "lucide-react";
 import { todayIso } from "@/lib/date";
 import { formatQuantity } from "@/lib/quantity";
 import { useProject } from "@/features/projects/use-project";
+import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
+import { purchaseOrdersToReceivedEvents } from "@/features/purchases/purchase-received-events";
+import type { PurchaseOrder } from "@/features/purchases/types";
 import { formatMaterialUnitCode } from "./material-unit";
 import { useMaterial } from "./use-material";
 import { calculateAvailableQuantity, registerMaterialConsumption } from "./prototype/material-consumption";
@@ -30,6 +46,21 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
   const [consumedAt, setConsumedAt] = useState(todayIso());
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
+  const [purchasesError, setPurchasesError] = useState(false);
+
+  function loadPurchases() {
+    setPurchasesError(false);
+    listPurchaseOrderDetailsForProject(projectId)
+      .then((orders) => setPurchaseOrders(orders))
+      .catch(() => setPurchasesError(true));
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadPurchases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   if (projectError) {
     return (
@@ -92,9 +123,18 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
   }
 
   const unitLabel = formatMaterialUnitCode(material.unit_code, material.unit_custom_label);
-  const available = calculateAvailableQuantity(projectId, materialId);
+  const receivedEvents = purchaseOrders ? purchaseOrdersToReceivedEvents(purchaseOrders) : [];
+  const available = purchaseOrders !== undefined ? calculateAvailableQuantity(projectId, materialId, receivedEvents) : null;
 
   function handleSubmit() {
+    if (purchasesError) {
+      setError("Não foi possível carregar os recebimentos agora. Tente novamente.");
+      return;
+    }
+    if (purchaseOrders === undefined) {
+      setError("Aguarde o carregamento dos recebimentos antes de registrar o uso.");
+      return;
+    }
     const quantity = parseQuantity(quantityInput);
     if (quantity === null || quantity <= 0) {
       setError("Informe uma quantidade maior que zero.");
@@ -113,7 +153,8 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
         consumedAt,
         notes,
       },
-      Boolean(material)
+      Boolean(material),
+      receivedEvents
     );
 
     if (!result.ok) {
@@ -144,7 +185,18 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
               Quantidade utilizada
             </label>
             <span className="text-xs text-muted-foreground">
-              Disponível: {formatQuantity(available)} {unitLabel}
+              {purchasesError ? (
+                <>
+                  Não foi possível carregar os recebimentos agora.{" "}
+                  <button type="button" onClick={loadPurchases} className="font-medium text-primary hover:underline">
+                    Tentar novamente
+                  </button>
+                </>
+              ) : available === null ? (
+                "Carregando disponibilidade..."
+              ) : (
+                `Disponível: ${formatQuantity(available)} ${unitLabel}`
+              )}
             </span>
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-3 transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring">
@@ -192,7 +244,7 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
 
-      <Button type="button" size="lg" onClick={handleSubmit} className="w-full">
+      <Button type="button" size="lg" onClick={handleSubmit} disabled={purchaseOrders === undefined} className="w-full">
         Registrar uso
       </Button>
     </div>

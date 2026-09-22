@@ -71,13 +71,16 @@ export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValue
   // "obrafacil:goods-receipts"/"obrafacil:goods-receipt-items" (and
   // their ":deleted" tombstones) are no longer read/written anywhere
   // and are intentionally absent here.
-  // "obrafacil:goods-receipt-shadow" is a NEW key introduced this gate
-  // (see `features/purchases/prototype/goods-receipt-shadow-store.ts`)
-  // but is deliberately absent from backup/restore too: it is a
-  // write-through mirror of real API facts for the still-local Stock/
-  // Consumption feature, never a domain record in its own right — it
-  // can always be fully rebuilt by re-reading GoodsReceipt history from
-  // the API, so backup/restore has no reason to touch it.
+  // SUPPLY-FRONTEND-01C1: "obrafacil:goods-receipt-shadow" — a
+  // write-through localStorage mirror briefly introduced in
+  // SUPPLY-FRONTEND-01C — was REMOVED entirely (not merely excluded
+  // from backup): it was a second, incomplete source of "physical
+  // arrival" facts (a Receipt created before this browser ever opened,
+  // in a different browser/tab, or deleted elsewhere, could never be
+  // correctly reflected by a write-through mirror). Physical-receipt
+  // facts are now always derived fresh from the real API, never
+  // persisted anywhere in the browser. This key must never be
+  // reintroduced.
 
   // Estoque
   "obrafacil:stock-adjustments": "object",

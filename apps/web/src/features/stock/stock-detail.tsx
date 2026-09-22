@@ -1,7 +1,20 @@
 "use client";
 
+/**
+ * SUPPLY-FRONTEND-01C1 §5/§7: `receivedEvents` is derived from the real
+ * `PurchaseOrder[]` this component already fetches
+ * (`listPurchaseOrderDetailsForProject`) via `purchaseOrdersToReceivedEvents`
+ * — never a local mirror. A Purchase/Receipt API failure fails CLOSED
+ * for "Saldo atual"/"Movimentações" too (not just "Cobertura da
+ * necessidade", which already had this guard): those sections now only
+ * render once `purchaseOrders` has actually resolved, and show the same
+ * controlled "Não foi possível carregar os recebimentos agora" + retry
+ * message otherwise — never a fabricated `received = 0`/empty
+ * movements list.
+ */
+
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Boxes } from "lucide-react";
 
@@ -15,6 +28,7 @@ import { useMaterialRequirements } from "@/features/materials/use-material-requi
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useProject } from "@/features/projects/use-project";
 import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
+import { purchaseOrdersToReceivedEvents } from "@/features/purchases/purchase-received-events";
 import type { PurchaseOrder } from "@/features/purchases/types";
 import { useStockDetail } from "./prototype/use-stock-detail";
 import { getProjectMaterialSupplyMetrics } from "./prototype/supply-metrics";
@@ -72,8 +86,6 @@ function MovementRow({ movement, unitLabel }: { movement: StockMovement; unitLab
 }
 
 export function StockDetail({ projectId, materialId }: { projectId: string; materialId: string }) {
-  const { movements, totals } = useStockDetail(projectId, materialId);
-
   const { project } = useProject(projectId);
   const { material } = useMaterial(materialId);
   const {
@@ -96,6 +108,12 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
     loadPurchases();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  const receivedEvents = useMemo(
+    () => (purchaseOrders ? purchaseOrdersToReceivedEvents(purchaseOrders) : []),
+    [purchaseOrders]
+  );
+  const { movements, totals } = useStockDetail(projectId, materialId, receivedEvents);
 
   if (project === undefined || material === undefined) return null;
 
@@ -128,44 +146,61 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
         <p className="text-sm text-muted-foreground">{subtitle}</p>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4">
-        <span className="mb-1 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Saldo atual
-        </span>
-        <p className="text-3xl font-semibold tabular-nums text-foreground">
-          {totals ? formatQuantity(totals.balance) : "—"} {unitLabel}
-        </p>
-      </div>
-
-      <div className="rounded-xl border border-border bg-card p-4">
-        <span className="mb-3 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Informações
-        </span>
-        <div className="grid grid-cols-2 gap-4">
-          <InfoField label="Material" value={material.name} />
-          <InfoField
-            label="Obra"
-            value={
-              <Link href={`/obras/${project.id}`} className="text-primary hover:underline">
-                {project.name}
-              </Link>
-            }
-          />
-          <InfoField label="Unidade" value={unitLabel} />
-          <InfoField
-            label="Total de entradas"
-            value={<span className="tabular-nums text-primary">+{totals ? formatQuantity(totals.totalIn) : "—"}</span>}
-          />
-          <InfoField
-            label="Total de saídas"
-            value={
-              <span className="tabular-nums text-destructive">
-                −{totals ? formatQuantity(totals.totalOut) : "—"}
-              </span>
-            }
-          />
+      {purchasesError ? (
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar os recebimentos agora.
+          </p>
+          <Button type="button" onClick={loadPurchases}>
+            Tentar novamente
+          </Button>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="rounded-xl border border-border bg-card p-4">
+            <span className="mb-1 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              Saldo atual
+            </span>
+            <p className="text-3xl font-semibold tabular-nums text-foreground">
+              {purchaseOrders !== undefined && totals ? formatQuantity(totals.balance) : "—"} {unitLabel}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-4">
+            <span className="mb-3 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              Informações
+            </span>
+            <div className="grid grid-cols-2 gap-4">
+              <InfoField label="Material" value={material.name} />
+              <InfoField
+                label="Obra"
+                value={
+                  <Link href={`/obras/${project.id}`} className="text-primary hover:underline">
+                    {project.name}
+                  </Link>
+                }
+              />
+              <InfoField label="Unidade" value={unitLabel} />
+              <InfoField
+                label="Total de entradas"
+                value={
+                  <span className="tabular-nums text-primary">
+                    +{purchaseOrders !== undefined && totals ? formatQuantity(totals.totalIn) : "—"}
+                  </span>
+                }
+              />
+              <InfoField
+                label="Total de saídas"
+                value={
+                  <span className="tabular-nums text-destructive">
+                    −{purchaseOrders !== undefined && totals ? formatQuantity(totals.totalOut) : "—"}
+                  </span>
+                }
+              />
+            </div>
+          </div>
+        </>
+      )}
 
       <section aria-labelledby="stock-supply-coverage" className="space-y-2.5">
         <h2
@@ -186,7 +221,7 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
         ) : purchasesError ? (
           <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
             <p role="alert" className="text-sm text-muted-foreground">
-              Não foi possível carregar as compras desta obra agora.
+              Não foi possível carregar os recebimentos agora.
             </p>
             <Button type="button" onClick={loadPurchases}>
               Tentar novamente
@@ -243,7 +278,16 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
         >
           Movimentações
         </h2>
-        {movements === undefined ? null : movements.length === 0 ? (
+        {purchasesError ? (
+          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+            <p role="alert" className="text-sm text-muted-foreground">
+              Não foi possível carregar os recebimentos agora.
+            </p>
+            <Button type="button" onClick={loadPurchases}>
+              Tentar novamente
+            </Button>
+          </div>
+        ) : purchaseOrders === undefined || movements === undefined ? null : movements.length === 0 ? (
           <EmptyState compact icon={Boxes} title="Nenhuma movimentação registrada ainda." />
         ) : (
           <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">

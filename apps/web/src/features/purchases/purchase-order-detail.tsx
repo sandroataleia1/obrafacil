@@ -17,8 +17,36 @@
  * integration is created in this gate; the existing, still-working
  * Payable "Gerar conta a pagar" flow (unrelated to this guard) is
  * migrated separately in `payable-form.tsx`/`payable-detail.tsx`.
+ *
+ * SUPPLY-FRONTEND-01C1 §10/§11: MaterialConsumption/StockAdjustment stay
+ * local prototypes until SUPPLY-FRONTEND-01D — the backend has never
+ * heard of them, so it cannot itself block a GoodsReceipt DELETE that
+ * would break a LOCAL consumption's chronology. `handleDeleteGoodsReceipt`
+ * runs a TRANSITORY local precheck first: refetch every PurchaseOrder
+ * for this Project (real API, never a local mirror), derive received
+ * events, remove the candidate Receipt's own events, and validate the
+ * local ledger (Consumption + StockAdjustment) for every Material that
+ * Receipt touched. If removing the Receipt would break that local
+ * ledger, the DELETE API call is never made — a controlled message is
+ * shown instead. If the local precheck passes, the DELETE still goes to
+ * the real API, which remains the final authority (a real 422 from
+ * Postgres facts is shown verbatim, never overridden by the passing
+ * local check). This whole precheck is removed in SUPPLY-FRONTEND-01D
+ * once Consumption/StockAdjustment are themselves API-backed and the
+ * backend can enforce this on its own.
+ *
+ * SUPPLY-FRONTEND-01C1 §15/§16: outer-wrapper + keyed-Inner tenant-
+ * ownership pattern (`${companyId}:${id}`) — every mutation
+ * (confirm/cancel/return-to-draft/delete order/delete item/delete
+ * receipt) captures `requestCompanyId`/`requestOrderId` before the
+ * `await` and re-checks them against the OUTER's live
+ * `activeCompanyIdRef`/`idRef` (written via `useLayoutEffect`) before
+ * any `reload`/`router.push`/`window.alert`/`setState` — a stale
+ * response arriving after a Company/id switch produces zero UI side
+ * effect.
  */
 
+import { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClipboardList, Trash2 } from "lucide-react";
@@ -29,18 +57,21 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { decimalStringToBrlDisplay } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
+import { useAuth } from "@/features/auth/auth-provider";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
+import { isTimelineValid, listLedgerEventsForProjectMaterial } from "@/features/materials/prototype/material-consumption";
 import { purchaseDecimalApiToInput } from "./purchase-decimal";
+import { purchaseOrdersToReceivedEvents } from "./purchase-received-events";
 import {
   cancelPurchaseOrder,
   confirmPurchaseOrder,
   deleteGoodsReceipt,
   deletePurchaseOrder,
   deletePurchaseOrderItem,
+  listPurchaseOrderDetailsForProject,
   returnPurchaseOrderToDraft,
 } from "./purchase-orders-client";
 import { usePurchaseOrder } from "./use-purchase-order";
-import { removeGoodsReceiptShadowEntriesForReceipt } from "./prototype/goods-receipt-shadow-store";
 import { PurchaseOrderStatusBadge } from "./components/status-badge";
 import { PURCHASE_ORDER_FULFILLMENT_LABEL, type GoodsReceipt } from "./types";
 
@@ -61,7 +92,15 @@ function serverMessageOf(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export function PurchaseOrderDetail({ id }: { id: string }) {
+function PurchaseOrderDetailInner({
+  id,
+  activeCompanyIdRef,
+  idRef,
+}: {
+  id: string;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  idRef: React.RefObject<string>;
+}) {
   const router = useRouter();
   const { order, error, reload } = usePurchaseOrder(id);
 
@@ -94,6 +133,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const hasGoodsReceipts = order.goods_receipts.length > 0;
   const isFullyReceived = order.fulfillment_status === "received";
 
+  const requestCompanyId = activeCompanyIdRef.current;
+  const requestOrderId = idRef.current;
+  function isStale(): boolean {
+    return activeCompanyIdRef.current !== requestCompanyId || idRef.current !== requestOrderId;
+  }
+
   async function handleStatusAction(
     action: (orderId: string, payload: { updated_at: string }) => Promise<unknown>,
     confirmMessage?: string
@@ -101,8 +146,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     if (confirmMessage && !window.confirm(confirmMessage)) return;
     try {
       await action(id, { updated_at: order!.updated_at });
+      if (isStale()) return;
       reload();
     } catch (actionError) {
+      if (isStale()) return;
       if (actionError instanceof ApiError && actionError.status === 409) {
         window.alert("A compra foi alterada por outra operação. Os dados foram atualizados.");
         reload();
@@ -117,8 +164,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     if (!confirmed) return;
     try {
       await deletePurchaseOrderItem(id, itemId);
+      if (isStale()) return;
       reload();
     } catch (deleteError) {
+      if (isStale()) return;
       if (deleteError instanceof ApiError && deleteError.status === 409) {
         window.alert("A compra foi alterada por outra operação. Os dados foram atualizados.");
         reload();
@@ -133,8 +182,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     if (!confirmed) return;
     try {
       await deletePurchaseOrder(id, { updated_at: order!.updated_at });
+      if (isStale()) return;
       router.push("/compras");
     } catch (deleteError) {
+      if (isStale()) return;
       if (deleteError instanceof ApiError && deleteError.status === 409) {
         window.alert("A compra foi alterada por outra operação. Os dados foram atualizados.");
         reload();
@@ -144,22 +195,62 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     }
   }
 
+  /**
+   * Transitory local chronology precheck (see module doc comment) —
+   * refetches every PurchaseOrder for this Project from the real API
+   * (never a local mirror), derives received events, and validates the
+   * local Consumption/StockAdjustment ledger for every Material this
+   * Receipt touched, AS IF the Receipt were already removed. Fails
+   * closed on any fetch error (never calls DELETE against an
+   * incomplete ledger).
+   */
   async function handleDeleteGoodsReceipt(goodsReceipt: GoodsReceipt) {
     const confirmed = window.confirm(
       `Excluir o recebimento de ${formatDate(goodsReceipt.received_at)}? Esta ação não pode ser desfeita.`
     );
     if (!confirmed) return;
+
+    let projectOrders;
+    try {
+      projectOrders = await listPurchaseOrderDetailsForProject(order!.project.id);
+    } catch {
+      if (isStale()) return;
+      window.alert("Não foi possível verificar os recebimentos desta obra agora. Tente novamente.");
+      return;
+    }
+    if (isStale()) return;
+
+    const receivedEventsWithoutCandidate = purchaseOrdersToReceivedEvents(projectOrders).filter(
+      (event) => event.goodsReceiptId !== goodsReceipt.id
+    );
+
+    const affectedMaterialIds = new Set<string>();
+    for (const line of goodsReceipt.items) {
+      const orderItem = order!.items.find((item) => item.id === line.purchase_order_item_id);
+      if (orderItem) affectedMaterialIds.add(orderItem.material.id);
+    }
+
+    for (const materialId of affectedMaterialIds) {
+      const candidateLedger = listLedgerEventsForProjectMaterial(
+        order!.project.id,
+        materialId,
+        receivedEventsWithoutCandidate
+      );
+      if (!isTimelineValid(candidateLedger)) {
+        window.alert(
+          "Este recebimento não pode ser excluído porque existem usos de material (registrados nesta obra) que dependem dele."
+        );
+        return;
+      }
+    }
+
     try {
       await deleteGoodsReceipt(id, goodsReceipt.id);
-      removeGoodsReceiptShadowEntriesForReceipt(goodsReceipt.id);
+      if (isStale()) return;
       reload();
     } catch (deleteError) {
-      window.alert(
-        serverMessageOf(
-          deleteError,
-          "Não foi possível excluir este recebimento agora."
-        )
-      );
+      if (isStale()) return;
+      window.alert(serverMessageOf(deleteError, "Não foi possível excluir este recebimento agora."));
     }
   }
 
@@ -393,5 +484,25 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+export function PurchaseOrderDetail({ id }: { id: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const idRef = useRef(id);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    idRef.current = id;
+  }, [activeCompanyId, id]);
+
+  return (
+    <PurchaseOrderDetailInner
+      key={`${activeCompanyId}:${id}`}
+      id={id}
+      activeCompanyIdRef={activeCompanyIdRef}
+      idRef={idRef}
+    />
   );
 }

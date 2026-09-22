@@ -11,9 +11,16 @@
  * lookup for historical unit. Received/remaining guards read the
  * backend's own `received_quantity`/`remaining_quantity` — the backend
  * remains the final authority either way.
+ *
+ * SUPPLY-FRONTEND-01C1 §17: outer-wrapper + keyed-Inner tenant-
+ * ownership pattern (`${companyId}:${purchaseOrderId}:${itemId ?? "new"}`)
+ * — a POST/PUT that resolves after a Company/id switch produces zero
+ * navigation/error/reload: `activeCompanyIdRef`/`orderIdRef`/`itemIdRef`
+ * (written together via `useLayoutEffect` in the outer) are checked
+ * before every `router.push`/`setError`/`reloadOrder()`.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { BackHeader } from "@/components/shared/back-header";
@@ -21,13 +28,26 @@ import { Button } from "@/components/ui/button";
 import { MoneyField } from "@/components/shared/money-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
+import { useAuth } from "@/features/auth/auth-provider";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useAllMaterials } from "@/features/materials/use-all-materials";
 import { createPurchaseOrderItem, updatePurchaseOrderItem } from "./purchase-orders-client";
 import { usePurchaseOrder } from "./use-purchase-order";
 import { purchaseDecimalApiToInput, purchaseQuantityInputToApi, purchaseUnitPriceInputToApi } from "./purchase-decimal";
 
-export function PurchaseOrderItemForm({ purchaseOrderId, itemId }: { purchaseOrderId: string; itemId?: string }) {
+function PurchaseOrderItemFormInner({
+  purchaseOrderId,
+  itemId,
+  activeCompanyIdRef,
+  orderIdRef,
+  itemIdRef,
+}: {
+  purchaseOrderId: string;
+  itemId?: string;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  orderIdRef: React.RefObject<string>;
+  itemIdRef: React.RefObject<string>;
+}) {
   const router = useRouter();
   const { order, error: orderError, reload: reloadOrder } = usePurchaseOrder(purchaseOrderId);
   const isEditing = Boolean(itemId);
@@ -58,6 +78,17 @@ export function PurchaseOrderItemForm({ purchaseOrderId, itemId }: { purchaseOrd
     if (material && description.trim() === "") {
       setDescription(material.name);
     }
+  }
+
+  const submitCompanyId = activeCompanyIdRef.current;
+  const submitOrderId = orderIdRef.current;
+  const submitItemId = itemIdRef.current;
+  function isStale(): boolean {
+    return (
+      activeCompanyIdRef.current !== submitCompanyId ||
+      orderIdRef.current !== submitOrderId ||
+      itemIdRef.current !== submitItemId
+    );
   }
 
   async function handleSubmit() {
@@ -97,9 +128,11 @@ export function PurchaseOrderItemForm({ purchaseOrderId, itemId }: { purchaseOrd
           unit_price: unitPrice,
         });
       }
+      if (isStale()) return;
       setSubmitting(false);
       router.push(`/compras/${purchaseOrderId}`);
     } catch (submitError) {
+      if (isStale()) return;
       setSubmitting(false);
       if (submitError instanceof ApiError && submitError.status === 409) {
         setError("A compra foi alterada por outra operação. Os dados foram atualizados.");
@@ -261,5 +294,29 @@ export function PurchaseOrderItemForm({ purchaseOrderId, itemId }: { purchaseOrd
         {isEditing ? "Salvar alterações" : "Adicionar item"}
       </Button>
     </div>
+  );
+}
+
+export function PurchaseOrderItemForm({ purchaseOrderId, itemId }: { purchaseOrderId: string; itemId?: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const orderIdRef = useRef(purchaseOrderId);
+  const itemIdRef = useRef(itemId ?? "new");
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    orderIdRef.current = purchaseOrderId;
+    itemIdRef.current = itemId ?? "new";
+  }, [activeCompanyId, purchaseOrderId, itemId]);
+
+  return (
+    <PurchaseOrderItemFormInner
+      key={`${activeCompanyId}:${purchaseOrderId}:${itemId ?? "new"}`}
+      purchaseOrderId={purchaseOrderId}
+      itemId={itemId}
+      activeCompanyIdRef={activeCompanyIdRef}
+      orderIdRef={orderIdRef}
+      itemIdRef={itemIdRef}
+    />
   );
 }

@@ -26,7 +26,6 @@ function listItem(id: string): PurchaseOrderListItem {
     project: { id: "proj-1", number: "OBR-000001", name: "Casa Oliveira" },
     order_date: "2026-09-10",
     expected_delivery_date: null,
-    notes: null,
     items_count: 1,
     total: "100.00",
     created_at: "2026-09-10T00:00:00Z",

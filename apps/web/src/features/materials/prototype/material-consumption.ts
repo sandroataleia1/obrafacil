@@ -1,9 +1,6 @@
 /**
  * Domain operations for MaterialConsumption — the physical "used at
- * this Obra" event. Mirrors `goods-receipt.ts`'s shape (no edit, only
- * delete-and-reregister) and `material.ts`'s cross-feature import
- * pattern (materials → purchases, never the reverse: purchase-totals.ts
- * only imports the `MaterialConsumption` *type*, never this file).
+ * this Obra" event.
  *
  * Deliberately isolated from money: never imports `savePayable`,
  * `markPayableAsPaid`, `saveProjectCost`, or anything from
@@ -22,11 +19,7 @@
  * "Timeline" invariant: for every date D, `cumulativeReceived(D) >=
  * cumulativeConsumed(D)`, where both are summed only over events dated
  * on or before D. `isTimelineValid` is the single source of truth for
- * this check — `registerMaterialConsumption` and
- * `features/purchases/prototype/goods-receipt.ts#removeGoodsReceipt`
- * both call it (the latter simulating the receipt's removal by
- * excluding its events first) rather than each re-implementing their
- * own chronology math.
+ * this check.
  *
  * The system has no time-of-day, only a date — so a GoodsReceipt and a
  * MaterialConsumption dated the very same day are aggregated together
@@ -56,30 +49,44 @@
  * merges all four event kinds into a single signed timeline; every
  * write-time guard in this codebase that needs to know "would this
  * leave the balance negative at any point in time" — this module's own
- * `registerMaterialConsumption`, `features/purchases/prototype/
- * goods-receipt.ts#removeGoodsReceipt`, and `features/stock/prototype/
+ * `registerMaterialConsumption` and `features/stock/prototype/
  * stock.ts#createStockAdjustment` — calls this same function (or the
  * lower-level `listAdjustmentIn/OutEventsForProjectMaterial` pair when
- * it needs to exclude one specific source, mirroring how
- * `removeGoodsReceipt` already excludes its own ReceivedEvents) rather
- * than each re-deriving its own notion of "available". This keeps a
- * single ledger instead of the two independent formulas that existed
- * before this correction (`calculateAvailableQuantity`'s received-minus-
- * consumed vs. `features/stock/prototype/stock.ts`'s separate entradas+
- * ajustes-saídas math).
+ * it needs to exclude one specific source) rather than each
+ * re-deriving its own notion of "available".
  *
- * Import direction note: this file (features/materials) now imports
+ * --- SUPPLY-FRONTEND-01C1: no local GoodsReceipt mirror ---
+ *
+ * PurchaseOrder/GoodsReceipt are 100% API-backed (SUPPLY-FRONTEND-01C).
+ * This module no longer reads any local store, cache, or mirror for
+ * "physical arrival" facts — every function that needs them takes a
+ * `ReceivedEvent[]` PARAMETER, derived fresh by the caller from the
+ * real API via `purchaseOrdersToReceivedEvents(orders)`
+ * (`features/purchases/purchase-received-events.ts`). This module does
+ * no fetching, no I/O, nothing asynchronous — it stays a pure,
+ * synchronous ledger calculator, same as before; only the *source* of
+ * the received-events input changed from "read a local mirror" to
+ * "caller already fetched the API and passes the derived events in".
+ * A previous SUPPLY-FRONTEND-01C write-through localStorage mirror
+ * (`goods-receipt-shadow-store.ts`) was REMOVED, not fixed — see that
+ * gate's report for the root-cause proof of why a local mirror can
+ * never correctly reflect a Receipt that existed before this browser
+ * opened, was created in another browser/tab, or was deleted
+ * elsewhere.
+ *
+ * Import direction note: this file (features/materials) imports
  * `stock-adjustment-store.ts` (features/stock) — a leaf persistence
  * module with no domain logic and no imports back into `materials` or
  * `purchases` — so this stays a one-directional dependency, not a
- * cycle. `features/stock/prototype/stock.ts` continues to import this
- * file the other way (for the received/consumed primitives), which is
- * fine: `stock.ts` and `stock-adjustment-store.ts` are both leaves
- * relative to each other (neither imports the other), so there is no
- * cycle anywhere in this graph.
+ * cycle. It also imports the pure `purchase-received-events.ts`
+ * adapter (features/purchases) — also a leaf, no persistence, no
+ * import back into `materials`/`stock`. `features/stock/prototype/
+ * stock.ts` continues to import this file the other way (for the
+ * consumed/adjustment primitives), which is fine: neither imports the
+ * other, so there is no cycle anywhere in this graph.
  */
 
-import { listGoodsReceiptShadowEntriesForProjectMaterial } from "@/features/purchases/prototype/goods-receipt-shadow-store";
+import { filterReceivedEventsForProjectMaterial, type ReceivedEvent } from "@/features/purchases/purchase-received-events";
 import { listStockAdjustmentsByProjectAndMaterial } from "@/features/stock/prototype/stock-adjustment-store";
 import { todayIso } from "@/lib/date";
 import { isPositiveQuantity, normalizeQuantity, toQuantityUnits } from "@/lib/quantity";
@@ -91,20 +98,12 @@ import {
 } from "./material-consumption-store";
 import type { MaterialConsumption } from "../types";
 
+export type { ReceivedEvent };
+
 export type MaterialConsumptionResult =
   | { ok: true; consumption: MaterialConsumption }
   | { ok: false; error: string };
 export type DomainResult = { ok: true } | { ok: false; error: string };
-
-/** One physical arrival event, in normalized quantity units (see
- * `lib/quantity.ts`), tagged with the GoodsReceipt it came from so a
- * caller can exclude one specific GoodsReceipt when simulating its
- * removal. */
-export interface ReceivedEvent {
-  goodsReceiptId: string;
-  date: string;
-  units: number;
-}
 
 /** One physical usage event, tagged with the MaterialConsumption it
  * came from so a caller can exclude one specific entry (not currently
@@ -114,27 +113,6 @@ export interface ConsumedEvent {
   consumptionId: string;
   date: string;
   units: number;
-}
-
-/**
- * Every physical-arrival event for this Material at this Project —
- * includes receipts from orders later cancelled (the physical arrival
- * already happened). SUPPLY-FRONTEND-01C: Purchase/GoodsReceipt are now
- * API-backed; this reads the local write-through mirror
- * (`goods-receipt-shadow-store.ts`) populated by the real
- * `GoodsReceiptForm`/`PurchaseOrderDetail` API mutations — never the
- * (now-removed) local Purchase/Receipt stores directly. One entry per
- * GoodsReceiptItem line.
- */
-export function listReceivedEventsForProjectMaterial(
-  projectId: string,
-  materialId: string
-): ReceivedEvent[] {
-  return listGoodsReceiptShadowEntriesForProjectMaterial(projectId, materialId).map((entry) => ({
-    goodsReceiptId: entry.goodsReceiptId,
-    date: entry.receivedAt,
-    units: toQuantityUnits(entry.quantity),
-  }));
 }
 
 /** Every physical-usage event for this Material at this Project. One
@@ -198,13 +176,19 @@ export function listAdjustmentOutEventsForProjectMaterial(
  * specific event, e.g. `removeGoodsReceipt` simulating its own
  * removal) — see this module's doc comment ("StockAdjustment joins the
  * same ledger").
+ *
+ * SUPPLY-FRONTEND-01C1: `receivedEvents` is the caller's own
+ * already-resolved array (`purchaseOrdersToReceivedEvents(orders)` —
+ * see `purchase-received-events.ts`), never self-fetched or read from
+ * any local store here. This function does no I/O of its own.
  */
 export function listLedgerEventsForProjectMaterial(
   projectId: string,
-  materialId: string
+  materialId: string,
+  receivedEvents: ReceivedEvent[]
 ): { date: string; units: number }[] {
   return [
-    ...listReceivedEventsForProjectMaterial(projectId, materialId).map((event) => ({
+    ...filterReceivedEventsForProjectMaterial(receivedEvents, projectId, materialId).map((event) => ({
       date: event.date,
       units: event.units,
     })),
@@ -250,8 +234,12 @@ export function isTimelineValid(events: { date: string; units: number }[]): bool
   return true;
 }
 
-export function calculateTotalReceivedUnits(projectId: string, materialId: string): number {
-  return listReceivedEventsForProjectMaterial(projectId, materialId).reduce(
+export function calculateTotalReceivedUnits(
+  projectId: string,
+  materialId: string,
+  receivedEvents: ReceivedEvent[]
+): number {
+  return filterReceivedEventsForProjectMaterial(receivedEvents, projectId, materialId).reduce(
     (sum, event) => sum + event.units,
     0
   );
@@ -274,8 +262,12 @@ export function calculateTotalConsumedUnits(projectId: string, materialId: strin
  * a substitute for validating the invariant itself. No write path in
  * this module relies on this clamp to stay correct.
  */
-export function calculateAvailableQuantity(projectId: string, materialId: string): number {
-  const totalUnits = listLedgerEventsForProjectMaterial(projectId, materialId).reduce(
+export function calculateAvailableQuantity(
+  projectId: string,
+  materialId: string,
+  receivedEvents: ReceivedEvent[]
+): number {
+  const totalUnits = listLedgerEventsForProjectMaterial(projectId, materialId, receivedEvents).reduce(
     (sum, event) => sum + event.units,
     0
   );
@@ -300,7 +292,8 @@ export interface MaterialConsumptionInput {
  */
 export function registerMaterialConsumption(
   input: MaterialConsumptionInput,
-  materialExists: boolean
+  materialExists: boolean,
+  receivedEvents: ReceivedEvent[]
 ): MaterialConsumptionResult {
   // §46: Project existence is no longer synchronously checkable here —
   // see the matching note in `material-requirement.ts`.
@@ -317,7 +310,7 @@ export function registerMaterialConsumption(
     return { ok: false, error: "Informe uma quantidade maior que zero." };
   }
 
-  const ledgerEvents = listLedgerEventsForProjectMaterial(input.projectId, input.materialId);
+  const ledgerEvents = listLedgerEventsForProjectMaterial(input.projectId, input.materialId, receivedEvents);
   if (ledgerEvents.length === 0) {
     return {
       ok: false,

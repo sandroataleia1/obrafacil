@@ -8,7 +8,7 @@
  * authority for the displayed value — never recalculated from items.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, ClipboardList, Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
@@ -21,6 +21,7 @@ import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { decimalStringToBrlDisplay } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/features/auth/auth-provider";
 import { useAllProjects } from "@/features/projects/use-all-projects";
 import { deletePurchaseOrder } from "./purchase-orders-client";
 import { usePurchaseOrderList } from "./use-purchase-orders";
@@ -170,11 +171,19 @@ function Pagination({ page, lastPage, onChange }: { page: number; lastPage: numb
 }
 
 interface DeleteState {
+  companyId: string | undefined;
   purchaseOrder: PurchaseOrderListItem;
   error: string | null;
 }
 
 export function PurchaseOrderList() {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
+
   const searchParams = useSearchParams();
   const projectId = searchParams.get("projectId") ?? undefined;
   const supplierId = searchParams.get("supplierId") ?? undefined;
@@ -213,17 +222,19 @@ export function PurchaseOrderList() {
   const newHref = projectId ? `/compras/nova?projectId=${projectId}` : "/compras/nova";
 
   function handleDelete(purchaseOrder: PurchaseOrderListItem) {
-    setDeleteState({ purchaseOrder, error: null });
+    setDeleteState({ companyId: activeCompanyId, purchaseOrder, error: null });
   }
 
   async function handleConfirmDelete() {
     if (!deleteState) return;
-    const { purchaseOrder } = deleteState;
+    const { purchaseOrder, companyId: requestCompanyId } = deleteState;
     try {
       await deletePurchaseOrder(purchaseOrder.id, { updated_at: purchaseOrder.updated_at });
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       setDeleteState(null);
       reload();
     } catch (deleteError) {
+      if (activeCompanyIdRef.current !== requestCompanyId) return;
       if (deleteError instanceof ApiError && deleteError.status === 409) {
         setDeleteState(null);
         reload();
@@ -236,12 +247,13 @@ export function PurchaseOrderList() {
       }
       if (deleteError instanceof ApiValidationError) {
         setDeleteState({
+          companyId: requestCompanyId,
           purchaseOrder,
           error: deleteError.serverMessage ?? Object.values(deleteError.errors)[0]?.[0] ?? "Não foi possível excluir agora.",
         });
         return;
       }
-      setDeleteState({ purchaseOrder, error: "Não foi possível excluir agora." });
+      setDeleteState({ companyId: requestCompanyId, purchaseOrder, error: "Não foi possível excluir agora." });
     }
   }
 
@@ -365,13 +377,13 @@ export function PurchaseOrderList() {
       ) : null}
 
       <ConfirmActionDialog
-        open={deleteState !== null}
+        open={deleteState !== null && deleteState.companyId === activeCompanyId}
         onOpenChange={(open) => {
           if (!open) setDeleteState(null);
         }}
         title="Excluir pedido de compra?"
         description={
-          deleteState
+          deleteState && deleteState.companyId === activeCompanyId
             ? `Excluir o pedido de compra do fornecedor "${deleteState.purchaseOrder.supplier.name}"? Esta ação não pode ser desfeita.`
             : undefined
         }
@@ -379,7 +391,7 @@ export function PurchaseOrderList() {
         destructive
         onConfirm={handleConfirmDelete}
       >
-        {deleteState?.error ? (
+        {deleteState && deleteState.companyId === activeCompanyId && deleteState.error ? (
           <p role="alert" className="text-sm text-destructive">
             {deleteState.error}
           </p>

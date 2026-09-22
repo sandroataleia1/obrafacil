@@ -4,16 +4,21 @@
  * SUPPLY-FRONTEND-01C. Real API POST — order must be `commercial_status
  * == "ordered"`, pending items come from `item.remaining_quantity > 0`,
  * only positive filled lines are sent, at least 1 line is required.
- * After a successful 201, this writes through to the local
- * `goods-receipt-shadow-store` (a NEW key, never one of the removed
- * legacy ones) so the still-local Stock/Consumption ledger
- * (SUPPLY-FRONTEND-01D) keeps seeing this arrival — see that store's own
- * doc comment. Never inserts the created GoodsReceipt into any Purchase-
- * side local store; navigation back to the detail always re-reads the
- * API.
+ *
+ * SUPPLY-FRONTEND-01C1 §12/§18: NO local write of any kind after a
+ * successful POST — the previous write-through `goods-receipt-shadow-
+ * store.ts` mirror was removed entirely (it was a second, incomplete
+ * source of physical-arrival facts). Navigation back to the detail
+ * always re-reads the API, which is the only place this GoodsReceipt
+ * now exists. Outer-wrapper + keyed-Inner tenant-ownership pattern
+ * (`${companyId}:${purchaseOrderId}`) — a POST that resolves after a
+ * Company/id switch must produce zero navigation, zero error message,
+ * zero reload: `activeCompanyIdRef`/`orderIdRef` (written together via
+ * `useLayoutEffect` in the outer) are checked before every
+ * `router.push`/`setFormError`/`reload()` in the async continuation.
  */
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { PackageCheck } from "lucide-react";
@@ -23,13 +28,21 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { todayIso } from "@/lib/date";
+import { useAuth } from "@/features/auth/auth-provider";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { createGoodsReceipt } from "./purchase-orders-client";
 import { usePurchaseOrder } from "./use-purchase-order";
 import { purchaseDecimalApiToInput, purchaseQuantityInputToApi } from "./purchase-decimal";
-import { saveGoodsReceiptShadowEntries } from "./prototype/goods-receipt-shadow-store";
 
-export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string }) {
+function GoodsReceiptFormInner({
+  purchaseOrderId,
+  activeCompanyIdRef,
+  orderIdRef,
+}: {
+  purchaseOrderId: string;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  orderIdRef: React.RefObject<string>;
+}) {
   const router = useRouter();
   const { order, error, reload } = usePurchaseOrder(purchaseOrderId);
   const [receivedAt, setReceivedAt] = useState(todayIso());
@@ -66,6 +79,12 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
 
   const pendingItems = order.items.filter((item) => Number(item.remaining_quantity) > 0);
 
+  const submitCompanyId = activeCompanyIdRef.current;
+  const submitOrderId = orderIdRef.current;
+  function isStale(): boolean {
+    return activeCompanyIdRef.current !== submitCompanyId || orderIdRef.current !== submitOrderId;
+  }
+
   async function handleSubmit() {
     if (receivedAt.trim() === "") {
       setFormError("Informe a data do recebimento.");
@@ -93,29 +112,17 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
     setFormError(null);
 
     try {
-      const receipt = await createGoodsReceipt(purchaseOrderId, {
+      await createGoodsReceipt(purchaseOrderId, {
         received_at: receivedAt,
         notes: notes.trim() || null,
         items: lines,
       });
 
-      saveGoodsReceiptShadowEntries(
-        receipt.items.map((line) => {
-          const orderItem = order!.items.find((item) => item.id === line.purchase_order_item_id);
-          return {
-            id: line.id,
-            goodsReceiptId: receipt.id,
-            projectId: order!.project.id,
-            materialId: orderItem?.material.id ?? "",
-            receivedAt: receipt.received_at,
-            quantity: Number(line.quantity),
-          };
-        })
-      );
-
+      if (isStale()) return;
       setSubmitting(false);
       router.push(`/compras/${purchaseOrderId}`);
     } catch (submitError) {
+      if (isStale()) return;
       setSubmitting(false);
       if (submitError instanceof ApiError && submitError.status === 409) {
         setFormError("A compra foi alterada por outra operação. Os dados foram atualizados.");
@@ -220,5 +227,25 @@ export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string 
         Registrar recebimento
       </Button>
     </div>
+  );
+}
+
+export function GoodsReceiptForm({ purchaseOrderId }: { purchaseOrderId: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const orderIdRef = useRef(purchaseOrderId);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    orderIdRef.current = purchaseOrderId;
+  }, [activeCompanyId, purchaseOrderId]);
+
+  return (
+    <GoodsReceiptFormInner
+      key={`${activeCompanyId}:${purchaseOrderId}`}
+      purchaseOrderId={purchaseOrderId}
+      activeCompanyIdRef={activeCompanyIdRef}
+      orderIdRef={orderIdRef}
+    />
   );
 }

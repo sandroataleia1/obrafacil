@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
+const authState: { activeCompany: { id: string; name: string } | null } = {
+  activeCompany: { id: "company-a", name: "Empresa A" },
+};
+vi.mock("@/features/auth/auth-provider", () => ({
+  useAuth: () => authState,
+}));
+
 vi.mock("../purchase-orders-client", () => ({
   createPurchaseOrderItem: vi.fn(),
   updatePurchaseOrderItem: vi.fn(),
@@ -20,6 +27,7 @@ vi.mock("@/features/materials/use-all-materials", () => ({
   useAllMaterials: () => ({ materials: materialsState.materials, error: false, reload: vi.fn() }),
 }));
 
+import { createPurchaseOrderItem, updatePurchaseOrderItem } from "../purchase-orders-client";
 import { PurchaseOrderItemForm } from "../purchase-order-item-form";
 import type { PurchaseOrder, PurchaseOrderItem } from "../types";
 import type { MaterialListItem } from "@/features/materials/types";
@@ -130,5 +138,57 @@ describe("PurchaseOrderItemForm — SUPPLY-FRONTEND-01C", () => {
     });
     render(<PurchaseOrderItemForm purchaseOrderId="po-1" itemId="item-1" />);
     expect(await screen.findByText(/já recebido: 3/i)).toBeInTheDocument();
+  });
+
+  it("TM9: an item update that resolves after switching Company produces zero navigation", async () => {
+    orderState.order = order({ items: [item({ id: "item-1" })] });
+    let resolveUpdate!: (value: PurchaseOrderItem) => void;
+    vi.mocked(updatePurchaseOrderItem).mockReturnValue(
+      new Promise((resolve) => {
+        resolveUpdate = resolve;
+      })
+    );
+
+    const user = userEvent.setup();
+    const { rerender } = render(<PurchaseOrderItemForm purchaseOrderId="po-1" itemId="item-1" />);
+    await screen.findByText("Cimento");
+
+    await user.click(screen.getByRole("button", { name: /salvar alterações/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<PurchaseOrderItemForm purchaseOrderId="po-1" itemId="item-1" />);
+
+    resolveUpdate(item({ id: "item-1" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("TM8: an item create that resolves after switching Company produces zero navigation", async () => {
+    orderState.order = order({ items: [] });
+    materialsState.materials = [material("mat-2", "Areia")];
+    let resolveCreate!: (value: PurchaseOrderItem) => void;
+    vi.mocked(createPurchaseOrderItem).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+
+    const user = userEvent.setup();
+    const { rerender } = render(<PurchaseOrderItemForm purchaseOrderId="po-1" />);
+
+    const trigger = await screen.findByRole("combobox");
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "Areia" }));
+    await user.type(screen.getByLabelText(/quantidade/i), "5");
+    await user.click(screen.getByRole("button", { name: /adicionar item/i }));
+
+    authState.activeCompany = { id: "company-b", name: "Empresa B" };
+    rerender(<PurchaseOrderItemForm purchaseOrderId="po-1" />);
+
+    resolveCreate(item({ id: "item-2" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(push).not.toHaveBeenCalled();
   });
 });
