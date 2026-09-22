@@ -18,7 +18,6 @@ import { ApiValidationError } from "@/lib/api-client";
 import { useAuth } from "@/features/auth/auth-provider";
 import { createMaterial, updateMaterial } from "./materials-client";
 import { useMaterial } from "./use-material";
-import { hasAnyLocalMaterialDependency } from "./prototype/material-local-dependencies";
 import { MATERIAL_UNIT_CODE_LABEL, MATERIAL_UNIT_CODES } from "./types";
 import type { Material, MaterialUnitCode } from "./types";
 
@@ -49,8 +48,6 @@ function MaterialFormInner({
   const [active, setActive] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const unitLocked = isEditing && Boolean(existingMaterial) && hasAnyLocalMaterialDependency(existingMaterial!.id);
 
   useEffect(() => {
     if (!existingMaterial) return;
@@ -166,36 +163,23 @@ function MaterialFormInner({
 
         <div className="space-y-1.5">
           <span className="text-sm font-medium text-foreground">Unidade</span>
-          {unitLocked ? (
-            <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-foreground">
-              {UNIT_OPTION_LABEL[unitCode]}
-              {unitCode === "other" && customUnitLabel ? ` (${customUnitLabel})` : ""}
-            </div>
-          ) : (
-            <Select value={unitCode} onValueChange={(value) => setUnitCode((value as MaterialUnitCode) ?? "un")}>
-              <SelectTrigger className="h-12 w-full px-4 text-base">
-                <SelectValue placeholder="Selecione uma unidade">
-                  {(value: string | null) => UNIT_OPTION_LABEL[(value as MaterialUnitCode) ?? "un"]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {MATERIAL_UNIT_CODES.map((code) => (
-                  <SelectItem key={code} value={code}>
-                    {UNIT_OPTION_LABEL[code]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {unitLocked ? (
-            <p className="text-xs text-muted-foreground">
-              Este material possui registros locais vinculados e sua unidade não pode ser alterada enquanto esses
-              módulos ainda não foram migrados.
-            </p>
-          ) : null}
+          <Select value={unitCode} onValueChange={(value) => setUnitCode((value as MaterialUnitCode) ?? "un")}>
+            <SelectTrigger className="h-12 w-full px-4 text-base">
+              <SelectValue placeholder="Selecione uma unidade">
+                {(value: string | null) => UNIT_OPTION_LABEL[(value as MaterialUnitCode) ?? "un"]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {MATERIAL_UNIT_CODES.map((code) => (
+                <SelectItem key={code} value={code}>
+                  {UNIT_OPTION_LABEL[code]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {!unitLocked && unitCode === "other" ? (
+        {unitCode === "other" ? (
           <div className="space-y-1.5">
             <label htmlFor="material-custom-unit" className="text-sm font-medium text-foreground">
               Nome da unidade

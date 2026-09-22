@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProjectRequirementList } from "../project-requirement-list";
-import type { MaterialListItem, MaterialRequirement } from "../types";
+import type { MaterialRequirement } from "../types";
+import type { StockPosition } from "@/features/stock/types";
 import type { Project } from "@/features/projects/types";
 
 const push = vi.fn();
@@ -27,20 +28,13 @@ vi.mock("../use-material-requirements", () => ({
   }),
 }));
 
-const materialsState: { materials: MaterialListItem[] | undefined } = { materials: [] };
-vi.mock("../use-all-materials", () => ({
-  useAllMaterials: () => ({ materials: materialsState.materials, error: false, reload: vi.fn() }),
+vi.mock("@/features/stock/stock-client", () => ({
+  listAllStockPositions: vi.fn(),
+  listStockMovements: vi.fn(),
+  deleteMaterialConsumption: vi.fn(),
 }));
 
-vi.mock("@/features/purchases/purchase-orders-client", () => ({
-  listPurchaseOrderDetailsForProject: () => Promise.resolve([]),
-}));
-vi.mock("../prototype/material-consumption-store", () => ({
-  listConsumptionsByProject: () => [],
-}));
-vi.mock("../prototype/material-consumption", () => ({
-  removeMaterialConsumption: vi.fn(),
-}));
+import { listAllStockPositions } from "@/features/stock/stock-client";
 
 function project(): Project {
   return {
@@ -73,12 +67,32 @@ function requirement(overrides: Partial<MaterialRequirement> = {}): MaterialRequ
   };
 }
 
+function position(overrides: Partial<StockPosition> = {}): StockPosition {
+  return {
+    project: { id: "project-a", number: "OBR-000001", name: "Casa Oliveira" },
+    material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: true },
+    required_quantity: "1.250",
+    purchased_quantity: "0.000",
+    received_quantity: "0.000",
+    consumed_quantity: "0.000",
+    stock_quantity: "0.000",
+    pending_receipt_quantity: "0.000",
+    missing_to_purchase_quantity: "1.250",
+    total_in: "0.000",
+    total_out: "0.000",
+    ...overrides,
+  };
+}
+
 /**
- * SUPPLY-FRONTEND-01B §49 (RL1-RL12). ProjectRequirementList now sources
- * Requirements from the real API — a fetch failure must show a retry,
- * never collapse into the empty-planning state.
+ * SUPPLY-FRONTEND-01D §37 (CI-equivalent). ProjectRequirementList now
+ * sources its per-Material planning from real `StockPosition`
+ * (`listAllStockPositions`) instead of the removed local Purchase
+ * calculators — a fetch error must show a retry, never collapse into
+ * the empty-planning state; `useMaterialRequirements` stays only for
+ * the "Editar necessidade" link's Requirement id.
  */
-describe("ProjectRequirementList — SUPPLY-FRONTEND-01B §49 (RL1-RL12)", () => {
+describe("ProjectRequirementList — SUPPLY-FRONTEND-01D", () => {
   beforeEach(() => {
     push.mockReset();
     reloadProject.mockReset();
@@ -87,14 +101,14 @@ describe("ProjectRequirementList — SUPPLY-FRONTEND-01B §49 (RL1-RL12)", () =>
     projectState.error = false;
     requirementsState.requirements = undefined;
     requirementsState.error = false;
-    materialsState.materials = [];
+    vi.mocked(listAllStockPositions).mockReset().mockResolvedValue([]);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("RL2/RL3: an API error shows an operational retry message, never the empty-planning EmptyState", async () => {
+  it("shows an operational retry message on Requirements error, never the empty-planning EmptyState", async () => {
     requirementsState.requirements = undefined;
     requirementsState.error = true;
     render(<ProjectRequirementList projectId="project-a" />);
@@ -103,7 +117,7 @@ describe("ProjectRequirementList — SUPPLY-FRONTEND-01B §49 (RL1-RL12)", () =>
     expect(screen.queryByText(/nenhum material planejado/i)).not.toBeInTheDocument();
   });
 
-  it("RL2: the retry button calls reload()", async () => {
+  it("the Requirements retry button calls reload()", async () => {
     requirementsState.error = true;
     render(<ProjectRequirementList projectId="project-a" />);
     const button = await screen.findByRole("button", { name: /tentar novamente/i });
@@ -111,37 +125,42 @@ describe("ProjectRequirementList — SUPPLY-FRONTEND-01B §49 (RL1-RL12)", () =>
     expect(reloadRequirements).toHaveBeenCalledTimes(1);
   });
 
-  it("RL4: a real empty [] response produces the empty-planning EmptyState", async () => {
+  it("shows an operational retry message when StockPosition fetch fails", async () => {
     requirementsState.requirements = [];
+    vi.mocked(listAllStockPositions).mockReset().mockRejectedValue(new Error("500"));
+    render(<ProjectRequirementList projectId="project-a" />);
+
+    expect(await screen.findByText(/não foi possível carregar os materiais desta obra agora/i)).toBeInTheDocument();
+  });
+
+  it("a real empty [] positions response produces the empty-planning EmptyState", async () => {
+    requirementsState.requirements = [];
+    vi.mocked(listAllStockPositions).mockResolvedValue([]);
     render(<ProjectRequirementList projectId="project-a" />);
     expect(await screen.findByText(/nenhum material planejado/i)).toBeInTheDocument();
   });
 
-  it("RL1/RL5: a real Requirement is rendered using its API material relation", async () => {
+  it("a real StockPosition is rendered using its embedded Material", async () => {
     requirementsState.requirements = [requirement()];
-    materialsState.materials = [
-      { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: true, updated_at: "2026-09-10T00:00:00Z" },
-    ];
+    vi.mocked(listAllStockPositions).mockResolvedValue([position()]);
     render(<ProjectRequirementList projectId="project-a" />);
     expect(await screen.findByText("Cimento")).toBeInTheDocument();
   });
 
-  it("RL6: a Requirement whose Material became inactive is still displayed", async () => {
+  it("a Material that became inactive is still displayed", async () => {
     requirementsState.requirements = [
       requirement({ material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: false } }),
     ];
-    materialsState.materials = [
-      { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: false, updated_at: "2026-09-10T00:00:00Z" },
-    ];
+    vi.mocked(listAllStockPositions).mockResolvedValue([
+      position({ material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: false } }),
+    ]);
     render(<ProjectRequirementList projectId="project-a" />);
     expect(await screen.findByText("(inativo)")).toBeInTheDocument();
   });
 
-  it("RL10: the edit link uses the real Requirement id", async () => {
+  it("the edit link uses the real Requirement id", async () => {
     requirementsState.requirements = [requirement({ id: "req-real-id" })];
-    materialsState.materials = [
-      { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: true, updated_at: "2026-09-10T00:00:00Z" },
-    ];
+    vi.mocked(listAllStockPositions).mockResolvedValue([position()]);
     const user = (await import("@testing-library/user-event")).default.setup();
     render(<ProjectRequirementList projectId="project-a" />);
     const nameNode = await screen.findByText("Cimento");
@@ -150,5 +169,15 @@ describe("ProjectRequirementList — SUPPLY-FRONTEND-01B §49 (RL1-RL12)", () =>
     await user.click(toggleButton!);
     const link = await screen.findByLabelText("Editar necessidade");
     expect(link).toHaveAttribute("href", "/obras/project-a/materiais/req-real-id/editar");
+  });
+
+  it("a StockPosition with no Requirement shows 'Não planejado' instead of a required quantity", async () => {
+    requirementsState.requirements = [];
+    vi.mocked(listAllStockPositions).mockResolvedValue([position({ required_quantity: null, missing_to_purchase_quantity: null })]);
+    const user = (await import("@testing-library/user-event")).default.setup();
+    render(<ProjectRequirementList projectId="project-a" />);
+    const nameNode = await screen.findByText("Cimento");
+    await user.click(nameNode.closest("button")!);
+    expect(await screen.findByText("Não planejado")).toBeInTheDocument();
   });
 });

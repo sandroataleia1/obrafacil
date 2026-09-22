@@ -7,11 +7,10 @@
  *
  * `MaterialRequirement` is ALSO the real API domain contract as of
  * SUPPLY-FRONTEND-01B/01B1 (see its own doc comment below).
- * `MaterialConsumption` remains a legacy frontend prototype child
- * contract (localStorage, a future gate will migrate it) — it only ever
- * stores a `materialId` string and resolves the real identity via the
- * API (`useMaterial`/`useAllMaterials`), never a second local Material
- * model.
+ * `MaterialConsumption` moved to `features/stock/types.ts` as of
+ * SUPPLY-FRONTEND-01D — it is now the real API contract too, and
+ * conceptually belongs to the Stock domain alongside
+ * `StockAdjustment`/`StockMovement`/`StockPosition`.
  */
 
 export const MATERIAL_UNIT_CODES = [
@@ -119,19 +118,6 @@ export const MATERIAL_STATUS_FILTER_LABEL: Record<MaterialStatusFilter, string> 
 };
 
 /**
- * Legacy frontend prototype child snapshot shape — `PurchaseOrderItem`
- * (still local prototype) snapshots a Material's unit at the moment an
- * item is added, in this shape (distinct from the API's
- * `unit_code`/`unit_custom_label` field names). Build one from a
- * resolved API `Material` with
- * `{ code: material.unit_code, customLabel: material.unit_custom_label ?? undefined }`.
- */
-export interface MaterialUnit {
-  code: MaterialUnitCode;
-  customLabel?: string;
-}
-
-/**
  * SUPPLY-FRONTEND-01B. MaterialRequirement is now the real API domain
  * contract — mirrors `App\Http\Resources\MaterialRequirementResource`
  * field-for-field. `material` is the LIVE relation (never a snapshot), so
@@ -139,17 +125,18 @@ export interface MaterialUnit {
  * `active: false` for a Requirement created before the Material was
  * deactivated — the Requirement stays fully listable/editable/deletable
  * regardless. `required_quantity` is a decimal STRING at scale 3 (e.g.
- * `"1.000"`, `"2.500"`) — never converted to `number` here; `number` is
- * only ever produced transiently at the boundary with the still-local
- * Purchase/Stock planning calculator (see
- * `requirement-quantity.ts#requirementQuantityForLegacyPlanning`).
+ * `"1.000"`, `"2.500"`) — never converted to `number` here. SUPPLY-
+ * FRONTEND-01D: every planning/quantity metric that used to feed off
+ * this value's `number` bridge now comes straight from `StockPosition`
+ * (`features/stock/types.ts`, real API,
+ * `required_quantity`/`missing_to_purchase_quantity`) — this field is
+ * never converted to `number` anywhere in the app anymore.
  *
  * SUPPLY-FRONTEND-01B1: the OLD camelCase/`localStorage` shape
  * (`projectId`/`materialId`/`requiredQuantity: number`, formerly in a
  * separate "legacy types" module) is GONE — every consumer (ProjectDetail,
- * the Dashboard Executive Panel, Analytics, Stock's supply-metrics) now
- * uses this one real API shape. This is the only MaterialRequirement
- * model in the frontend.
+ * the Dashboard Executive Panel, Analytics, Stock) now uses this one real
+ * API shape. This is the only MaterialRequirement model in the frontend.
  */
 export interface MaterialRequirement {
   id: string;
@@ -210,24 +197,4 @@ export interface MaterialRequirementUpdatePayload {
 export interface MaterialRequirementListParams {
   page?: number;
   perPage?: number;
-}
-
-/**
- * Legacy frontend prototype child contract (localStorage) — still local
- * as of this gate (SUPPLY-FRONTEND-01B only migrates MaterialRequirement;
- * MaterialConsumption/PurchaseOrder/StockAdjustment remain local).
- */
-export interface MaterialConsumption {
-  id: string;
-
-  projectId: string;
-  materialId: string;
-
-  quantity: number;
-  consumedAt: string;
-
-  notes?: string;
-
-  createdAt: string;
-  updatedAt: string;
 }

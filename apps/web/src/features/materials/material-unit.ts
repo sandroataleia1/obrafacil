@@ -1,4 +1,4 @@
-import { MATERIAL_UNIT_CODE_LABEL, type MaterialUnit, type MaterialUnitCode } from "./types";
+import { MATERIAL_UNIT_CODE_LABEL, type MaterialUnitCode } from "./types";
 
 /**
  * SUPPLY-FRONTEND-01A §26. Resolves a Material's unit — sourced directly
@@ -11,13 +11,4 @@ export function formatMaterialUnitCode(code: MaterialUnitCode, customLabel: stri
     return customLabel?.trim() || "un";
   }
   return MATERIAL_UNIT_CODE_LABEL[code];
-}
-
-/**
- * Legacy overload for a `PurchaseOrderItem`'s local unit SNAPSHOT
- * (`{code, customLabel}`, not the API's `{unit_code, unit_custom_label}`
- * field names) — still local prototype until SUPPLY-FRONTEND-01B.
- */
-export function formatMaterialUnit(unit: MaterialUnit): string {
-  return formatMaterialUnitCode(unit.code, unit.customLabel ?? null);
 }

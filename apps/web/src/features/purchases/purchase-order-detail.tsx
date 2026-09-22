@@ -18,22 +18,14 @@
  * Payable "Gerar conta a pagar" flow (unrelated to this guard) is
  * migrated separately in `payable-form.tsx`/`payable-detail.tsx`.
  *
- * SUPPLY-FRONTEND-01C1 §10/§11: MaterialConsumption/StockAdjustment stay
- * local prototypes until SUPPLY-FRONTEND-01D — the backend has never
- * heard of them, so it cannot itself block a GoodsReceipt DELETE that
- * would break a LOCAL consumption's chronology. `handleDeleteGoodsReceipt`
- * runs a TRANSITORY local precheck first: refetch every PurchaseOrder
- * for this Project (real API, never a local mirror), derive received
- * events, remove the candidate Receipt's own events, and validate the
- * local ledger (Consumption + StockAdjustment) for every Material that
- * Receipt touched. If removing the Receipt would break that local
- * ledger, the DELETE API call is never made — a controlled message is
- * shown instead. If the local precheck passes, the DELETE still goes to
- * the real API, which remains the final authority (a real 422 from
- * Postgres facts is shown verbatim, never overridden by the passing
- * local check). This whole precheck is removed in SUPPLY-FRONTEND-01D
- * once Consumption/StockAdjustment are themselves API-backed and the
- * backend can enforce this on its own.
+ * SUPPLY-FRONTEND-01D: MaterialConsumption/StockAdjustment are now
+ * API-backed, so `GoodsReceiptService::delete()` itself locks every
+ * affected Material and validates chronology against the real ledger —
+ * `handleDeleteGoodsReceipt` no longer runs any local precheck (the
+ * SUPPLY-FRONTEND-01C1 transitory guard that used to live here is
+ * removed); the DELETE goes straight to the API, and its 422 message
+ * ("Este recebimento não pode ser excluído porque existem saídas de
+ * material que dependem dele.") is shown verbatim.
  *
  * SUPPLY-FRONTEND-01C1 §15/§16: outer-wrapper + keyed-Inner tenant-
  * ownership pattern (`${companyId}:${id}`) — every mutation
@@ -59,16 +51,13 @@ import { decimalStringToBrlDisplay } from "@/lib/currency";
 import { formatDate } from "@/lib/date";
 import { useAuth } from "@/features/auth/auth-provider";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
-import { isTimelineValid, listLedgerEventsForProjectMaterial } from "@/features/materials/prototype/material-consumption";
 import { purchaseDecimalApiToInput } from "./purchase-decimal";
-import { purchaseOrdersToReceivedEvents } from "./purchase-received-events";
 import {
   cancelPurchaseOrder,
   confirmPurchaseOrder,
   deleteGoodsReceipt,
   deletePurchaseOrder,
   deletePurchaseOrderItem,
-  listPurchaseOrderDetailsForProject,
   returnPurchaseOrderToDraft,
 } from "./purchase-orders-client";
 import { usePurchaseOrder } from "./use-purchase-order";
@@ -195,54 +184,11 @@ function PurchaseOrderDetailInner({
     }
   }
 
-  /**
-   * Transitory local chronology precheck (see module doc comment) —
-   * refetches every PurchaseOrder for this Project from the real API
-   * (never a local mirror), derives received events, and validates the
-   * local Consumption/StockAdjustment ledger for every Material this
-   * Receipt touched, AS IF the Receipt were already removed. Fails
-   * closed on any fetch error (never calls DELETE against an
-   * incomplete ledger).
-   */
   async function handleDeleteGoodsReceipt(goodsReceipt: GoodsReceipt) {
     const confirmed = window.confirm(
       `Excluir o recebimento de ${formatDate(goodsReceipt.received_at)}? Esta ação não pode ser desfeita.`
     );
     if (!confirmed) return;
-
-    let projectOrders;
-    try {
-      projectOrders = await listPurchaseOrderDetailsForProject(order!.project.id);
-    } catch {
-      if (isStale()) return;
-      window.alert("Não foi possível verificar os recebimentos desta obra agora. Tente novamente.");
-      return;
-    }
-    if (isStale()) return;
-
-    const receivedEventsWithoutCandidate = purchaseOrdersToReceivedEvents(projectOrders).filter(
-      (event) => event.goodsReceiptId !== goodsReceipt.id
-    );
-
-    const affectedMaterialIds = new Set<string>();
-    for (const line of goodsReceipt.items) {
-      const orderItem = order!.items.find((item) => item.id === line.purchase_order_item_id);
-      if (orderItem) affectedMaterialIds.add(orderItem.material.id);
-    }
-
-    for (const materialId of affectedMaterialIds) {
-      const candidateLedger = listLedgerEventsForProjectMaterial(
-        order!.project.id,
-        materialId,
-        receivedEventsWithoutCandidate
-      );
-      if (!isTimelineValid(candidateLedger)) {
-        window.alert(
-          "Este recebimento não pode ser excluído porque existem usos de material (registrados nesta obra) que dependem dele."
-        );
-        return;
-      }
-    }
 
     try {
       await deleteGoodsReceipt(id, goodsReceipt.id);

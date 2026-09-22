@@ -1,76 +1,67 @@
 "use client";
 
 /**
- * SUPPLY-FRONTEND-01C1 §4/§6/§7: PurchaseOrder/GoodsReceipt are real
- * API — this form fetches every PurchaseOrder for this Project
- * (`listPurchaseOrderDetailsForProject`) fresh on mount, derives
- * received events via `purchaseOrdersToReceivedEvents`, and passes them
- * explicitly into `calculateAvailableQuantity`/`registerMaterialConsumption`
- * — neither function does any fetching or local-store reading of its
- * own. A Purchase/Receipt API failure fails CLOSED: "Disponível" is
- * hidden (never shown as `0`) and the submit button is disabled with a
- * controlled retry message, never silently treated as "nothing
- * available".
+ * SUPPLY-FRONTEND-01D §27-31/§51. Real API POST — `getStockPosition`
+ * (via `useStockPosition`) is the sole context source: it already
+ * embeds Project name, Material name/unit/active, and the current
+ * `stock_quantity`, so this form needs zero `useProject`/`useMaterial`/
+ * Purchase fan-out. The POST goes straight to the backend, which is the
+ * sole authority for chronology/balance validation (§27/§30) — this
+ * form never re-implements a ledger locally. Material inactive stays
+ * consumable (backend allows it — §28).
+ *
+ * Outer-wrapper + keyed-Inner tenant-ownership pattern
+ * (`${companyId}:${projectId}:${materialId}`) — a POST that resolves
+ * after a Company/Project/Material switch produces zero navigation/
+ * error/success (§51).
  */
 
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { BackHeader } from "@/components/shared/back-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Package } from "lucide-react";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
 import { todayIso } from "@/lib/date";
-import { formatQuantity } from "@/lib/quantity";
-import { useProject } from "@/features/projects/use-project";
-import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
-import { purchaseOrdersToReceivedEvents } from "@/features/purchases/purchase-received-events";
-import type { PurchaseOrder } from "@/features/purchases/types";
+import { useAuth } from "@/features/auth/auth-provider";
 import { formatMaterialUnitCode } from "./material-unit";
-import { useMaterial } from "./use-material";
-import { calculateAvailableQuantity, registerMaterialConsumption } from "./prototype/material-consumption";
+import { createMaterialConsumption } from "@/features/stock/stock-client";
+import { formatStockQuantity, stockQuantityInputToApi } from "@/features/stock/stock-decimal";
+import { useStockPosition } from "@/features/stock/use-stock-position";
 
-function parseQuantity(raw: string): number | null {
-  const normalized = raw.replace(/\./g, "").replace(",", ".").trim();
-  if (normalized === "") return null;
-  const value = Number(normalized);
-  return Number.isFinite(value) ? value : null;
-}
-
-export function ConsumptionForm({ projectId, materialId }: { projectId: string; materialId: string }) {
+function ConsumptionFormInner({
+  projectId,
+  materialId,
+  activeCompanyIdRef,
+  projectIdRef,
+  materialIdRef,
+}: {
+  projectId: string;
+  materialId: string;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  projectIdRef: React.RefObject<string>;
+  materialIdRef: React.RefObject<string>;
+}) {
   const router = useRouter();
-  const { project, error: projectError, reload: reloadProject } = useProject(projectId);
-  const { material, error: materialError, reload: reloadMaterial } = useMaterial(materialId);
+  const { position, error, reload } = useStockPosition(projectId, materialId);
 
   const [quantityInput, setQuantityInput] = useState("");
   const [consumedAt, setConsumedAt] = useState(todayIso());
   const [notes, setNotes] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
-  const [purchasesError, setPurchasesError] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  function loadPurchases() {
-    setPurchasesError(false);
-    listPurchaseOrderDetailsForProject(projectId)
-      .then((orders) => setPurchaseOrders(orders))
-      .catch(() => setPurchasesError(true));
-  }
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadPurchases();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-
-  if (projectError) {
+  if (error) {
     return (
       <div className="space-y-6">
-        <BackHeader title="Obra" onBack={() => router.push("/obras")} />
+        <BackHeader title="Obra" onBack={() => router.push(`/obras/${projectId}/materiais`)} />
         <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
           <p role="alert" className="text-sm text-muted-foreground">
-            Não foi possível carregar esta obra agora.
+            Não foi possível carregar o estoque agora.
           </p>
-          <Button type="button" onClick={reloadProject}>
+          <Button type="button" onClick={reload}>
             Tentar novamente
           </Button>
         </div>
@@ -78,103 +69,85 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
     );
   }
 
-  if (project === undefined) return null;
+  if (position === undefined) return null;
 
-  if (project === null) {
+  if (position === null) {
     return (
       <div className="space-y-6">
-        <BackHeader title="Obra não encontrada" onBack={() => router.push("/obras")} />
-      </div>
-    );
-  }
-
-  if (materialError) {
-    return (
-      <div className="space-y-6">
-        <BackHeader title="Material" onBack={() => router.push(`/obras/${projectId}/materiais`)} />
-        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
-          <p role="alert" className="text-sm text-muted-foreground">
-            Não foi possível carregar este material agora.
-          </p>
-          <Button type="button" onClick={reloadMaterial}>
-            Tentar novamente
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (material === undefined) return null;
-
-  if (!material) {
-    return (
-      <div className="space-y-6">
-        <BackHeader
-          title="Material não encontrado"
-          onBack={() => router.push(`/obras/${projectId}/materiais`)}
-        />
+        <BackHeader title="Não encontrado" onBack={() => router.push(`/obras/${projectId}/materiais`)} />
         <EmptyState
           icon={Package}
-          title="Material não encontrado"
-          description="Ele pode ter sido removido ou o link está incorreto."
+          title="Obra ou material não encontrado"
+          description="Podem ter sido removidos ou o link está incorreto."
         />
       </div>
     );
   }
 
-  const unitLabel = formatMaterialUnitCode(material.unit_code, material.unit_custom_label);
-  const receivedEvents = purchaseOrders ? purchaseOrdersToReceivedEvents(purchaseOrders) : [];
-  const available = purchaseOrders !== undefined ? calculateAvailableQuantity(projectId, materialId, receivedEvents) : null;
+  const unitLabel = formatMaterialUnitCode(position.material.unit_code, position.material.unit_custom_label);
 
-  function handleSubmit() {
-    if (purchasesError) {
-      setError("Não foi possível carregar os recebimentos agora. Tente novamente.");
-      return;
-    }
-    if (purchaseOrders === undefined) {
-      setError("Aguarde o carregamento dos recebimentos antes de registrar o uso.");
-      return;
-    }
-    const quantity = parseQuantity(quantityInput);
-    if (quantity === null || quantity <= 0) {
-      setError("Informe uma quantidade maior que zero.");
+  const submitCompanyId = activeCompanyIdRef.current;
+  const submitProjectId = projectIdRef.current;
+  const submitMaterialId = materialIdRef.current;
+  function isStale(): boolean {
+    return (
+      activeCompanyIdRef.current !== submitCompanyId ||
+      projectIdRef.current !== submitProjectId ||
+      materialIdRef.current !== submitMaterialId
+    );
+  }
+
+  async function handleSubmit() {
+    const quantity = stockQuantityInputToApi(quantityInput);
+    if (quantity === null) {
+      setFormError("Informe uma quantidade válida, maior que zero e com até 3 casas decimais.");
       return;
     }
     if (consumedAt.trim() === "") {
-      setError("Informe a data de uso.");
+      setFormError("Informe a data de uso.");
       return;
     }
 
-    const result = registerMaterialConsumption(
-      {
-        projectId,
-        materialId,
+    setSubmitting(true);
+    setFormError(null);
+
+    try {
+      await createMaterialConsumption(projectId, {
+        material_id: materialId,
         quantity,
-        consumedAt,
-        notes,
-      },
-      Boolean(material),
-      receivedEvents
-    );
-
-    if (!result.ok) {
-      setError(result.error);
-      return;
+        consumed_at: consumedAt,
+        notes: notes.trim() || null,
+      });
+      if (isStale()) return;
+      setSubmitting(false);
+      router.push(`/obras/${projectId}/materiais`);
+    } catch (submitError) {
+      if (isStale()) return;
+      setSubmitting(false);
+      if (submitError instanceof ApiValidationError) {
+        const firstMessage =
+          submitError.errors.material_id?.[0] ??
+          submitError.errors.quantity?.[0] ??
+          submitError.errors.consumed_at?.[0] ??
+          Object.values(submitError.errors)[0]?.[0];
+        setFormError(firstMessage ?? submitError.serverMessage ?? "Não foi possível registrar. Verifique os campos.");
+        return;
+      }
+      if (submitError instanceof ApiError) {
+        setFormError(submitError.message || "Não foi possível registrar agora. Tente novamente.");
+        return;
+      }
+      setFormError("Não foi possível registrar agora. Tente novamente.");
     }
-    setError(null);
-    router.push(`/obras/${projectId}/materiais`);
   }
 
   return (
     <div className="space-y-6 pb-6">
       <div className="space-y-1">
-        <BackHeader
-          title="Registrar uso"
-          onBack={() => router.push(`/obras/${projectId}/materiais`)}
-        />
+        <BackHeader title="Registrar uso" onBack={() => router.push(`/obras/${projectId}/materiais`)} />
         <p className="pl-11 text-sm text-muted-foreground">
-          {material.name}
-          {!material.active ? " (inativo)" : ""} · {project.name}
+          {position.material.name}
+          {!position.material.active ? " (inativo)" : ""} · {position.project.name}
         </p>
       </div>
 
@@ -185,18 +158,7 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
               Quantidade utilizada
             </label>
             <span className="text-xs text-muted-foreground">
-              {purchasesError ? (
-                <>
-                  Não foi possível carregar os recebimentos agora.{" "}
-                  <button type="button" onClick={loadPurchases} className="font-medium text-primary hover:underline">
-                    Tentar novamente
-                  </button>
-                </>
-              ) : available === null ? (
-                "Carregando disponibilidade..."
-              ) : (
-                `Disponível: ${formatQuantity(available)} ${unitLabel}`
-              )}
+              Disponível: {formatStockQuantity(position.stock_quantity)} {unitLabel}
             </span>
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-3 transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring">
@@ -241,12 +203,40 @@ export function ConsumptionForm({ projectId, materialId }: { projectId: string; 
           />
         </div>
 
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {formError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {formError}
+          </p>
+        ) : null}
       </div>
 
-      <Button type="button" size="lg" onClick={handleSubmit} disabled={purchaseOrders === undefined} className="w-full">
+      <Button type="button" size="lg" onClick={() => void handleSubmit()} disabled={submitting} className="w-full">
         Registrar uso
       </Button>
     </div>
+  );
+}
+
+export function ConsumptionForm({ projectId, materialId }: { projectId: string; materialId: string }) {
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const projectIdRef = useRef(projectId);
+  const materialIdRef = useRef(materialId);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    projectIdRef.current = projectId;
+    materialIdRef.current = materialId;
+  }, [activeCompanyId, projectId, materialId]);
+
+  return (
+    <ConsumptionFormInner
+      key={`${activeCompanyId}:${projectId}:${materialId}`}
+      projectId={projectId}
+      materialId={materialId}
+      activeCompanyIdRef={activeCompanyIdRef}
+      projectIdRef={projectIdRef}
+      materialIdRef={materialIdRef}
+    />
   );
 }

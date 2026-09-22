@@ -1,5 +1,19 @@
 "use client";
 
+/**
+ * SUPPLY-FRONTEND-01D §37/§61. Quantities/planning now come from
+ * `StockPosition` (`listAllStockPositions({ projectId })`, real API) —
+ * no more local `calculateMaterialPlanning`/Purchase fan-out/local
+ * Consumption store. `useMaterialRequirements` stays (already real API)
+ * — it is used here only to resolve a Requirement's own id for the
+ * "Editar necessidade" link, not for planning math; §61 only forbids
+ * that fan-out in StockList/StockDetail/ConsumptionForm/AdjustStockForm.
+ * Consumption history per Material comes from `StockMovement`
+ * (`listStockMovements`, filtered to `source_type === "CONSUMPTION"`)
+ * fetched on demand when a card's history is expanded — there is no
+ * standalone GET Consumption (§12); delete uses `movement.source_id`.
+ */
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -10,23 +24,13 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/date";
-import { formatQuantity } from "@/lib/quantity";
 import { useProject } from "@/features/projects/use-project";
-import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
-import { calculateMaterialPlanning, type MaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
-import type { LegacyGoodsReceiptItem, LegacyPurchaseOrder, LegacyPurchaseOrderItem } from "@/features/purchases/prototype/legacy-types";
-import {
-  purchaseItemForLegacyPlanning,
-  purchaseOrderForLegacyPlanning,
-  receiptItemsForLegacyPlanning,
-} from "@/features/purchases/purchase-planning-adapter";
+import { deleteMaterialConsumption, listAllStockPositions, listStockMovements } from "@/features/stock/stock-client";
+import { formatStockQuantity } from "@/features/stock/stock-decimal";
+import type { StockMovement, StockPosition } from "@/features/stock/types";
 import { formatMaterialUnitCode } from "./material-unit";
-import { useAllMaterials } from "./use-all-materials";
-import { listConsumptionsByProject } from "./prototype/material-consumption-store";
-import { removeMaterialConsumption } from "./prototype/material-consumption";
 import { useMaterialRequirements } from "./use-material-requirements";
-import { requirementQuantityForLegacyPlanning } from "./requirement-quantity";
-import type { MaterialConsumption, MaterialListItem, MaterialRequirement } from "./types";
+import type { MaterialRequirement } from "./types";
 
 function PlanningRow({
   label,
@@ -54,36 +58,47 @@ function PlanningRow({
 }
 
 function ConsumptionHistory({
-  consumptions,
+  loading,
+  error,
+  movements,
   unitLabel,
   onDelete,
+  deletingId,
 }: {
-  consumptions: MaterialConsumption[];
+  loading: boolean;
+  error: boolean;
+  movements: StockMovement[];
   unitLabel: string;
-  onDelete: (consumption: MaterialConsumption) => void;
+  onDelete: (movement: StockMovement) => void;
+  deletingId: string | null;
 }) {
-  if (consumptions.length === 0) {
+  if (error) {
+    return <p className="py-2 text-xs text-destructive">Não foi possível carregar o histórico agora.</p>;
+  }
+  if (loading) return null;
+  if (movements.length === 0) {
     return <p className="py-2 text-xs text-muted-foreground">Nenhum uso registrado ainda.</p>;
   }
 
   return (
     <div className="divide-y divide-border">
-      {consumptions.map((consumption) => (
-        <div key={consumption.id} className="flex items-center gap-3 py-2.5">
+      {movements.map((movement) => (
+        <div key={movement.id} className="flex items-center gap-3 py-2.5">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">
-              {formatQuantity(consumption.quantity)} {unitLabel}
+              {formatStockQuantity(movement.quantity)} {unitLabel}
             </p>
             <p className="truncate text-xs text-muted-foreground">
-              {formatDate(consumption.consumedAt)}
-              {consumption.notes ? ` · ${consumption.notes}` : ""}
+              {formatDate(movement.occurred_at)}
+              {movement.note ? ` · ${movement.note}` : ""}
             </p>
           </div>
           <button
             type="button"
-            onClick={() => onDelete(consumption)}
+            onClick={() => onDelete(movement)}
+            disabled={deletingId === movement.id}
             aria-label="Excluir uso"
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
           >
             <Trash2 className="size-3.5" aria-hidden="true" />
           </button>
@@ -95,25 +110,53 @@ function ConsumptionHistory({
 
 function MaterialPlanningCard({
   projectId,
-  materialId,
-  material,
+  position,
   requirement,
-  planning,
-  consumptions,
-  onDeleteConsumption,
+  onConsumptionDeleted,
 }: {
   projectId: string;
-  materialId: string;
-  material: MaterialListItem | null;
+  position: StockPosition;
   requirement: MaterialRequirement | null;
-  planning: MaterialPlanning;
-  consumptions: MaterialConsumption[];
-  onDeleteConsumption: (consumption: MaterialConsumption) => void;
+  onConsumptionDeleted: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const unitLabel = material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : "";
-  const needsPurchase = Boolean(planning.remainingToBuy && planning.remainingToBuy > 0);
+  const [movements, setMovements] = useState<StockMovement[] | undefined>(undefined);
+  const [movementsError, setMovementsError] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const materialId = position.material.id;
+  const unitLabel = formatMaterialUnitCode(position.material.unit_code, position.material.unit_custom_label);
+  const needsPurchase = position.missing_to_purchase_quantity !== null && Number(position.missing_to_purchase_quantity) > 0;
+
+  function loadMovements() {
+    setMovementsError(false);
+    setMovements(undefined);
+    listStockMovements(projectId, materialId, { perPage: 100 })
+      .then((response) => setMovements(response.data.filter((movement) => movement.source_type === "CONSUMPTION")))
+      .catch(() => setMovementsError(true));
+  }
+
+  function toggleHistory() {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (next && movements === undefined && !movementsError) loadMovements();
+  }
+
+  async function handleDeleteConsumption(movement: StockMovement) {
+    const confirmed = window.confirm("Excluir este registro de uso? Esta ação não pode ser desfeita.");
+    if (!confirmed) return;
+    setDeletingId(movement.id);
+    try {
+      await deleteMaterialConsumption(movement.project_id, movement.source_id);
+      setDeletingId(null);
+      loadMovements();
+      onConsumptionDeleted();
+    } catch {
+      setDeletingId(null);
+      window.alert("Não foi possível excluir este uso agora. Tente novamente.");
+    }
+  }
 
   return (
     <div className="rounded-xl border border-border bg-card">
@@ -125,13 +168,13 @@ function MaterialPlanningCard({
       >
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-foreground">
-            {material?.name ?? "Material indisponível"}
-            {material && !material.active ? (
+            {position.material.name}
+            {!position.material.active ? (
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">(inativo)</span>
             ) : null}
           </p>
           <p className="text-xs text-muted-foreground">
-            Disponível {formatQuantity(planning.available)} {unitLabel}
+            Disponível {formatStockQuantity(position.stock_quantity)} {unitLabel}
           </p>
         </div>
         {needsPurchase ? (
@@ -140,10 +183,7 @@ function MaterialPlanningCard({
           </span>
         ) : null}
         <ChevronDown
-          className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform",
-            expanded && "rotate-180"
-          )}
+          className={cn("size-4 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")}
           aria-hidden="true"
         />
       </button>
@@ -166,40 +206,34 @@ function MaterialPlanningCard({
           <div className="space-y-1.5">
             <PlanningRow
               label="Necessário"
-              value={planning.required === null ? "Não planejado" : `${formatQuantity(planning.required)} ${unitLabel}`}
+              value={
+                position.required_quantity === null
+                  ? "Não planejado"
+                  : `${formatStockQuantity(position.required_quantity)} ${unitLabel}`
+              }
             />
-            <PlanningRow
-              label="Comprado"
-              value={`${formatQuantity(planning.purchased)} ${unitLabel}${
-                planning.purchasedExcess && planning.purchasedExcess > 0
-                  ? ` (excesso de ${formatQuantity(planning.purchasedExcess)} ${unitLabel})`
-                  : ""
-              }`}
-            />
-            <PlanningRow
-              label="Recebido"
-              value={`${formatQuantity(planning.received)} ${unitLabel}${
-                planning.receivedExcess && planning.receivedExcess > 0
-                  ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})`
-                  : ""
-              }`}
-            />
-            <PlanningRow label="Utilizado" value={`${formatQuantity(planning.consumed)} ${unitLabel}`} />
-            <PlanningRow label="Disponível" value={`${formatQuantity(planning.available)} ${unitLabel}`} />
+            <PlanningRow label="Comprado" value={`${formatStockQuantity(position.purchased_quantity)} ${unitLabel}`} />
+            <PlanningRow label="Recebido" value={`${formatStockQuantity(position.received_quantity)} ${unitLabel}`} />
+            <PlanningRow label="Utilizado" value={`${formatStockQuantity(position.consumed_quantity)} ${unitLabel}`} />
+            <PlanningRow label="Disponível" value={`${formatStockQuantity(position.stock_quantity)} ${unitLabel}`} />
             <PlanningRow
               label="Falta comprar"
-              value={planning.remainingToBuy === null ? "—" : `${formatQuantity(planning.remainingToBuy)} ${unitLabel}`}
+              value={
+                position.missing_to_purchase_quantity === null
+                  ? "—"
+                  : `${formatStockQuantity(position.missing_to_purchase_quantity)} ${unitLabel}`
+              }
               emphasis={needsPurchase}
             />
             <PlanningRow
               label="Falta receber"
-              value={`${formatQuantity(planning.remainingToReceive)} ${unitLabel}`}
-              emphasis={planning.remainingToReceive > 0}
+              value={`${formatStockQuantity(position.pending_receipt_quantity)} ${unitLabel}`}
+              emphasis={Number(position.pending_receipt_quantity) > 0}
             />
           </div>
 
           <div className="flex items-center gap-2">
-            {planning.available > 0 ? (
+            {Number(position.stock_quantity) > 0 ? (
               <Button
                 size="sm"
                 className="flex-1"
@@ -211,24 +245,27 @@ function MaterialPlanningCard({
               type="button"
               variant="outline"
               size="sm"
-              className={planning.available > 0 ? "" : "flex-1"}
-              onClick={() => setHistoryOpen((open) => !open)}
+              className={Number(position.stock_quantity) > 0 ? "" : "flex-1"}
+              onClick={toggleHistory}
             >
               {historyOpen ? (
                 <ChevronUp className="size-3.5" aria-hidden="true" />
               ) : (
                 <ChevronDown className="size-3.5" aria-hidden="true" />
               )}
-              Histórico ({consumptions.length})
+              Histórico{movements ? ` (${movements.length})` : ""}
             </Button>
           </div>
 
           {historyOpen ? (
             <div className="border-t border-border">
               <ConsumptionHistory
-                consumptions={consumptions}
+                loading={movements === undefined && !movementsError}
+                error={movementsError}
+                movements={movements ?? []}
                 unitLabel={unitLabel}
-                onDelete={onDeleteConsumption}
+                onDelete={(movement) => void handleDeleteConsumption(movement)}
+                deletingId={deletingId}
               />
             </div>
           ) : null}
@@ -242,35 +279,20 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { project, error: projectError, reload: reloadProject } = useProject(projectId);
   const { requirements, error: requirementsError, reload: reloadRequirements } = useMaterialRequirements(projectId);
-  const { materials: allMaterials } = useAllMaterials();
-  const materialById = new Map((allMaterials ?? []).map((material) => [material.id, material]));
-  const [purchaseOrders, setPurchaseOrders] = useState<LegacyPurchaseOrder[] | undefined>(undefined);
-  const [purchaseOrderItems, setPurchaseOrderItems] = useState<LegacyPurchaseOrderItem[] | undefined>(undefined);
-  const [receiptItems, setReceiptItems] = useState<LegacyGoodsReceiptItem[] | undefined>(undefined);
-  const [purchasesError, setPurchasesError] = useState(false);
-  const [consumptions, setConsumptions] = useState<MaterialConsumption[] | undefined>(undefined);
+  const [positions, setPositions] = useState<StockPosition[] | undefined>(undefined);
+  const [positionsError, setPositionsError] = useState(false);
 
-  function refreshConsumptions() {
-    setConsumptions(listConsumptionsByProject(projectId));
-  }
-
-  function loadPurchases() {
-    setPurchasesError(false);
-    listPurchaseOrderDetailsForProject(projectId)
-      .then((orders) => {
-        setPurchaseOrders(orders.map(purchaseOrderForLegacyPlanning));
-        setPurchaseOrderItems(orders.flatMap(purchaseItemForLegacyPlanning));
-        setReceiptItems(orders.flatMap(receiptItemsForLegacyPlanning));
-      })
-      .catch(() => {
-        setPurchasesError(true);
-      });
+  function loadPositions() {
+    setPositionsError(false);
+    listAllStockPositions({ projectId })
+      .then((data) => setPositions(data))
+      .catch(() => setPositionsError(true));
   }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadPurchases();
-    setConsumptions(listConsumptionsByProject(projectId));
+    setPositions(undefined);
+    loadPositions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -299,32 +321,9 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
     );
   }
 
-  function handleDeleteConsumption(consumption: MaterialConsumption) {
-    const confirmed = window.confirm("Excluir este registro de uso? Esta ação não pode ser desfeita.");
-    if (!confirmed) return;
-    removeMaterialConsumption(consumption);
-    refreshConsumptions();
-  }
+  const dataReady = requirements !== undefined && positions !== undefined;
 
-  const dataReady =
-    requirements !== undefined &&
-    purchaseOrders !== undefined &&
-    purchaseOrderItems !== undefined &&
-    receiptItems !== undefined &&
-    consumptions !== undefined;
-
-  // Union of every Material relevant to this Obra — planned (has a real,
-  // API-backed MaterialRequirement) and/or purchased (appears in a
-  // PurchaseOrderItem of an order for this Obra). A Material bought
-  // without ever being planned must still show up here (see Task 042
-  // spec) — it just shows "Não planejado" instead of a required quantity.
-  const requirementByMaterial = new Map(
-    (requirements ?? []).map((requirement) => [requirement.material.id, requirement])
-  );
-  const materialIds = new Set<string>([
-    ...requirementByMaterial.keys(),
-    ...(purchaseOrderItems ?? []).map((item) => item.materialId),
-  ]);
+  const requirementByMaterial = new Map((requirements ?? []).map((requirement) => [requirement.material.id, requirement]));
 
   return (
     <div className="space-y-6">
@@ -355,16 +354,16 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
             Tentar novamente
           </Button>
         </div>
-      ) : purchasesError ? (
+      ) : positionsError ? (
         <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
           <p role="alert" className="text-sm text-muted-foreground">
-            Não foi possível carregar as compras desta obra agora.
+            Não foi possível carregar os materiais desta obra agora.
           </p>
-          <Button type="button" onClick={loadPurchases}>
+          <Button type="button" onClick={loadPositions}>
             Tentar novamente
           </Button>
         </div>
-      ) : !dataReady ? null : materialIds.size === 0 ? (
+      ) : !dataReady ? null : positions.length === 0 ? (
         <div className="space-y-3">
           <EmptyState
             icon={Package}
@@ -380,30 +379,15 @@ export function ProjectRequirementList({ projectId }: { projectId: string }) {
         </div>
       ) : (
         <div className="space-y-3">
-          {Array.from(materialIds).map((materialId) => {
-            const requirement = requirementByMaterial.get(materialId) ?? null;
-            const planning = calculateMaterialPlanning(
-              requirement ? requirementQuantityForLegacyPlanning(requirement.required_quantity) : null,
-              purchaseOrders!,
-              purchaseOrderItems!,
-              receiptItems!,
-              consumptions!,
-              materialId
-            );
-            const materialConsumptions = consumptions!.filter((c) => c.materialId === materialId);
-            return (
-              <MaterialPlanningCard
-                key={materialId}
-                projectId={projectId}
-                materialId={materialId}
-                material={materialById.get(materialId) ?? null}
-                requirement={requirement}
-                planning={planning}
-                consumptions={materialConsumptions}
-                onDeleteConsumption={handleDeleteConsumption}
-              />
-            );
-          })}
+          {positions.map((position) => (
+            <MaterialPlanningCard
+              key={position.material.id}
+              projectId={projectId}
+              position={position}
+              requirement={requirementByMaterial.get(position.material.id) ?? null}
+              onConsumptionDeleted={loadPositions}
+            />
+          ))}
         </div>
       )}
     </div>

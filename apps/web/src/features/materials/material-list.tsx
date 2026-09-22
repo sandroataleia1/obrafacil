@@ -21,7 +21,6 @@ import { useAuth } from "@/features/auth/auth-provider";
 import { CreateMaterialDialog } from "./create-material-dialog";
 import { deleteMaterial, listMaterials } from "./materials-client";
 import { formatMaterialUnitCode } from "./material-unit";
-import { hasAnyLocalMaterialDependency } from "./prototype/material-local-dependencies";
 import { MaterialStatusBadge } from "./components/status-badge";
 import { MATERIAL_STATUS_FILTERS, MATERIAL_STATUS_FILTER_LABEL } from "./types";
 import type { MaterialListItem, MaterialPaginationResponse, MaterialStatusFilter } from "./types";
@@ -231,22 +230,12 @@ export function MaterialList() {
   }, [load]);
 
   function handleDelete(material: MaterialListItem) {
-    if (hasAnyLocalMaterialDependency(material.id)) {
-      setDeleteState({
-        companyId: activeCompanyId,
-        material,
-        error:
-          "Este material possui registros locais vinculados e não pode ser excluído enquanto esses módulos ainda não foram migrados.",
-      });
-      return;
-    }
     setDeleteState({ companyId: activeCompanyId, material, error: null });
   }
 
   async function handleConfirmDelete() {
     if (!deleteState) return;
     const { material, companyId: requestCompanyId } = deleteState;
-    if (hasAnyLocalMaterialDependency(material.id)) return;
     try {
       await deleteMaterial(material.id);
       if (activeCompanyIdRef.current !== requestCompanyId) return;
@@ -379,7 +368,7 @@ export function MaterialList() {
         }}
         title="Excluir material?"
         description={
-          deleteState && deleteState.companyId === activeCompanyId && !hasAnyLocalMaterialDependency(deleteState.material.id)
+          deleteState && deleteState.companyId === activeCompanyId
             ? `Excluir o material "${deleteState.material.name}"? Esta ação não pode ser desfeita.`
             : undefined
         }

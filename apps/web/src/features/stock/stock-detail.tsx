@@ -1,37 +1,33 @@
 "use client";
 
 /**
- * SUPPLY-FRONTEND-01C1 §5/§7: `receivedEvents` is derived from the real
- * `PurchaseOrder[]` this component already fetches
- * (`listPurchaseOrderDetailsForProject`) via `purchaseOrdersToReceivedEvents`
- * — never a local mirror. A Purchase/Receipt API failure fails CLOSED
- * for "Saldo atual"/"Movimentações" too (not just "Cobertura da
- * necessidade", which already had this guard): those sections now only
- * render once `purchaseOrders` has actually resolved, and show the same
- * controlled "Não foi possível carregar os recebimentos agora" + retry
- * message otherwise — never a fabricated `received = 0`/empty
- * movements list.
+ * SUPPLY-FRONTEND-01D §20-26/§52-56. Fully API-driven — `GET
+ * /stock/positions/{project}/{material}` (via `useStockPosition`) already
+ * returns Project+Material+every Supply metric in one call; `GET
+ * .../movements` (via `useStockMovements`) is the paginated history.
+ * Zero `useProject`/`useMaterial`/`useMaterialRequirements`/Purchase
+ * fan-out needed to build the main metrics — the Resource already did
+ * that work server-side. A valid Project+Material pair with zero
+ * physical history is a normal, successful `StockPosition` with
+ * zero-valued metrics, never a 404 (§21) — `useStockPosition` already
+ * encodes that: `null` means the pair itself doesn't resolve (real
+ * 404), not "nothing happened yet".
  */
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { Boxes } from "lucide-react";
+import { Boxes, Trash2 } from "lucide-react";
 
 import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { formatQuantity } from "@/lib/quantity";
 import { formatDate } from "@/lib/date";
-import { useMaterial } from "@/features/materials/use-material";
-import { useMaterialRequirements } from "@/features/materials/use-material-requirements";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
-import { useProject } from "@/features/projects/use-project";
-import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
-import { purchaseOrdersToReceivedEvents } from "@/features/purchases/purchase-received-events";
-import type { PurchaseOrder } from "@/features/purchases/types";
-import { useStockDetail } from "./prototype/use-stock-detail";
-import { getProjectMaterialSupplyMetrics } from "./prototype/supply-metrics";
+import { deleteMaterialConsumption } from "./stock-client";
+import { formatStockQuantity } from "./stock-decimal";
+import { useStockPosition } from "./use-stock-position";
+import { useStockMovements } from "./use-stock-movements";
 import { STOCK_MOVEMENT_SOURCE_LABEL, type StockMovement } from "./types";
 import { StockMovementTypeBadge } from "./components/movement-type-badge";
 
@@ -45,27 +41,32 @@ function InfoField({ label, value }: { label: string; value: ReactNode }) {
 }
 
 /**
- * SUPPLY-FRONTEND-01C: the local Purchase/GoodsReceipt stores this used
- * to resolve a link from are removed — the label-only rendering below is
- * deliberate (not a regression) until SUPPLY-FRONTEND-01D replaces stock
- * movements with a real backend read that can carry a genuine link.
+ * SUPPLY-FRONTEND-01D §24: `source_id` for a GOODS_RECEIPT movement is a
+ * GoodsReceipt id, and there is no standalone GET Receipt endpoint — a
+ * link here would either invent a URL the API can't resolve, or require
+ * fetching the whole PurchaseOrder just to build one label. Preference
+ * per spec: label without a link.
  */
 function movementOrigin(movement: StockMovement): ReactNode {
-  if (movement.sourceType === "GOODS_RECEIPT") {
-    return STOCK_MOVEMENT_SOURCE_LABEL.GOODS_RECEIPT;
-  }
-  if (movement.sourceType === "CONSUMPTION") {
-    return STOCK_MOVEMENT_SOURCE_LABEL.CONSUMPTION;
-  }
-  return STOCK_MOVEMENT_SOURCE_LABEL.MANUAL_ADJUSTMENT;
+  return STOCK_MOVEMENT_SOURCE_LABEL[movement.source_type];
 }
 
-function MovementRow({ movement, unitLabel }: { movement: StockMovement; unitLabel: string }) {
+function MovementRow({
+  movement,
+  unitLabel,
+  onDelete,
+  deleting,
+}: {
+  movement: StockMovement;
+  unitLabel: string;
+  onDelete: (movement: StockMovement) => void;
+  deleting: boolean;
+}) {
   const isEntry = movement.type === "IN" || movement.type === "ADJUSTMENT_IN";
   return (
     <div className="flex items-center justify-between gap-3 py-3">
       <div className="min-w-0 space-y-0.5">
-        <p className="text-sm font-medium text-foreground">{formatDate(movement.occurredAt)}</p>
+        <p className="text-sm font-medium text-foreground">{formatDate(movement.occurred_at)}</p>
         <p className="truncate text-xs text-muted-foreground">{movementOrigin(movement)}</p>
         {movement.note ? <p className="truncate text-xs text-muted-foreground">{movement.note}</p> : null}
       </div>
@@ -78,46 +79,56 @@ function MovementRow({ movement, unitLabel }: { movement: StockMovement; unitLab
               : "text-sm font-semibold tabular-nums text-destructive"
           }
         >
-          {isEntry ? "+" : "−"} {formatQuantity(movement.quantity)} {unitLabel}
+          {isEntry ? "+" : "−"} {formatStockQuantity(movement.quantity)} {unitLabel}
         </span>
+        {movement.source_type === "CONSUMPTION" ? (
+          <button
+            type="button"
+            aria-label="Excluir consumo"
+            disabled={deleting}
+            onClick={() => onDelete(movement)}
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          >
+            <Trash2 className="size-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     </div>
   );
 }
 
-export function StockDetail({ projectId, materialId }: { projectId: string; materialId: string }) {
-  const { project } = useProject(projectId);
-  const { material } = useMaterial(materialId);
-  const {
-    requirements,
-    error: requirementsError,
-    reload: reloadRequirements,
-  } = useMaterialRequirements(projectId);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
-  const [purchasesError, setPurchasesError] = useState(false);
+const MOVEMENTS_PER_PAGE = 30;
 
-  function loadPurchases() {
-    setPurchasesError(false);
-    listPurchaseOrderDetailsForProject(projectId)
-      .then((orders) => setPurchaseOrders(orders))
-      .catch(() => setPurchasesError(true));
+export function StockDetail({ projectId, materialId }: { projectId: string; materialId: string }) {
+  const { position, error, reload } = useStockPosition(projectId, materialId);
+  const [movementsPage, setMovementsPage] = useState(1);
+  const {
+    response: movementsResponse,
+    error: movementsError,
+    reload: reloadMovements,
+  } = useStockMovements(projectId, materialId, { page: movementsPage, perPage: MOVEMENTS_PER_PAGE });
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <BackLink icon={Boxes} title="Estoque" href="/estoque" />
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
+          <p role="alert" className="text-sm text-muted-foreground">
+            Não foi possível carregar o estoque agora.
+          </p>
+          <Button type="button" onClick={reload}>
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
   }
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadPurchases();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  if (position === undefined) return null;
 
-  const receivedEvents = useMemo(
-    () => (purchaseOrders ? purchaseOrdersToReceivedEvents(purchaseOrders) : []),
-    [purchaseOrders]
-  );
-  const { movements, totals } = useStockDetail(projectId, materialId, receivedEvents);
-
-  if (project === undefined || material === undefined) return null;
-
-  if (!project || !material) {
+  if (position === null) {
     return (
       <div className="space-y-6">
         <BackLink icon={Boxes} title="Estoque" href="/estoque" />
@@ -130,171 +141,174 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
     );
   }
 
-  const unitLabel = formatMaterialUnitCode(material.unit_code, material.unit_custom_label);
-  const subtitle = project.name;
-  const requirement = (requirements ?? []).find((item) => item.material.id === materialId) ?? null;
-  const supply =
-    requirements !== undefined && purchaseOrders !== undefined
-      ? getProjectMaterialSupplyMetrics(projectId, materialId, requirement, purchaseOrders)
-      : null;
-  const withUnit = (value: number) => `${formatQuantity(value)} ${unitLabel}`;
+  const unitLabel = formatMaterialUnitCode(position.material.unit_code, position.material.unit_custom_label);
+  const withUnit = (value: string) => `${formatStockQuantity(value)} ${unitLabel}`;
+
+  async function handleDeleteConsumption(movement: StockMovement) {
+    const confirmed = window.confirm("Excluir este registro de consumo? Esta ação não pode ser desfeita.");
+    if (!confirmed) return;
+    setDeleteError(null);
+    setDeletingId(movement.id);
+    const requestProjectId = projectId;
+    const requestMaterialId = materialId;
+    try {
+      await deleteMaterialConsumption(movement.project_id, movement.source_id);
+      if (requestProjectId !== projectId || requestMaterialId !== materialId) return;
+      setDeletingId(null);
+      reload();
+      reloadMovements();
+    } catch {
+      if (requestProjectId !== projectId || requestMaterialId !== materialId) return;
+      setDeletingId(null);
+      setDeleteError("Não foi possível excluir este consumo agora. Tente novamente.");
+    }
+  }
 
   return (
     <div className="w-full max-w-3xl space-y-6">
       <div className="space-y-1">
-        <BackLink icon={Boxes} title={material.name} href="/estoque" />
-        <p className="text-sm text-muted-foreground">{subtitle}</p>
+        <BackLink icon={Boxes} title={position.material.name} href="/estoque" />
+        <p className="text-sm text-muted-foreground">{position.project.name}</p>
       </div>
 
-      {purchasesError ? (
-        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
-          <p role="alert" className="text-sm text-muted-foreground">
-            Não foi possível carregar os recebimentos agora.
-          </p>
-          <Button type="button" onClick={loadPurchases}>
-            Tentar novamente
-          </Button>
-        </div>
-      ) : (
-        <>
-          <div className="rounded-xl border border-border bg-card p-4">
-            <span className="mb-1 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              Saldo atual
-            </span>
-            <p className="text-3xl font-semibold tabular-nums text-foreground">
-              {purchaseOrders !== undefined && totals ? formatQuantity(totals.balance) : "—"} {unitLabel}
-            </p>
-          </div>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <span className="mb-1 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          Saldo atual
+        </span>
+        <p className="text-3xl font-semibold tabular-nums text-foreground">{withUnit(position.stock_quantity)}</p>
+      </div>
 
-          <div className="rounded-xl border border-border bg-card p-4">
-            <span className="mb-3 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              Informações
-            </span>
-            <div className="grid grid-cols-2 gap-4">
-              <InfoField label="Material" value={material.name} />
-              <InfoField
-                label="Obra"
-                value={
-                  <Link href={`/obras/${project.id}`} className="text-primary hover:underline">
-                    {project.name}
-                  </Link>
-                }
-              />
-              <InfoField label="Unidade" value={unitLabel} />
-              <InfoField
-                label="Total de entradas"
-                value={
-                  <span className="tabular-nums text-primary">
-                    +{purchaseOrders !== undefined && totals ? formatQuantity(totals.totalIn) : "—"}
-                  </span>
-                }
-              />
-              <InfoField
-                label="Total de saídas"
-                value={
-                  <span className="tabular-nums text-destructive">
-                    −{purchaseOrders !== undefined && totals ? formatQuantity(totals.totalOut) : "—"}
-                  </span>
-                }
-              />
-            </div>
-          </div>
-        </>
-      )}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <span className="mb-3 block text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          Informações
+        </span>
+        <div className="grid grid-cols-2 gap-4">
+          <InfoField label="Material" value={position.material.name} />
+          <InfoField
+            label="Obra"
+            value={
+              <Link href={`/obras/${position.project.id}`} className="text-primary hover:underline">
+                {position.project.name}
+              </Link>
+            }
+          />
+          <InfoField label="Unidade" value={unitLabel} />
+          <InfoField
+            label="Total de entradas"
+            value={<span className="tabular-nums text-primary">+{formatStockQuantity(position.total_in)}</span>}
+          />
+          <InfoField
+            label="Total de saídas"
+            value={<span className="tabular-nums text-destructive">−{formatStockQuantity(position.total_out)}</span>}
+          />
+        </div>
+      </div>
 
       <section aria-labelledby="stock-supply-coverage" className="space-y-2.5">
-        <h2
-          id="stock-supply-coverage"
-          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
-        >
+        <h2 id="stock-supply-coverage" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Cobertura da necessidade
         </h2>
-        {requirementsError ? (
-          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
-            <p role="alert" className="text-sm text-muted-foreground">
-              Não foi possível carregar a necessidade planejada agora.
-            </p>
-            <Button type="button" onClick={reloadRequirements}>
-              Tentar novamente
-            </Button>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="grid grid-cols-2 gap-4">
+            <InfoField
+              label="Necessário"
+              value={position.required_quantity === null ? "Não definido" : withUnit(position.required_quantity)}
+            />
+            <InfoField label="Comprado" value={withUnit(position.purchased_quantity)} />
+            <InfoField label="Recebido" value={withUnit(position.received_quantity)} />
+            <InfoField
+              label="A receber"
+              value={
+                <span className={Number(position.pending_receipt_quantity) > 0 ? "text-amber-700 dark:text-amber-400" : undefined}>
+                  {withUnit(position.pending_receipt_quantity)}
+                </span>
+              }
+            />
+            <InfoField label="Consumido" value={withUnit(position.consumed_quantity)} />
+            <InfoField label="Estoque atual" value={withUnit(position.stock_quantity)} />
           </div>
-        ) : purchasesError ? (
-          <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
-            <p role="alert" className="text-sm text-muted-foreground">
-              Não foi possível carregar os recebimentos agora.
-            </p>
-            <Button type="button" onClick={loadPurchases}>
-              Tentar novamente
-            </Button>
-          </div>
-        ) : supply === null ? null : (
-          <div className="rounded-xl border border-border bg-card p-4">
-            <div className="grid grid-cols-2 gap-4">
-              <InfoField
-                label="Necessário"
-                value={supply.required === null ? "Não definido" : withUnit(supply.required)}
-              />
-              <InfoField label="Comprado" value={withUnit(supply.purchased)} />
-              <InfoField label="Recebido" value={withUnit(supply.received)} />
-              <InfoField
-                label="A receber"
-                value={
-                  <span className={supply.pendingReceipt > 0 ? "text-amber-700 dark:text-amber-400" : undefined}>
-                    {withUnit(supply.pendingReceipt)}
+          <div className="mt-2 border-t border-border pt-2">
+            <InfoField
+              label="Falta comprar"
+              value={
+                position.missing_to_purchase_quantity === null ? (
+                  "—"
+                ) : (
+                  <span
+                    className={
+                      Number(position.missing_to_purchase_quantity) > 0
+                        ? "text-base font-semibold text-destructive"
+                        : "text-base font-semibold text-foreground"
+                    }
+                  >
+                    {withUnit(position.missing_to_purchase_quantity)}
                   </span>
-                }
-              />
-              <InfoField label="Consumido" value={withUnit(supply.consumed)} />
-              <InfoField label="Estoque atual" value={withUnit(supply.stock)} />
-            </div>
-            <div className="mt-2 border-t border-border pt-2">
-              <InfoField
-                label="Falta comprar"
-                value={
-                  supply.missingToPurchase === null ? (
-                    "—"
-                  ) : (
-                    <span
-                      className={
-                        supply.missingToPurchase > 0
-                          ? "text-base font-semibold text-destructive"
-                          : "text-base font-semibold text-foreground"
-                      }
-                    >
-                      {withUnit(supply.missingToPurchase)}
-                    </span>
-                  )
-                }
-              />
-            </div>
+                )
+              }
+            />
           </div>
-        )}
+        </div>
       </section>
 
       <section aria-labelledby="stock-movements" className="space-y-2.5">
-        <h2
-          id="stock-movements"
-          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
-        >
+        <h2 id="stock-movements" className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Movimentações
         </h2>
-        {purchasesError ? (
+        {deleteError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {deleteError}
+          </p>
+        ) : null}
+        {movementsError ? (
           <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
             <p role="alert" className="text-sm text-muted-foreground">
-              Não foi possível carregar os recebimentos agora.
+              Não foi possível carregar as movimentações agora.
             </p>
-            <Button type="button" onClick={loadPurchases}>
+            <Button type="button" onClick={reloadMovements}>
               Tentar novamente
             </Button>
           </div>
-        ) : purchaseOrders === undefined || movements === undefined ? null : movements.length === 0 ? (
+        ) : movementsResponse === undefined ? null : movementsResponse.data.length === 0 ? (
           <EmptyState compact icon={Boxes} title="Nenhuma movimentação registrada ainda." />
         ) : (
-          <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
-            {movements.map((movement) => (
-              <MovementRow key={movement.id} movement={movement} unitLabel={unitLabel} />
-            ))}
-          </div>
+          <>
+            <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
+              {movementsResponse.data.map((movement) => (
+                <MovementRow
+                  key={movement.id}
+                  movement={movement}
+                  unitLabel={unitLabel}
+                  onDelete={handleDeleteConsumption}
+                  deleting={deletingId === movement.id}
+                />
+              ))}
+            </div>
+            {movementsResponse.meta.last_page > 1 ? (
+              <div className="flex items-center justify-between gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMovementsPage((current) => current - 1)}
+                  disabled={movementsPage <= 1}
+                >
+                  Anterior
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Página {movementsResponse.meta.current_page} de {movementsResponse.meta.last_page}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMovementsPage((current) => current + 1)}
+                  disabled={movementsPage >= movementsResponse.meta.last_page}
+                >
+                  Próxima
+                </Button>
+              </div>
+            ) : null}
+          </>
         )}
       </section>
 
@@ -303,11 +317,7 @@ export function StockDetail({ projectId, materialId }: { projectId: string; mate
         size="lg"
         className="w-full"
         nativeButton={false}
-        render={
-          <Link href={`/estoque/ajustar?projectId=${projectId}&materialId=${materialId}`}>
-            Ajustar estoque
-          </Link>
-        }
+        render={<Link href={`/estoque/ajustar?projectId=${projectId}&materialId=${materialId}`}>Ajustar estoque</Link>}
       />
     </div>
   );

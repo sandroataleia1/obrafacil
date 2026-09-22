@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  purchaseDecimalApiToInput,
-  purchaseDecimalForLegacyPlanning,
-  purchaseQuantityInputToApi,
-  purchaseUnitPriceInputToApi,
-} from "../purchase-decimal";
+import { purchaseDecimalApiToInput, purchaseQuantityInputToApi, purchaseUnitPriceInputToApi } from "../purchase-decimal";
 
 /**
  * SUPPLY-FRONTEND-01C §17-18. `PurchaseOrderItem.quantity`/
@@ -72,10 +67,5 @@ describe("purchase-decimal — SUPPLY-FRONTEND-01C", () => {
     expect(purchaseDecimalApiToInput("1.250")).toBe("1,250");
     expect(purchaseDecimalApiToInput("18.50")).toBe("18,50");
     expect(purchaseDecimalApiToInput("5")).toBe("5");
-  });
-
-  it("purchaseDecimalForLegacyPlanning is a transient number bridge only", () => {
-    expect(purchaseDecimalForLegacyPlanning("1.250")).toBe(1.25);
-    expect(purchaseDecimalForLegacyPlanning("8.5")).toBe(8.5);
   });
 });

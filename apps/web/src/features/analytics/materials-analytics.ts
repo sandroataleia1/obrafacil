@@ -1,45 +1,31 @@
 /**
- * Materials facts for the analytics layer (Demo-Ready 010A). Reuses
- * `calculateMaterialPlanning` (from
- * `features/purchases/prototype/purchase-totals.ts`) per material
- * requirement — never re-derives purchased/received/consumed.
- *
- * Deliberately exposes only counts of pending LINES, never a summed
- * quantity across materials of different units (Demo-Ready 010A §20).
+ * Materials facts for the analytics layer. SUPPLY-FRONTEND-01D §37-44:
+ * `StockPosition` (real API, `GET /v1/stock/positions`) IS the
+ * planning/pending-quantities authority now — the local
+ * `calculateMaterialPlanning`/Legacy Purchase/Requirement fan-out this
+ * file used to reuse is gone. `pendingToBuyCount` counts pairs where
+ * the backend already computed a positive
+ * `missing_to_purchase_quantity` (null means "não planejado" — no
+ * Requirement, never counted here); `pendingToReceiveCount` counts
+ * pairs with a positive `pending_receipt_quantity` (ordered but not yet
+ * received, regardless of whether the material was also required).
  * Pure function only — no store reads, no writes.
  */
 
-import { calculateMaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
-import type {
-  LegacyGoodsReceiptItem as GoodsReceiptItem,
-  LegacyPurchaseOrder as PurchaseOrder,
-  LegacyPurchaseOrderItem as PurchaseOrderItem,
-} from "@/features/purchases/prototype/legacy-types";
-import type { MaterialConsumption, MaterialRequirement } from "@/features/materials/types";
-import { requirementQuantityForLegacyPlanning } from "@/features/materials/requirement-quantity";
+import type { StockPosition } from "@/features/stock/types";
 import type { ProjectMaterialsFacts } from "./types";
 
-export function buildProjectMaterialsFacts(
-  requirements: MaterialRequirement[],
-  purchaseOrders: PurchaseOrder[],
-  purchaseOrderItems: PurchaseOrderItem[],
-  goodsReceiptItems: GoodsReceiptItem[],
-  consumptions: MaterialConsumption[]
-): ProjectMaterialsFacts {
+export function buildProjectMaterialsFacts(positions: StockPosition[]): ProjectMaterialsFacts {
   let pendingToBuyCount = 0;
   let pendingToReceiveCount = 0;
 
-  for (const requirement of requirements) {
-    const planning = calculateMaterialPlanning(
-      requirementQuantityForLegacyPlanning(requirement.required_quantity),
-      purchaseOrders,
-      purchaseOrderItems,
-      goodsReceiptItems,
-      consumptions,
-      requirement.material.id
-    );
-    if (planning.remainingToBuy !== null && planning.remainingToBuy > 0) pendingToBuyCount += 1;
-    if (planning.remainingToReceive > 0) pendingToReceiveCount += 1;
+  for (const position of positions) {
+    if (position.missing_to_purchase_quantity !== null && Number(position.missing_to_purchase_quantity) > 0) {
+      pendingToBuyCount += 1;
+    }
+    if (Number(position.pending_receipt_quantity) > 0) {
+      pendingToReceiveCount += 1;
+    }
   }
 
   return { pendingToBuyCount, pendingToReceiveCount };

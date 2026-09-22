@@ -33,20 +33,12 @@ import type { Payable } from "@/features/payables/types";
 import { listReceivablesByProject } from "@/features/receivables/prototype/receivable-store";
 import { listReceiptsByReceivable } from "@/features/receivables/prototype/receipt-store";
 import type { Receipt as ReceiptModel, Receivable } from "@/features/receivables/types";
-import { formatQuantity } from "@/lib/quantity";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useMaterialRequirements } from "@/features/materials/use-material-requirements";
-import { requirementQuantityForLegacyPlanning } from "@/features/materials/requirement-quantity";
-import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
-import type { MaterialConsumption } from "@/features/materials/types";
+import { listAllStockPositions } from "@/features/stock/stock-client";
+import { formatStockQuantity } from "@/features/stock/stock-decimal";
+import type { StockPosition } from "@/features/stock/types";
 import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
-import { calculateMaterialPlanning, type MaterialPlanning } from "@/features/purchases/prototype/purchase-totals";
-import {
-  purchaseItemForLegacyPlanning,
-  purchaseOrderForLegacyPlanning,
-  receiptItemsForLegacyPlanning,
-} from "@/features/purchases/purchase-planning-adapter";
-import type { LegacyGoodsReceiptItem, LegacyPurchaseOrder, LegacyPurchaseOrderItem } from "@/features/purchases/prototype/legacy-types";
 import type { PurchaseOrder } from "@/features/purchases/types";
 import { ProjectTeamSummary } from "@/features/projects/team/project-team-summary";
 import { todayIso } from "@/lib/date";
@@ -101,25 +93,18 @@ function MaterialPlanningRow({ label, value, emphasis }: { label: string; value:
   );
 }
 
-function MaterialSummaryItem({
-  materialName,
-  unitLabel,
-  planning,
-}: {
-  materialName: string;
-  unitLabel: string;
-  planning: MaterialPlanning;
-}) {
+function MaterialSummaryItem({ position }: { position: StockPosition }) {
   const [expanded, setExpanded] = useState(false);
-  const needsPurchase = Boolean(planning.remainingToBuy && planning.remainingToBuy > 0);
+  const unitLabel = formatMaterialUnitCode(position.material.unit_code, position.material.unit_custom_label);
+  const needsPurchase = position.missing_to_purchase_quantity !== null && Number(position.missing_to_purchase_quantity) > 0;
 
   return (
     <div>
       <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} className="flex w-full items-center gap-3 py-2.5 text-left">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{materialName}</p>
+          <p className="truncate text-sm font-medium text-foreground">{position.material.name}</p>
           <p className="text-xs text-muted-foreground">
-            Disponível {formatQuantity(planning.available)} {unitLabel}
+            Disponível {formatStockQuantity(position.stock_quantity)} {unitLabel}
           </p>
         </div>
         {needsPurchase ? (
@@ -130,26 +115,23 @@ function MaterialSummaryItem({
 
       {expanded ? (
         <div className="space-y-1.5 pb-3">
-          <MaterialPlanningRow label="Necessário" value={`${formatQuantity(planning.required ?? 0)} ${unitLabel}`} />
           <MaterialPlanningRow
-            label="Comprado"
-            value={`${formatQuantity(planning.purchased)} ${unitLabel}${
-              planning.purchasedExcess && planning.purchasedExcess > 0 ? ` (excesso de ${formatQuantity(planning.purchasedExcess)} ${unitLabel})` : ""
-            }`}
+            label="Necessário"
+            value={position.required_quantity === null ? "Não planejado" : `${formatStockQuantity(position.required_quantity)} ${unitLabel}`}
           />
+          <MaterialPlanningRow label="Comprado" value={`${formatStockQuantity(position.purchased_quantity)} ${unitLabel}`} />
+          <MaterialPlanningRow label="Recebido" value={`${formatStockQuantity(position.received_quantity)} ${unitLabel}`} />
+          <MaterialPlanningRow label="Utilizado" value={`${formatStockQuantity(position.consumed_quantity)} ${unitLabel}`} />
+          <MaterialPlanningRow label="Disponível" value={`${formatStockQuantity(position.stock_quantity)} ${unitLabel}`} />
           <MaterialPlanningRow
-            label="Recebido"
-            value={`${formatQuantity(planning.received)} ${unitLabel}${
-              planning.receivedExcess && planning.receivedExcess > 0 ? ` (excesso de ${formatQuantity(planning.receivedExcess)} ${unitLabel})` : ""
-            }`}
+            label="Falta comprar"
+            value={position.missing_to_purchase_quantity === null ? "—" : `${formatStockQuantity(position.missing_to_purchase_quantity)} ${unitLabel}`}
+            emphasis={needsPurchase}
           />
-          <MaterialPlanningRow label="Utilizado" value={`${formatQuantity(planning.consumed)} ${unitLabel}`} />
-          <MaterialPlanningRow label="Disponível" value={`${formatQuantity(planning.available)} ${unitLabel}`} />
-          <MaterialPlanningRow label="Falta comprar" value={`${formatQuantity(planning.remainingToBuy ?? 0)} ${unitLabel}`} emphasis={needsPurchase} />
           <MaterialPlanningRow
             label="Falta receber"
-            value={`${formatQuantity(planning.remainingToReceive)} ${unitLabel}`}
-            emphasis={planning.remainingToReceive > 0}
+            value={`${formatStockQuantity(position.pending_receipt_quantity)} ${unitLabel}`}
+            emphasis={Number(position.pending_receipt_quantity) > 0}
           />
         </div>
       ) : null}
@@ -202,10 +184,8 @@ export function ProjectDetail({ id }: { id: string }) {
   const { requirements, error: requirementsError, reload: reloadRequirements } = useMaterialRequirements(id);
   const [purchaseOrdersDetail, setPurchaseOrdersDetail] = useState<PurchaseOrder[] | undefined>(undefined);
   const [purchasesError, setPurchasesError] = useState(false);
-  const [purchaseOrders, setPurchaseOrders] = useState<LegacyPurchaseOrder[] | undefined>(undefined);
-  const [purchaseOrderItems, setPurchaseOrderItems] = useState<LegacyPurchaseOrderItem[] | undefined>(undefined);
-  const [purchaseReceiptItems, setPurchaseReceiptItems] = useState<LegacyGoodsReceiptItem[] | undefined>(undefined);
-  const [purchaseConsumptions, setPurchaseConsumptions] = useState<MaterialConsumption[] | undefined>(undefined);
+  const [positions, setPositions] = useState<StockPosition[] | undefined>(undefined);
+  const [positionsError, setPositionsError] = useState(false);
 
   const requestSequence = useRef(0);
   const activeCompanyIdRef = useRef(activeCompanyId);
@@ -259,15 +239,15 @@ export function ProjectDetail({ id }: { id: string }) {
   function loadPurchases() {
     setPurchasesError(false);
     listPurchaseOrderDetailsForProject(id)
-      .then((orders) => {
-        setPurchaseOrdersDetail(orders);
-        setPurchaseOrders(orders.map(purchaseOrderForLegacyPlanning));
-        setPurchaseOrderItems(orders.flatMap(purchaseItemForLegacyPlanning));
-        setPurchaseReceiptItems(orders.flatMap(receiptItemsForLegacyPlanning));
-      })
-      .catch(() => {
-        setPurchasesError(true);
-      });
+      .then((orders) => setPurchaseOrdersDetail(orders))
+      .catch(() => setPurchasesError(true));
+  }
+
+  function loadPositions() {
+    setPositionsError(false);
+    listAllStockPositions({ projectId: id })
+      .then((data) => setPositions(data))
+      .catch(() => setPositionsError(true));
   }
 
   useEffect(() => {
@@ -276,7 +256,8 @@ export function ProjectDetail({ id }: { id: string }) {
     setPayables(listPayablesByProject(id));
     setReceivables(projectReceivables);
     setReceipts(projectReceivables.flatMap((receivable) => listReceiptsByReceivable(receivable.id)));
-    setPurchaseConsumptions(listConsumptionsByProject(id));
+    setPositions(undefined);
+    loadPositions();
     loadPurchases();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -576,37 +557,21 @@ export function ProjectDetail({ id }: { id: string }) {
               Tentar novamente
             </Button>
           </div>
-        ) : purchasesError ? (
+        ) : positionsError ? (
           <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
             <p role="alert" className="text-sm text-muted-foreground">
-              Não foi possível carregar as compras desta obra agora.
+              Não foi possível carregar os materiais desta obra agora.
             </p>
-            <Button type="button" onClick={loadPurchases}>
+            <Button type="button" onClick={loadPositions}>
               Tentar novamente
             </Button>
           </div>
-        ) : requirements === undefined || purchaseOrders === undefined || purchaseOrderItems === undefined || purchaseReceiptItems === undefined || purchaseConsumptions === undefined ? null : requirements.length > 0 ? (
+        ) : requirements === undefined || positions === undefined ? null : positions.length > 0 ? (
           <div className="space-y-3">
             <div className="divide-y divide-border rounded-xl border border-border bg-card px-4">
-              {requirements.map((requirement) => {
-                const planning = calculateMaterialPlanning(
-                  requirementQuantityForLegacyPlanning(requirement.required_quantity),
-                  purchaseOrders,
-                  purchaseOrderItems,
-                  purchaseReceiptItems,
-                  purchaseConsumptions,
-                  requirement.material.id
-                );
-                const unitLabel = formatMaterialUnitCode(requirement.material.unit_code, requirement.material.unit_custom_label);
-                return (
-                  <MaterialSummaryItem
-                    key={requirement.id}
-                    materialName={requirement.material.name}
-                    unitLabel={unitLabel}
-                    planning={planning}
-                  />
-                );
-              })}
+              {positions.map((position) => (
+                <MaterialSummaryItem key={position.material.id} position={position} />
+              ))}
             </div>
             <Button variant="outline" className="w-full" nativeButton={false} render={<Link href={`/obras/${project.id}/materiais`}>Gerenciar materiais</Link>} />
           </div>

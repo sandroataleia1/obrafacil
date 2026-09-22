@@ -2,9 +2,7 @@
  * SUPPLY-FRONTEND-01B §6/§19/§30. `MaterialRequirement.required_quantity`
  * is a decimal STRING at scale 3 on the wire (`StoreMaterialRequirementRequest`
  * validates `numeric|gt:0|regex:/^\d+(\.\d{1,3})?$/`) — this module is the
- * only place a BR-typed input crosses into that canonical string, and the
- * only place that string crosses (transiently) into a `number` for the
- * still-local Purchase/Stock planning calculator.
+ * only place a BR-typed input crosses into that canonical string.
  *
  * Deliberately does NOT reuse `lib/quantity.ts#quantityInputToDecimalString`
  * — that helper TRUNCATES beyond 3 decimals (`.slice(0, 3)`) instead of
@@ -52,16 +50,4 @@ export function requirementQuantityInputToApi(raw: string): string | null {
  */
 export function requirementQuantityApiToInput(value: string): string {
   return value.replace(".", ",");
-}
-
-/**
- * TRANSITIONAL bridge only. The API decimal string stays the domain
- * authority for `MaterialRequirement` — this `number` exists solely to
- * feed the still-local `calculateMaterialPlanning()` (Purchase/Stock
- * prototype calculator), which predates the API and operates on
- * `number`. Removed once Purchase/Stock themselves migrate to the API in
- * a later gate; never use this to build a mutation payload.
- */
-export function requirementQuantityForLegacyPlanning(requiredQuantity: string): number {
-  return Number(requiredQuantity);
 }

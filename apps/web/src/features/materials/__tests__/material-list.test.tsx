@@ -30,10 +30,6 @@ vi.mock("../materials-client", () => ({
   deleteMaterial: vi.fn(),
 }));
 
-vi.mock("../prototype/material-local-dependencies", () => ({
-  hasAnyLocalMaterialDependency: () => false,
-}));
-
 import { deleteMaterial, listMaterials } from "../materials-client";
 
 function item(id: string, name: string): MaterialListItem {

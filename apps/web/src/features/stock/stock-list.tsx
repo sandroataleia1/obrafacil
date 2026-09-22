@@ -1,5 +1,17 @@
 "use client";
 
+/**
+ * SUPPLY-FRONTEND-01D §15-19. Server-side pagination/filtering via
+ * `GET /api/v1/stock/positions` replaces the old client-side
+ * filter/paginate over `useSupplyPositions()` — mirrors
+ * `features/purchases/purchase-order-list.tsx`'s discipline exactly.
+ * The backend already computes and returns the full pair universe
+ * (physical movement + Requirement + ordered Purchase + cancelled
+ * physical history) — this component never reconstructs it (§18), and
+ * never recalculates any metric (§19): every value rendered is read
+ * directly off the `StockPosition` Resource.
+ */
+
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { Boxes, ChevronDown, Eye, Search } from "lucide-react";
@@ -8,15 +20,12 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageTitle } from "@/components/shared/page-title";
 import { Pagination as SharedPagination } from "@/features/budgets/components/pagination";
-import { formatQuantity } from "@/lib/quantity";
 import { cn } from "@/lib/utils";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
-import { useAllMaterials } from "@/features/materials/use-all-materials";
-import type { MaterialListItem } from "@/features/materials/types";
 import { useAllProjects } from "@/features/projects/use-all-projects";
-import type { ProjectListItem } from "@/features/projects/types";
-import { useSupplyPositions } from "./prototype/use-supply-positions";
-import type { StockSupplyPosition } from "./prototype/supply-metrics";
+import { formatStockQuantity } from "./stock-decimal";
+import { useStockPositions } from "./use-stock-positions";
+import type { StockPosition } from "./types";
 
 function normalize(value: string): string {
   return value
@@ -25,42 +34,14 @@ function normalize(value: string): string {
     .toLowerCase();
 }
 
-interface EnrichedPosition extends StockSupplyPosition {
-  materialName: string;
-  unitLabel: string;
-  projectName: string;
-}
-
-function enrich(
-  position: StockSupplyPosition,
-  projectsById: Map<string, ProjectListItem>,
-  materialsById: Map<string, MaterialListItem>
-): EnrichedPosition | null {
-  const project = projectsById.get(position.projectId);
-  if (!project) return null;
-  // §59/§61: an unresolved legacy materialId is shown controlled
-  // ("Material indisponível"), never dropped/crashed.
-  const material = materialsById.get(position.materialId);
-  return {
-    ...position,
-    materialName: material?.name ?? "Material indisponível",
-    unitLabel: material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : "",
-    projectName: project.name,
-  };
-}
-
 const ALL_OBRAS_LABEL = "Todas as obras";
 
 /**
  * Searchable single-select Obra filter (Pilot-Ready "Estoque 1.1 —
- * Filtro de Obra Escalável"). Replaces the chip row, which broke down
- * visually with more than a handful of Obras. Hand-rolled instead of
- * `@base-ui/react/combobox` (already a dependency, but its multi-value/
- * chips-oriented API is disproportionate for one single-select filter
- * — mirrors the same "no Combobox primitive yet, building one is
- * disproportionate" call already made for `ProjectTeamAssignmentDialog`)
- * — a small ARIA `combobox`/`listbox` pattern, no dependency on the
- * design system for this one filter.
+ * Filtro de Obra Escalável"). Options come from `useAllProjects()`
+ * (real API, full Company list) — never derived from the current page
+ * of positions, which would silently drop Obras not present on this
+ * page.
  */
 function ObraFilterCombobox({
   options,
@@ -84,9 +65,6 @@ function ObraFilterCombobox({
       ? options
       : options.filter((option) => normalize(option.name).includes(normalize(query)));
 
-  // "Todas as obras" is always the first selectable row, then the
-  // filtered Obras — kept as one flat list so arrow-key navigation
-  // moves through both without a special case.
   const rows: { id: string; label: string }[] = [
     { id: "all", label: ALL_OBRAS_LABEL },
     ...filtered.map((option) => ({ id: option.id, label: option.name })),
@@ -199,58 +177,65 @@ function ObraFilterCombobox({
   );
 }
 
-function RequiredValue({ required, unitLabel }: { required: number | null; unitLabel: string }) {
+function RequiredValue({ required, unitLabel }: { required: string | null; unitLabel: string }) {
   if (required === null) {
     return <span className="text-muted-foreground">Não definido</span>;
   }
   return (
     <span className="tabular-nums">
-      {formatQuantity(required)} {unitLabel}
+      {formatStockQuantity(required)} {unitLabel}
     </span>
   );
 }
 
-function MissingValue({ missing, required }: { missing: number | null; required: number | null }) {
+function MissingValue({ missing, required }: { missing: string | null; required: string | null }) {
   if (required === null || missing === null) {
     return <span className="text-muted-foreground">—</span>;
   }
   return (
-    <span className={cn("font-semibold tabular-nums", missing > 0 ? "text-destructive" : "text-foreground")}>
-      {formatQuantity(missing)}
+    <span className={cn("font-semibold tabular-nums", Number(missing) > 0 ? "text-destructive" : "text-foreground")}>
+      {formatStockQuantity(missing)}
     </span>
   );
 }
 
-function StockCard({ position }: { position: EnrichedPosition }) {
+function StockCard({ position }: { position: StockPosition }) {
+  const unitLabel = formatMaterialUnitCode(position.material.unit_code, position.material.unit_custom_label);
   return (
     <Link
-      href={`/estoque/${position.projectId}/${position.materialId}`}
+      href={`/estoque/${position.project.id}/${position.material.id}`}
       className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30"
     >
       <div className="min-w-0 flex-1 space-y-1.5">
         <div>
-          <p className="truncate text-sm font-semibold text-foreground">{position.materialName}</p>
-          <p className="truncate text-xs text-muted-foreground">{position.projectName}</p>
+          <p className="truncate text-sm font-semibold text-foreground">{position.material.name}</p>
+          <p className="truncate text-xs text-muted-foreground">{position.project.name}</p>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
           <span className="text-muted-foreground">
-            Necessário: <RequiredValue required={position.required} unitLabel={position.unitLabel} />
+            Necessário: <RequiredValue required={position.required_quantity} unitLabel={unitLabel} />
           </span>
           <span className="text-muted-foreground">
             Estoque:{" "}
             <span className="font-medium tabular-nums text-foreground">
-              {formatQuantity(position.stock)} {position.unitLabel}
+              {formatStockQuantity(position.stock_quantity)} {unitLabel}
             </span>
           </span>
           <span className="text-muted-foreground">
             Comprado:{" "}
-            <span className="font-medium tabular-nums text-foreground">{formatQuantity(position.purchased)}</span>
-            {position.pendingReceipt > 0 ? (
-              <span className="text-amber-700 dark:text-amber-400"> ({formatQuantity(position.pendingReceipt)} a receber)</span>
+            <span className="font-medium tabular-nums text-foreground">
+              {formatStockQuantity(position.purchased_quantity)}
+            </span>
+            {Number(position.pending_receipt_quantity) > 0 ? (
+              <span className="text-amber-700 dark:text-amber-400">
+                {" "}
+                ({formatStockQuantity(position.pending_receipt_quantity)} a receber)
+              </span>
             ) : null}
           </span>
           <span className="text-muted-foreground">
-            Falta comprar: <MissingValue missing={position.missingToPurchase} required={position.required} />
+            Falta comprar:{" "}
+            <MissingValue missing={position.missing_to_purchase_quantity} required={position.required_quantity} />
           </span>
         </div>
       </div>
@@ -267,41 +252,42 @@ function StockCard({ position }: { position: EnrichedPosition }) {
 const TABLE_ROW_GRID =
   "xl:grid xl:grid-cols-[minmax(0,1.5fr)_110px_130px_130px_100px_56px] xl:items-center xl:gap-4";
 
-function StockTableRow({ position }: { position: EnrichedPosition }) {
+function StockTableRow({ position }: { position: StockPosition }) {
+  const unitLabel = formatMaterialUnitCode(position.material.unit_code, position.material.unit_custom_label);
   return (
     <div className={cn("flex items-center px-4 py-3.5", TABLE_ROW_GRID)}>
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-foreground">{position.materialName}</p>
-        <p className="truncate text-xs text-muted-foreground">{position.projectName}</p>
+        <p className="truncate text-sm font-medium text-foreground">{position.material.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{position.project.name}</p>
       </div>
       <span className="text-sm text-muted-foreground">
-        <RequiredValue required={position.required} unitLabel={position.unitLabel} />
+        <RequiredValue required={position.required_quantity} unitLabel={unitLabel} />
       </span>
       <div className="text-sm">
         <span className="tabular-nums text-foreground">
-          {formatQuantity(position.purchased)} {position.unitLabel}
+          {formatStockQuantity(position.purchased_quantity)} {unitLabel}
         </span>
-        {position.pendingReceipt > 0 ? (
+        {Number(position.pending_receipt_quantity) > 0 ? (
           <p className="text-xs text-amber-700 dark:text-amber-400">
-            {formatQuantity(position.pendingReceipt)} a receber
+            {formatStockQuantity(position.pending_receipt_quantity)} a receber
           </p>
         ) : null}
       </div>
       <div className="text-sm">
         <span className="font-semibold tabular-nums text-foreground">
-          {formatQuantity(position.stock)} {position.unitLabel}
+          {formatStockQuantity(position.stock_quantity)} {unitLabel}
         </span>
-        {position.consumed > 0 ? (
-          <p className="text-xs text-muted-foreground">{formatQuantity(position.consumed)} consumidos</p>
+        {Number(position.consumed_quantity) > 0 ? (
+          <p className="text-xs text-muted-foreground">{formatStockQuantity(position.consumed_quantity)} consumidos</p>
         ) : null}
       </div>
       <span className="text-sm">
-        <MissingValue missing={position.missingToPurchase} required={position.required} />
+        <MissingValue missing={position.missing_to_purchase_quantity} required={position.required_quantity} />
       </span>
       <div className="justify-self-end">
         <Link
-          href={`/estoque/${position.projectId}/${position.materialId}`}
-          aria-label={`Ver estoque de ${position.materialName} em ${position.projectName}`}
+          href={`/estoque/${position.project.id}/${position.material.id}`}
+          aria-label={`Ver estoque de ${position.material.name} em ${position.project.name}`}
           className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Eye className="size-3.5" aria-hidden="true" />
@@ -311,7 +297,7 @@ function StockTableRow({ position }: { position: EnrichedPosition }) {
   );
 }
 
-function StockTable({ positions }: { positions: EnrichedPosition[] }) {
+function StockTable({ positions }: { positions: StockPosition[] }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div
@@ -329,53 +315,52 @@ function StockTable({ positions }: { positions: EnrichedPosition[] }) {
       </div>
       <div className="divide-y divide-border">
         {positions.map((position) => (
-          <StockTableRow key={`${position.projectId}::${position.materialId}`} position={position} />
+          <StockTableRow key={`${position.project.id}::${position.material.id}`} position={position} />
         ))}
       </div>
     </div>
   );
 }
 
-const PAGE_SIZE = 15;
+const PER_PAGE = 15;
+const SEARCH_DEBOUNCE_MS = 300;
 
 export function StockList() {
-  const { positions, error: positionsError, reload: reloadPositions } = useSupplyPositions();
-  const { projects } = useAllProjects();
-  const { materials } = useAllMaterials();
+  const { projects: allProjects } = useAllProjects();
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState<string>("all");
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(1);
 
-  const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
-  const materialsById = new Map((materials ?? []).map((material) => [material.id, material]));
-  const enriched = (positions ?? [])
-    .map((position) => enrich(position, projectsById, materialsById))
-    .filter((position): position is EnrichedPosition => position !== null);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-  const projectOptions = Array.from(
-    new Map(enriched.map((position) => [position.projectId, position.projectName])).entries()
-  ).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-
-  const normalizedSearch = normalize(search.trim());
-  const filtered = enriched.filter((position) => {
-    if (projectFilter !== "all" && position.projectId !== projectFilter) return false;
-    if (normalizedSearch === "") return true;
-    return normalize(position.materialName).includes(normalizedSearch);
+  const { response, error, loading, reload } = useStockPositions({
+    search: search || undefined,
+    projectId: projectFilter === "all" ? undefined : projectFilter,
+    page,
+    perPage: PER_PAGE,
   });
-
-  function updateSearch(value: string) {
-    setSearch(value);
-    setPage(0);
-  }
 
   function updateProjectFilter(value: string) {
     setProjectFilter(value);
-    setPage(0);
+    setPage(1);
   }
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const activePage = Math.min(page, totalPages - 1);
-  const visible = filtered.slice(activePage * PAGE_SIZE, activePage * PAGE_SIZE + PAGE_SIZE);
+  const projectOptions = (allProjects ?? [])
+    .map((project) => ({ id: project.id, name: project.name }))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+
+  const items = response?.data ?? [];
+  const lastPage = response?.meta.last_page ?? 1;
+  const isFiltered = search !== "" || projectFilter !== "all";
+  const isEmptyOverall = response !== undefined && items.length === 0 && !isFiltered && page === 1;
+  const isEmptySearch = response !== undefined && items.length === 0 && !isEmptyOverall;
 
   return (
     <div className="space-y-6">
@@ -391,60 +376,52 @@ export function StockList() {
           className="shrink-0 self-start"
           nativeButton={false}
           render={
-            <Link
-              href={
-                projectFilter === "all"
-                  ? "/estoque/ajustar"
-                  : `/estoque/ajustar?projectId=${projectFilter}`
-              }
-            >
+            <Link href={projectFilter === "all" ? "/estoque/ajustar" : `/estoque/ajustar?projectId=${projectFilter}`}>
               Ajustar estoque
             </Link>
           }
         />
       </div>
 
-      {positionsError ? (
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="relative flex-1">
+          <Search
+            className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Buscar por material"
+            aria-label="Buscar por material"
+            className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
+          />
+        </div>
+
+        <ObraFilterCombobox options={projectOptions} value={projectFilter} onChange={updateProjectFilter} />
+      </div>
+
+      {error ? (
         <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-6 text-center">
           <p role="alert" className="text-sm text-muted-foreground">
-            Não foi possível carregar o planejamento de materiais agora.
+            Não foi possível carregar o estoque agora.
           </p>
-          <Button type="button" onClick={reloadPositions}>
+          <Button type="button" onClick={() => reload()}>
             Tentar novamente
           </Button>
         </div>
-      ) : positions === undefined || enriched.length === 0 ? null : (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-          <div className="relative flex-1">
-            <Search
-              className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(event) => updateSearch(event.target.value)}
-              placeholder="Buscar por material"
-              aria-label="Buscar por material"
-              className="w-full rounded-xl border border-border bg-card py-3 pr-4 pl-10 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-ring"
-            />
-          </div>
-
-          <ObraFilterCombobox
-            options={projectOptions.map(([id, name]) => ({ id, name }))}
-            value={projectFilter}
-            onChange={updateProjectFilter}
-          />
+      ) : loading || response === undefined ? (
+        <div className="space-y-3" role="status" aria-busy="true">
+          <span className="sr-only">Carregando estoque</span>
         </div>
-      )}
-
-      {positionsError ? null : positions === undefined ? null : enriched.length === 0 ? (
+      ) : isEmptyOverall ? (
         <EmptyState
           icon={Boxes}
           title="Nenhum material a acompanhar ainda"
           description="Materiais aparecem aqui assim que houver uma necessidade planejada, uma compra, um recebimento, um consumo ou um ajuste manual em alguma obra."
         />
-      ) : filtered.length === 0 ? (
+      ) : isEmptySearch ? (
         <EmptyState
           icon={Boxes}
           title="Nenhum material encontrado"
@@ -453,15 +430,15 @@ export function StockList() {
       ) : (
         <>
           <div className="space-y-3 xl:hidden">
-            {visible.map((position) => (
-              <StockCard key={`${position.projectId}::${position.materialId}`} position={position} />
+            {items.map((position) => (
+              <StockCard key={`${position.project.id}::${position.material.id}`} position={position} />
             ))}
             <SharedPagination
-              page={activePage}
-              totalPages={totalPages}
-              totalItems={filtered.length}
-              pageSize={PAGE_SIZE}
-              onChange={setPage}
+              page={(response.meta.current_page ?? page) - 1}
+              totalPages={lastPage}
+              totalItems={response.meta.total}
+              pageSize={PER_PAGE}
+              onChange={(zeroBasedPage) => setPage(zeroBasedPage + 1)}
               siblingCount={0}
               itemLabel="materiais"
               ariaLabel="Paginação de estoque"
@@ -469,13 +446,13 @@ export function StockList() {
             />
           </div>
           <div className="hidden space-y-3 xl:block">
-            <StockTable positions={visible} />
+            <StockTable positions={items} />
             <SharedPagination
-              page={activePage}
-              totalPages={totalPages}
-              totalItems={filtered.length}
-              pageSize={PAGE_SIZE}
-              onChange={setPage}
+              page={(response.meta.current_page ?? page) - 1}
+              totalPages={lastPage}
+              totalItems={response.meta.total}
+              pageSize={PER_PAGE}
+              onChange={(zeroBasedPage) => setPage(zeroBasedPage + 1)}
               itemLabel="materiais"
               ariaLabel="Paginação de estoque"
               showSinglePageSummary

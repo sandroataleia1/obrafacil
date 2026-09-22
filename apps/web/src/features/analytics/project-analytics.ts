@@ -21,12 +21,7 @@ import { sumCosts } from "@/features/project-costs/prototype/cost-totals";
 import type { ProjectCost } from "@/features/project-costs/types";
 import type { Payable } from "@/features/payables/types";
 import type { Receipt, Receivable } from "@/features/receivables/types";
-import type {
-  LegacyGoodsReceiptItem as GoodsReceiptItem,
-  LegacyPurchaseOrder as PurchaseOrder,
-  LegacyPurchaseOrderItem as PurchaseOrderItem,
-} from "@/features/purchases/prototype/legacy-types";
-import type { MaterialConsumption, MaterialRequirement } from "@/features/materials/types";
+import type { StockPosition } from "@/features/stock/types";
 import { aggregatePayables, aggregateReceivables } from "./financial-analytics";
 import { buildProjectMaterialsFacts } from "./materials-analytics";
 import type { ProjectAnalyticsFacts, ProjectBudgetFacts } from "./types";
@@ -75,11 +70,7 @@ export function buildProjectAnalyticsFacts(input: {
   payables: Payable[];
   receivables: Receivable[];
   receiptsFor: (receivableId: string) => Receipt[];
-  materialRequirements: MaterialRequirement[];
-  purchaseOrders: PurchaseOrder[];
-  purchaseOrderItems: PurchaseOrderItem[];
-  goodsReceiptItems: GoodsReceiptItem[];
-  materialConsumptions: MaterialConsumption[];
+  stockPositions: StockPosition[];
 }): ProjectAnalyticsFacts {
   const projectPayables = input.payables.filter((payable) => payable.projectId === input.projectId);
   const projectReceivables = input.receivables.filter((receivable) => receivable.projectId === input.projectId);
@@ -89,12 +80,6 @@ export function buildProjectAnalyticsFacts(input: {
     budget: buildProjectBudgetFacts(input.budget, input.costs),
     payables: aggregatePayables(projectPayables),
     receivables: aggregateReceivables(projectReceivables, input.receiptsFor),
-    materials: buildProjectMaterialsFacts(
-      input.materialRequirements,
-      input.purchaseOrders,
-      input.purchaseOrderItems,
-      input.goodsReceiptItems,
-      input.materialConsumptions
-    ),
+    materials: buildProjectMaterialsFacts(input.stockPositions),
   };
 }

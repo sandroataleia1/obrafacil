@@ -46,11 +46,17 @@ vi.mock("@/features/purchases/purchase-orders-client", () => ({
   listPurchaseOrderDetailsForProject: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("@/features/stock/stock-client", () => ({
+  listAllStockPositions: vi.fn().mockResolvedValue([]),
+}));
+
 import { ApiError } from "@/lib/api-client";
 import { getProject, updateProject } from "../projects-client";
+import { listAllStockPositions } from "@/features/stock/stock-client";
 import { ProjectDetail } from "../project-detail";
 import type { Project } from "../types";
 import type { MaterialRequirement } from "@/features/materials/types";
+import type { StockPosition } from "@/features/stock/types";
 
 function requirement(overrides: Partial<MaterialRequirement> = {}): MaterialRequirement {
   return {
@@ -61,6 +67,23 @@ function requirement(overrides: Partial<MaterialRequirement> = {}): MaterialRequ
     notes: null,
     created_at: "2026-09-10T00:00:00Z",
     updated_at: "2026-09-10T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function position(overrides: Partial<StockPosition> = {}): StockPosition {
+  return {
+    project: { id: "proj-1", number: "OBR-000001", name: "Casa Oliveira" },
+    material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: true },
+    required_quantity: "1.000",
+    purchased_quantity: "0.000",
+    received_quantity: "0.000",
+    consumed_quantity: "0.000",
+    stock_quantity: "0.000",
+    pending_receipt_quantity: "0.000",
+    missing_to_purchase_quantity: "1.000",
+    total_in: "0.000",
+    total_out: "0.000",
     ...overrides,
   };
 }
@@ -93,6 +116,7 @@ describe("ProjectDetail", () => {
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
     requirementsState.requirements = [];
     requirementsState.error = false;
+    vi.mocked(listAllStockPositions).mockReset().mockResolvedValue([]);
     window.localStorage.clear();
   });
 
@@ -291,28 +315,32 @@ describe("ProjectDetail", () => {
   });
 
   /**
-   * SUPPLY-FRONTEND-01B1 §4-7/§27 (PD1-PD7). The "Materiais" section now
-   * sources Requirements from the real API — never the removed legacy
-   * local store.
+   * SUPPLY-FRONTEND-01D §37 (PD-equivalent). The "Materiais" section now
+   * sources its planning metrics from real `StockPosition`
+   * (`listAllStockPositions`) — never the removed local Purchase
+   * calculators. `useMaterialRequirements` stays only for the
+   * Requirements error/retry UI.
    */
-  describe("Materiais section — SUPPLY-FRONTEND-01B1 §27 (PD1-PD7)", () => {
-    it("PD1: a real API Requirement appears using requirement.material's live relation", async () => {
+  describe("Materiais section — SUPPLY-FRONTEND-01D §37", () => {
+    it("PD1: a real StockPosition appears using its embedded Material relation", async () => {
       vi.mocked(getProject).mockResolvedValue(project());
       requirementsState.requirements = [requirement()];
+      vi.mocked(listAllStockPositions).mockResolvedValue([position()]);
       render(<ProjectDetail id="proj-1" />);
       await screen.findByText(/OBR-000001/);
       expect(await screen.findByText("Cimento")).toBeInTheDocument();
     });
 
-    it("PD2: a real empty [] response shows the empty-planning state", async () => {
+    it("PD2: a real empty [] positions response shows the empty-planning state", async () => {
       vi.mocked(getProject).mockResolvedValue(project());
       requirementsState.requirements = [];
+      vi.mocked(listAllStockPositions).mockResolvedValue([]);
       render(<ProjectDetail id="proj-1" />);
       await screen.findByText(/OBR-000001/);
       expect(await screen.findByText(/nenhum material planejado/i)).toBeInTheDocument();
     });
 
-    it("PD3/PD4: an API error shows a retry message, never the empty-planning state", async () => {
+    it("PD3/PD4: a Requirements API error shows a retry message, never the empty-planning state", async () => {
       vi.mocked(getProject).mockResolvedValue(project());
       requirementsState.requirements = undefined;
       requirementsState.error = true;
@@ -334,9 +362,19 @@ describe("ProjectDetail", () => {
       expect(reloadRequirements).toHaveBeenCalledTimes(1);
     });
 
-    it("PD5: required_quantity bridges to the local planning calculator without changing the API decimal string", async () => {
+    it("a StockPosition-API error shows an operational retry message", async () => {
+      vi.mocked(getProject).mockResolvedValue(project());
+      requirementsState.requirements = [];
+      vi.mocked(listAllStockPositions).mockRejectedValue(new Error("500"));
+      render(<ProjectDetail id="proj-1" />);
+      await screen.findByText(/OBR-000001/);
+      expect(await screen.findByText(/não foi possível carregar os materiais desta obra agora/i)).toBeInTheDocument();
+    });
+
+    it("PD5: required_quantity is displayed from the real StockPosition decimal string", async () => {
       vi.mocked(getProject).mockResolvedValue(project());
       requirementsState.requirements = [requirement({ required_quantity: "8.500" })];
+      vi.mocked(listAllStockPositions).mockResolvedValue([position({ required_quantity: "8.500" })]);
       const user = userEvent.setup();
       render(<ProjectDetail id="proj-1" />);
       await screen.findByText(/OBR-000001/);
@@ -346,11 +384,14 @@ describe("ProjectDetail", () => {
       expect((await screen.findAllByText(/8,5/)).length).toBeGreaterThan(0);
     });
 
-    it("PD6: a Requirement whose Material relation is inactive still renders", async () => {
+    it("PD6: a StockPosition whose Material relation is inactive still renders", async () => {
       vi.mocked(getProject).mockResolvedValue(project());
       requirementsState.requirements = [
         requirement({ material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: false } }),
       ];
+      vi.mocked(listAllStockPositions).mockResolvedValue([
+        position({ material: { id: "mat-1", name: "Cimento", unit_code: "sc", unit_custom_label: null, active: false } }),
+      ]);
       render(<ProjectDetail id="proj-1" />);
       await screen.findByText(/OBR-000001/);
       expect(await screen.findByText("Cimento")).toBeInTheDocument();

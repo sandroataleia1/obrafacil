@@ -48,15 +48,3 @@ export function purchaseUnitPriceInputToApi(raw: string): string | null {
 export function purchaseDecimalApiToInput(value: string): string {
   return value.replace(".", ",");
 }
-
-/**
- * TRANSITIONAL bridge only, mirrors
- * `requirement-quantity.ts#requirementQuantityForLegacyPlanning`. The API
- * decimal string stays the domain authority — this `number` exists
- * solely to feed the still-local `calculateMaterialPlanning()` calculator
- * via the legacy-shaped adapter objects. Never use this to build a
- * mutation payload.
- */
-export function purchaseDecimalForLegacyPlanning(value: string): number {
-  return Number(value);
-}

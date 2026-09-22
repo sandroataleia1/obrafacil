@@ -21,14 +21,8 @@ import { listAllProjectCosts, listCostsByProject } from "@/features/project-cost
 import { listAllEmployees } from "@/features/employees/prototype/employee-store";
 import { listAllWorkPeriods } from "@/features/employees/prototype/work-period-store";
 import { listAllProjectTeamAssignments } from "@/features/projects/team/project-team-assignment-store";
-import { listMaterialRequirementsForProjects } from "@/features/materials/material-requirements-client";
-import { listPurchaseOrderDetailsForProjects } from "@/features/purchases/purchase-orders-client";
-import {
-  purchaseItemForLegacyPlanning,
-  purchaseOrderForLegacyPlanning,
-  receiptItemsForLegacyPlanning,
-} from "@/features/purchases/purchase-planning-adapter";
-import { listConsumptionsByProject } from "@/features/materials/prototype/material-consumption-store";
+import { listAllStockPositions } from "@/features/stock/stock-client";
+import type { StockPosition } from "@/features/stock/types";
 
 import { buildCompanyAnalyticsFacts } from "@/features/analytics/company-analytics";
 import { buildProjectAnalyticsFacts } from "@/features/analytics/project-analytics";
@@ -72,19 +66,20 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
     workforcePeriod: period,
   });
 
-  // SUPPLY-FRONTEND-01B1 §8-10: MaterialRequirement is real API now —
-  // fetched per Project via `listMaterialRequirementsForProjects`. A
-  // failure on ANY Project's Requirements rejects the whole call (never
-  // silently substitutes `[]`), so the outer `load()`'s `.catch()`
-  // correctly surfaces `error: true` for the whole panel.
-  const requirementsByProject = await listMaterialRequirementsForProjects(projects.map((project) => project.id));
-
-  // SUPPLY-FRONTEND-01C: PurchaseOrder/GoodsReceipt are real API now —
-  // fetched per Project via `listPurchaseOrderDetailsForProjects`, then
-  // bridged into the still-local planning shapes via the same adapter
-  // `ProjectRequirementList`/`ProjectDetail` use. A failure on ANY
-  // Project's fetch rejects the whole call, same as Requirements above.
-  const purchasesByProject = await listPurchaseOrderDetailsForProjects(projects.map((project) => project.id));
+  // SUPPLY-FRONTEND-01D §37-44/§71: StockPosition is the sole Supply
+  // planning source now — fetched ONCE for the whole Company via
+  // `listAllStockPositions()`, never fanned out per Project. Grouped
+  // here by `project.id` for `buildProjectAnalyticsFacts`.
+  const allPositions = await listAllStockPositions();
+  const positionsByProject = new Map<string, StockPosition[]>();
+  for (const position of allPositions) {
+    const list = positionsByProject.get(position.project.id);
+    if (list) {
+      list.push(position);
+    } else {
+      positionsByProject.set(position.project.id, [position]);
+    }
+  }
 
   const projectEntries: ExecutivePanelProjectEntry[] = projects.map((project) => {
     // §44/§45: no legacy Budget prototype lookup — the real Project's
@@ -95,10 +90,6 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
     // anymore and stays null here, same principle as
     // `buildProjectManagementSummary`'s referenceAmount boundary.
     const costs = listCostsByProject(project.id);
-    const projectPurchaseOrders = purchasesByProject.get(project.id) ?? [];
-    const purchaseOrders = projectPurchaseOrders.map(purchaseOrderForLegacyPlanning);
-    const purchaseOrderItems = projectPurchaseOrders.flatMap(purchaseItemForLegacyPlanning);
-    const goodsReceiptItems = projectPurchaseOrders.flatMap(receiptItemsForLegacyPlanning);
 
     return {
       project,
@@ -109,11 +100,7 @@ async function loadExecutivePanelData(period: string): Promise<ExecutivePanelDat
         payables,
         receivables,
         receiptsFor,
-        materialRequirements: requirementsByProject.get(project.id) ?? [],
-        purchaseOrders,
-        purchaseOrderItems,
-        goodsReceiptItems,
-        materialConsumptions: listConsumptionsByProject(project.id),
+        stockPositions: positionsByProject.get(project.id) ?? [],
       }),
     };
   });

@@ -1,56 +1,95 @@
 /**
- * UI/prototype models for Estoque (basic stock control per Obra +
- * Material).
+ * SUPPLY-FRONTEND-01D. `StockPosition`/`StockMovement`/`StockAdjustment`
+ * are now the real API domain contracts — mirror
+ * `App\Http\Resources\StockPositionResource` /
+ * `StockMovementResource` / `StockAdjustmentResource` field-for-field.
+ * `MaterialConsumption` also lives here now (moved from
+ * `features/materials/types.ts`, which only ever held its OLD camelCase
+ * localStorage shape) — mirrors `App\Http\Resources\MaterialConsumptionResource`.
  *
- * There is deliberately no persisted "stock" field anywhere in this
- * prototype — the balance is always `entradas - saídas`, derived at
- * read time from three sources: GoodsReceiptItem (physical arrival,
- * already modeled in `features/purchases`), MaterialConsumption
- * (physical usage, already modeled in `features/materials`), and
- * `StockAdjustment` (the one genuinely new entity this feature adds,
- * for corrections/initial counts/breakage that don't originate from
- * a receipt or a consumption).
+ * Every quantity is a decimal STRING (scale 3) from the API — never
+ * converted to `number` as a domain value; a display helper may format
+ * one for presentation, but nothing here reaches for `number` as the
+ * source of truth (SUPPLY-FRONTEND-01D §50).
  *
- * `StockMovement` is a read-only, computed view — never persisted as
- * its own store. A movement whose `sourceType` is `GOODS_RECEIPT` or
- * `CONSUMPTION` is not a duplicate fact: it is the same GoodsReceiptItem
- * / MaterialConsumption record, reshaped for display, always resolved
- * live from those stores (see `prototype/stock.ts`). Only
- * `MANUAL_ADJUSTMENT` movements come from a store of their own
- * (`StockAdjustment`), because no other entity already represents that
- * fact.
+ * StockPosition/StockMovement have NO table of their own — they are
+ * pure backend read models (a union of GoodsReceiptItem/
+ * MaterialConsumption/StockAdjustment/MaterialRequirement/ordered
+ * PurchaseOrderItem rows). The frontend never reconstructs this pair
+ * universe locally (§18) — it only ever renders what the Resource
+ * returns.
  *
- * Stock is scoped to `projectId + materialId` — the same Material at
- * two different Obras is always two separate balances, matching the
- * ObraFácil rule that there is no central/administrative stock (see
- * `features/purchases/types.ts`'s doc comment on `PurchaseOrder`).
- *
- * NOT the definitive domain contract for the future API — only exists
- * to validate the product experience with mocked/local data.
+ * MaterialConsumption/StockAdjustment are immutable events — no
+ * `updated_at` on either (nothing to version). StockAdjustment is
+ * strictly append-only: no PUT, no DELETE route exists for it.
  */
+
+import type { MaterialUnitCode } from "@/features/materials/types";
+
+export interface StockMaterialRef {
+  id: string;
+  name: string;
+  unit_code: MaterialUnitCode;
+  unit_custom_label: string | null;
+  active: boolean;
+}
+
+export interface StockProjectRef {
+  id: string;
+  number: string;
+  name: string;
+}
 
 export type StockAdjustmentType = "ADJUSTMENT_IN" | "ADJUSTMENT_OUT";
 
 /**
- * A manual correction to a Project+Material's stock — initial count,
- * physical-count correction, breakage/loss, or any other operational
- * adjustment that isn't a GoodsReceipt or a Consumption. Always
- * generates a movement; the balance itself is never edited directly.
+ * POST .../stock-adjustments — a manual correction to a Project+
+ * Material's stock (initial count, breakage, correction). Append-only:
+ * no `updated_at`, no edit/delete endpoint. A mistaken adjustment is
+ * corrected by registering a new, opposite adjustment — never by
+ * mutating this one.
  */
 export interface StockAdjustment {
   id: string;
-
-  projectId: string;
-  materialId: string;
-
+  project_id: string;
+  material: StockMaterialRef;
   type: StockAdjustmentType;
-  quantity: number;
-  occurredAt: string;
+  quantity: string;
+  occurred_at: string;
+  reason: string | null;
+  created_at: string;
+}
 
-  reason?: string;
+/** POST /api/v1/projects/{project}/stock-adjustments payload. */
+export interface StockAdjustmentCreatePayload {
+  material_id: string;
+  type: StockAdjustmentType;
+  quantity: string;
+  occurred_at: string;
+  reason?: string | null;
+}
 
-  createdAt: string;
-  updatedAt: string;
+/**
+ * POST/DELETE .../material-consumptions — the physical "used at this
+ * Obra" event. Immutable: no `updated_at`, no PUT/edit endpoint; a
+ * mistaken entry is deleted (not edited).
+ */
+export interface MaterialConsumption {
+  id: string;
+  project_id: string;
+  material: StockMaterialRef;
+  quantity: string;
+  consumed_at: string;
+  notes: string | null;
+  created_at: string;
+}
+
+/** POST /api/v1/projects/{project}/material-consumptions payload. */
+export interface MaterialConsumptionCreatePayload {
+  material_id: string;
+  quantity: string;
+  consumed_at: string;
+  notes?: string | null;
 }
 
 export type StockMovementType = "IN" | "OUT" | StockAdjustmentType;
@@ -58,22 +97,22 @@ export type StockMovementSourceType = "GOODS_RECEIPT" | "CONSUMPTION" | "MANUAL_
 
 /**
  * `quantity` is always a positive magnitude — the sign/direction is
- * carried entirely by `type`, never by a negative number, so the UI
- * never has to branch on quantity sign to decide how to render it.
+ * carried entirely by `type`. `id` is a composite string
+ * (`"goods-receipt-item:<id>"`/`"consumption:<id>"`/`"adjustment:<id>"`)
+ * — use `source_id` (the raw underlying record id) for any action, e.g.
+ * `deleteMaterialConsumption(movement.project_id, movement.source_id)`
+ * when `source_type === "CONSUMPTION"`.
  */
 export interface StockMovement {
   id: string;
-
-  projectId: string;
-  materialId: string;
-
+  project_id: string;
+  material: StockMaterialRef;
   type: StockMovementType;
-  quantity: number;
-  occurredAt: string;
-
-  sourceType: StockMovementSourceType;
-  sourceId: string;
-  note?: string;
+  quantity: string;
+  occurred_at: string;
+  source_type: StockMovementSourceType;
+  source_id: string;
+  note: string | null;
 }
 
 export const STOCK_MOVEMENT_TYPE_LABEL: Record<StockMovementType, string> = {
@@ -89,12 +128,74 @@ export const STOCK_MOVEMENT_SOURCE_LABEL: Record<StockMovementSourceType, string
   MANUAL_ADJUSTMENT: "Ajuste manual",
 };
 
-/** One row of the Estoque listing: a Project+Material pair that has at
- * least one movement, with its totals already summed. */
+/**
+ * One row of GET /api/v1/stock/positions (or the single-pair GET
+ * .../positions/{project}/{material}) — a Project+Material pair with
+ * every Supply metric the backend computes. `required_quantity`/
+ * `missing_to_purchase_quantity` are `null` exactly where the backend
+ * means "não planejado" — distinct from `"0.000"`, never collapsed into
+ * it.
+ */
 export interface StockPosition {
-  projectId: string;
-  materialId: string;
-  totalIn: number;
-  totalOut: number;
-  balance: number;
+  project: StockProjectRef;
+  material: StockMaterialRef;
+  required_quantity: string | null;
+  purchased_quantity: string;
+  received_quantity: string;
+  consumed_quantity: string;
+  stock_quantity: string;
+  pending_receipt_quantity: string;
+  missing_to_purchase_quantity: string | null;
+  total_in: string;
+  total_out: string;
+}
+
+/** Laravel's default paginate() JSON shape. */
+export interface StockPositionPaginationResponse {
+  data: StockPosition[];
+  meta: {
+    current_page: number;
+    from: number | null;
+    last_page: number;
+    per_page: number;
+    to: number | null;
+    total: number;
+  };
+  links: {
+    first: string | null;
+    last: string | null;
+    prev: string | null;
+    next: string | null;
+  };
+}
+
+export interface StockPositionListParams {
+  search?: string;
+  projectId?: string;
+  page?: number;
+  perPage?: number;
+}
+
+/** Laravel's default paginate() JSON shape. */
+export interface StockMovementPaginationResponse {
+  data: StockMovement[];
+  meta: {
+    current_page: number;
+    from: number | null;
+    last_page: number;
+    per_page: number;
+    to: number | null;
+    total: number;
+  };
+  links: {
+    first: string | null;
+    last: string | null;
+    prev: string | null;
+    next: string | null;
+  };
+}
+
+export interface StockMovementListParams {
+  page?: number;
+  perPage?: number;
 }

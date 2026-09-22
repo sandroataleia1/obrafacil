@@ -60,10 +60,10 @@ export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValue
   // SUPPLY-FRONTEND-01B1: MaterialRequirement is ALSO the real API now —
   // "obrafacil:material-requirements"/"obrafacil:material-requirements:deleted"
   // are no longer read/written anywhere and are intentionally absent
-  // here too. MaterialConsumption remains a local prototype, keyed by
-  // the real Material UUID.)
-  "obrafacil:material-consumptions": "object",
-  "obrafacil:material-consumptions:deleted": "array",
+  // here too. SUPPLY-FRONTEND-01D: MaterialConsumption is ALSO the real
+  // API now — "obrafacil:material-consumptions"/
+  // "obrafacil:material-consumptions:deleted" are no longer read/written
+  // anywhere and are intentionally absent here too.)
 
   // Compras (SUPPLY-FRONTEND-01C: PurchaseOrder/PurchaseOrderItem/
   // GoodsReceipt/GoodsReceiptItem moved to the real API —
@@ -82,9 +82,10 @@ export const PILOT_BACKUP_STORAGE_KEYS: Readonly<Record<string, PilotBackupValue
   // persisted anywhere in the browser. This key must never be
   // reintroduced.
 
-  // Estoque
-  "obrafacil:stock-adjustments": "object",
-  "obrafacil:stock-adjustments:deleted": "array",
+  // Estoque (SUPPLY-FRONTEND-01D: StockAdjustment is ALSO the real API
+  // now, append-only — "obrafacil:stock-adjustments"/
+  // "obrafacil:stock-adjustments:deleted" are no longer read/written
+  // anywhere and are intentionally absent here too.)
 
   // Orçamentos
   "obrafacil:budgets": "object",

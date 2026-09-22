@@ -1,8 +1,6 @@
 import { customers as seedCustomers } from "@/mocks/customers";
 import { budgets as seedBudgets } from "@/mocks/budgets";
 import { projectCosts as seedProjectCosts } from "@/mocks/project-costs";
-import { stockAdjustments as seedStockAdjustments } from "@/mocks/stock-adjustments";
-import { materialConsumptions as seedMaterialConsumptions } from "@/mocks/material-consumptions";
 
 import { PILOT_BACKUP_STORAGE_KEYS } from "./pilot-backup-keys";
 
@@ -29,16 +27,12 @@ export const PILOT_RESET_KEYS: readonly PilotBackupKey[] = [
   // Cálculos (custos de obra)
   "obrafacil:project-costs",
   "obrafacil:project-costs:deleted",
-  // Consumo (MaterialRequirement é API real — não é mais domínio local)
-  "obrafacil:material-consumptions",
-  "obrafacil:material-consumptions:deleted",
   // Compras (PurchaseOrder/GoodsReceipt são API real desde
   // SUPPLY-FRONTEND-01C — não são mais domínio local; nunca limpar
   // browser storage automaticamente não se aplica aqui, pois essas
   // chaves simplesmente não existem mais)
-  // Estoque
-  "obrafacil:stock-adjustments",
-  "obrafacil:stock-adjustments:deleted",
+  // Estoque (MaterialConsumption/StockAdjustment são API real desde
+  // SUPPLY-FRONTEND-01D — não são mais domínio local)
   // Clientes
   "obrafacil:customers",
   "obrafacil:customers:deleted",
@@ -55,8 +49,6 @@ const SEED_HIDE_GROUPS: ReadonlyArray<{ deletedKey: PilotBackupKey; ids: readonl
   { deletedKey: "obrafacil:customers:deleted", ids: seedCustomers.map((row) => row.id) },
   { deletedKey: "obrafacil:budgets:deleted", ids: seedBudgets.map((row) => row.id) },
   { deletedKey: "obrafacil:project-costs:deleted", ids: seedProjectCosts.map((row) => row.id) },
-  { deletedKey: "obrafacil:stock-adjustments:deleted", ids: seedStockAdjustments.map((row) => row.id) },
-  { deletedKey: "obrafacil:material-consumptions:deleted", ids: seedMaterialConsumptions.map((row) => row.id) },
 ];
 
 /**

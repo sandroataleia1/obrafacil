@@ -30,10 +30,6 @@ vi.mock("../materials-client", () => ({
   updateMaterial: vi.fn(),
 }));
 
-vi.mock("../prototype/material-local-dependencies", () => ({
-  hasAnyLocalMaterialDependency: () => false,
-}));
-
 import { createMaterial, updateMaterial } from "../materials-client";
 
 function material(overrides: Partial<Material> = {}): Material {

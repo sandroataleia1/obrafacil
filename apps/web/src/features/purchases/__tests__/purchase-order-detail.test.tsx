@@ -19,7 +19,6 @@ vi.mock("../purchase-orders-client", () => ({
   deletePurchaseOrder: vi.fn(),
   deletePurchaseOrderItem: vi.fn(),
   returnPurchaseOrderToDraft: vi.fn(),
-  listPurchaseOrderDetailsForProject: vi.fn(),
 }));
 
 const orderState: { order: unknown; error: boolean } = { order: undefined, error: false };
@@ -28,13 +27,8 @@ vi.mock("../use-purchase-order", () => ({
   usePurchaseOrder: () => ({ order: orderState.order, error: orderState.error, reload }),
 }));
 
-import { ApiError } from "@/lib/api-client";
-import {
-  confirmPurchaseOrder,
-  deleteGoodsReceipt,
-  listPurchaseOrderDetailsForProject,
-} from "../purchase-orders-client";
-import { saveMaterialConsumption } from "@/features/materials/prototype/material-consumption-store";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
+import { confirmPurchaseOrder, deleteGoodsReceipt } from "../purchase-orders-client";
 import { PurchaseOrderDetail } from "../purchase-order-detail";
 import type { GoodsReceipt, PurchaseOrder, PurchaseOrderItem } from "../types";
 
@@ -89,22 +83,24 @@ function order(overrides: Partial<PurchaseOrder> = {}): PurchaseOrder {
 }
 
 /**
- * SUPPLY-FRONTEND-01C1. Proves (1) the old "Financeiro"/Payable-generation
+ * SUPPLY-FRONTEND-01D. Proves (1) the old "Financeiro"/Payable-generation
  * section and its local `hasPayables` guard are fully removed; (2)
  * return-to-draft is hidden once `goods_receipts.length > 0` (real API
- * data); (3) the transitory local chronology precheck (TR1-TR6) before a
- * GoodsReceipt DELETE; and (4) tenant ownership (TM4/TM6/TM7) — a status
- * action or delete that resolves after a Company switch produces zero
+ * data); (3) GoodsReceipt DELETE goes straight to the backend — the
+ * SUPPLY-FRONTEND-01C1 transitory local chronology precheck is removed
+ * now that `GoodsReceiptService::delete()` itself validates against the
+ * real (API-persisted) Consumption/Adjustment ledger, and its 422 is
+ * shown verbatim; and (4) tenant ownership (TM4/TM7) — a status action
+ * or delete that resolves after a Company switch produces zero
  * reload/alert/navigation.
  */
-describe("PurchaseOrderDetail — SUPPLY-FRONTEND-01C1", () => {
+describe("PurchaseOrderDetail — SUPPLY-FRONTEND-01D", () => {
   beforeEach(() => {
     window.localStorage.clear();
     push.mockReset();
     reload.mockReset();
     vi.mocked(confirmPurchaseOrder).mockReset();
     vi.mocked(deleteGoodsReceipt).mockReset();
-    vi.mocked(listPurchaseOrderDetailsForProject).mockReset().mockResolvedValue([]);
     orderState.order = undefined;
     orderState.error = false;
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
@@ -184,13 +180,12 @@ describe("PurchaseOrderDetail — SUPPLY-FRONTEND-01C1", () => {
     expect(await screen.findByText(/possui recebimentos e não pode voltar para rascunho/i)).toBeInTheDocument();
   });
 
-  it("TR3: a safe delete (no dependent local Consumption) calls the backend DELETE API", async () => {
+  it("a Receipt delete calls the backend DELETE API directly and reloads on success", async () => {
     orderState.order = order({
       commercial_status: "ordered",
       items: [item()],
       goods_receipts: [receipt()],
     });
-    vi.mocked(listPurchaseOrderDetailsForProject).mockResolvedValue([orderState.order as PurchaseOrder]);
     vi.mocked(deleteGoodsReceipt).mockResolvedValue(undefined);
 
     const user = userEvent.setup();
@@ -203,26 +198,18 @@ describe("PurchaseOrderDetail — SUPPLY-FRONTEND-01C1", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("TR1: a local Consumption dependent on this Receipt's arrival blocks the DELETE — API never called", async () => {
+  it("a 422 chronology error from GoodsReceiptService::delete() is shown verbatim, never a local precheck", async () => {
     orderState.order = order({
       commercial_status: "ordered",
       items: [item()],
-      goods_receipts: [receipt({ received_at: "2026-09-11" })],
+      goods_receipts: [receipt()],
     });
-    vi.mocked(listPurchaseOrderDetailsForProject).mockResolvedValue([orderState.order as PurchaseOrder]);
-
-    // A local Consumption dated the SAME day as the Receipt, for exactly
-    // the quantity the Receipt supplied — removing the Receipt would
-    // make this Consumption chronologically impossible.
-    saveMaterialConsumption({
-      id: "cons-1",
-      projectId: "proj-1",
-      materialId: "mat-1",
-      quantity: 5,
-      consumedAt: "2026-09-11",
-      createdAt: "2026-09-11T00:00:00Z",
-      updatedAt: "2026-09-11T00:00:00Z",
-    });
+    vi.mocked(deleteGoodsReceipt).mockRejectedValue(
+      new ApiValidationError(
+        {},
+        "Este recebimento não pode ser excluído porque existem saídas de material que dependem dele."
+      )
+    );
 
     const user = userEvent.setup();
     render(<PurchaseOrderDetail id="po-1" />);
@@ -232,50 +219,9 @@ describe("PurchaseOrderDetail — SUPPLY-FRONTEND-01C1", () => {
 
     await waitFor(() =>
       expect(window.alert).toHaveBeenCalledWith(
-        "Este recebimento não pode ser excluído porque existem usos de material (registrados nesta obra) que dependem dele."
+        "Este recebimento não pode ser excluído porque existem saídas de material que dependem dele."
       )
     );
-    expect(deleteGoodsReceipt).not.toHaveBeenCalled();
-  });
-
-  it("TR6: the local precheck refetches Receipts from the real API, never a local mirror", async () => {
-    orderState.order = order({
-      commercial_status: "ordered",
-      items: [item()],
-      goods_receipts: [receipt()],
-    });
-    vi.mocked(listPurchaseOrderDetailsForProject).mockResolvedValue([orderState.order as PurchaseOrder]);
-    vi.mocked(deleteGoodsReceipt).mockResolvedValue(undefined);
-
-    const user = userEvent.setup();
-    render(<PurchaseOrderDetail id="po-1" />);
-    await screen.findByText("Casa dos Materiais");
-
-    await user.click(screen.getByRole("button", { name: /excluir recebimento/i }));
-
-    await waitFor(() => expect(listPurchaseOrderDetailsForProject).toHaveBeenCalledWith("proj-1"));
-  });
-
-  it("a fetch failure during the local precheck fails closed — DELETE is never called", async () => {
-    orderState.order = order({
-      commercial_status: "ordered",
-      items: [item()],
-      goods_receipts: [receipt()],
-    });
-    vi.mocked(listPurchaseOrderDetailsForProject).mockRejectedValue(new Error("network"));
-
-    const user = userEvent.setup();
-    render(<PurchaseOrderDetail id="po-1" />);
-    await screen.findByText("Casa dos Materiais");
-
-    await user.click(screen.getByRole("button", { name: /excluir recebimento/i }));
-
-    await waitFor(() =>
-      expect(window.alert).toHaveBeenCalledWith(
-        "Não foi possível verificar os recebimentos desta obra agora. Tente novamente."
-      )
-    );
-    expect(deleteGoodsReceipt).not.toHaveBeenCalled();
   });
 
   it("TM7: a Receipt delete that resolves after switching Company produces zero reload/alert", async () => {
@@ -284,7 +230,6 @@ describe("PurchaseOrderDetail — SUPPLY-FRONTEND-01C1", () => {
       items: [item()],
       goods_receipts: [receipt()],
     });
-    vi.mocked(listPurchaseOrderDetailsForProject).mockResolvedValue([orderState.order as PurchaseOrder]);
     let resolveDelete!: () => void;
     vi.mocked(deleteGoodsReceipt).mockReturnValue(
       new Promise((resolve) => {

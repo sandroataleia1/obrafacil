@@ -8,10 +8,11 @@
  * MaterialRequirement). Never invent a field here without a matching
  * backend source.
  *
- * The OLD camelCase/local prototype shapes now live in
- * `prototype/legacy-types.ts` (`Legacy*`), used ONLY by the transitional
- * `purchase-totals.ts#calculateMaterialPlanning` calculator via
- * `purchase-planning-adapter.ts`.
+ * SUPPLY-FRONTEND-01D: the OLD camelCase/local prototype shapes
+ * (`prototype/legacy-types.ts`, `purchase-totals.ts`,
+ * `purchase-planning-adapter.ts`) are removed — `StockPosition`
+ * (`features/stock/types.ts`, real API) is now the sole planning
+ * source, so nothing in this app still needs that bridge.
  *
  * `updated_at` on every mutable resource here is an OPAQUE
  * optimistic-concurrency token — never `Date`-parsed, truncated, or

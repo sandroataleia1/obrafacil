@@ -1,28 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+/**
+ * SUPPLY-FRONTEND-01D §32-34/§51. Real API POST — no PurchaseOrder
+ * fan-out, no local `getStockBalance`/`createStockAdjustment`.
+ * `useStockPosition` may be used to display the current
+ * `stock_quantity` as context, but it is NEVER a submit-blocking
+ * authority: the backend's chronology validation is the sole authority
+ * (a visually "valid" OUT can still 422 if the date is retroactive to a
+ * later fact). Material inactive is still adjustable.
+ *
+ * Outer-wrapper + keyed-Inner tenant-ownership pattern, coherent with
+ * this form's query-param context: `${companyId}:${rawProjectId}:
+ * ${rawMaterialId}` (query params only ever change via a fresh
+ * navigation to this page — never edited in place — so remounting on
+ * them is safe and matches `ConsumptionForm`'s convention).
+ */
+
+import { useLayoutEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Boxes } from "lucide-react";
 
 import { BackLink } from "@/components/shared/back-link";
 import { Button } from "@/components/ui/button";
 import { todayIso } from "@/lib/date";
-import { formatQuantity } from "@/lib/quantity";
 import { formatMaterialUnitCode } from "@/features/materials/material-unit";
 import { useAllMaterials } from "@/features/materials/use-all-materials";
 import { useAllProjects } from "@/features/projects/use-all-projects";
-import { listPurchaseOrderDetailsForProject } from "@/features/purchases/purchase-orders-client";
-import { purchaseOrdersToReceivedEvents } from "@/features/purchases/purchase-received-events";
-import type { PurchaseOrder } from "@/features/purchases/types";
-import { createStockAdjustment, getStockBalance } from "./prototype/stock";
+import { useAuth } from "@/features/auth/auth-provider";
+import { ApiError, ApiValidationError } from "@/lib/api-client";
+import { createStockAdjustment } from "./stock-client";
+import { formatStockQuantity, stockQuantityInputToApi } from "./stock-decimal";
+import { useStockPosition } from "./use-stock-position";
 import type { StockAdjustmentType } from "./types";
-
-function parseQuantity(raw: string): number | null {
-  const normalized = raw.replace(/\./g, "").replace(",", ".").trim();
-  if (normalized === "") return null;
-  const value = Number(normalized);
-  return Number.isFinite(value) ? value : null;
-}
 
 const TYPE_OPTIONS: { value: StockAdjustmentType; label: string }[] = [
   { value: "ADJUSTMENT_IN", label: "Entrada" },
@@ -30,50 +39,31 @@ const TYPE_OPTIONS: { value: StockAdjustmentType; label: string }[] = [
 ];
 
 /**
- * "Ajustar estoque" — dedicated page (Pilot-Ready "Ajustar Estoque —
- * Página Dedicada"), replacing `AdjustStockDialog` (removed — this is
- * its only surface now). Same domain path as before: always writes
- * through `createStockAdjustment`, the same guarded function used
- * everywhere else — no logic duplicated, only the chrome changed from
- * Dialog/Sheet to a normal routed page.
- *
- * Context arrives via query params, exactly like `ReceivableForm`'s
- * `?projectId=` convention (`receivable-form.tsx`):
- * - `projectId` + `materialId` both present (opened from the detail
- *   page of a specific Obra+Material) → both fixed/contextualized, not
- *   editable — mirrors the Dialog's old `projectId`/`materialId` fixed
- *   props exactly.
- * - only `projectId` present (opened from the listing while a specific
- *   Obra filter was active) → Obra pre-selected but still editable,
- *   Material starts unselected — mirrors the Dialog's old
- *   `initialProjectId` prefill.
- * - neither present (listing with "Todas as obras") → both start
- *   unselected. Never silently defaults to the first Obra/Material in
- *   the list — an arbitrary guess here would risk an adjustment
- *   registered against the wrong Obra.
- * An invalid id in the URL (a stale link, a typo) is treated exactly
- * like "not provided" — `getProject`/`getMaterial` returning `null`
- * falls through to the normal unselected-field state instead of
- * crashing the page.
+ * "Ajustar estoque" — dedicated page. Context arrives via query params,
+ * exactly like `ReceivableForm`'s `?projectId=` convention:
+ * - `projectId` + `materialId` both present → both fixed, not editable.
+ * - only `projectId` present → Obra pre-selected but still editable.
+ * - neither present → both start unselected. Never silently defaults
+ *   to the first Obra/Material in the list.
+ * An invalid id in the URL is treated exactly like "not provided".
  */
-export function AdjustStockForm() {
+function AdjustStockFormInner({
+  rawProjectId,
+  rawMaterialId,
+  activeCompanyIdRef,
+  rawProjectIdRef,
+  rawMaterialIdRef,
+}: {
+  rawProjectId: string | null;
+  rawMaterialId: string | null;
+  activeCompanyIdRef: React.RefObject<string | undefined>;
+  rawProjectIdRef: React.RefObject<string | null>;
+  rawMaterialIdRef: React.RefObject<string | null>;
+}) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const rawProjectId = searchParams.get("projectId");
-  const rawMaterialId = searchParams.get("materialId");
 
   const { projects: allProjects, error: projectsError } = useAllProjects();
   const projects = allProjects ?? [];
-  // An invalid/stale id in the URL is treated exactly like "not
-  // provided" — falls through to the normal unselected-field state.
-  // While `allProjects` is still loading, a rawProjectId is provisionally
-  // treated as valid (never bounced back to "unselected" mid-load) —
-  // it's corrected on the next render once the real list arrives. A real
-  // fetch failure (`projectsError`), however, must NEVER leave this
-  // optimistic trust standing forever — an unconfirmed deep-link id can
-  // never become the projectId a Stock adjustment is actually written
-  // against (§9).
   const validProjectId =
     rawProjectId && !projectsError && (allProjects === undefined || projects.some((project) => project.id === rawProjectId))
       ? rawProjectId
@@ -81,16 +71,10 @@ export function AdjustStockForm() {
 
   const { materials: allMaterials, error: materialsError } = useAllMaterials();
   const materials = allMaterials ?? [];
-  // Same optimistic-until-confirmed-wrong rule as `validProjectId` above:
-  // while `allMaterials` is still loading, a rawMaterialId is
-  // provisionally treated as valid.
   const fixedMaterialId =
     validProjectId && rawMaterialId && !materialsError && (allMaterials === undefined || materials.some((material) => material.id === rawMaterialId))
       ? rawMaterialId
       : null;
-  // Only a full projectId+materialId pair (opened from a specific
-  // detail page) locks the Obra field too — a lone projectId (opened
-  // from the listing with an Obra filter active) is a prefill only.
   const fixedProjectId = fixedMaterialId ? validProjectId : null;
   const initialProjectId = validProjectId;
 
@@ -101,17 +85,7 @@ export function AdjustStockForm() {
   const [occurredAt, setOccurredAt] = useState(todayIso());
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  // Query params only ever change via a fresh navigation to this page
-  // (never edited in place), so re-seeding on mount is sufficient —
-  // no dependency-driven reset effect needed like the Dialog had for
-  // repeated open/close cycles.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelectedProjectId(initialProjectId ?? "");
-    setSelectedMaterialId(fixedMaterialId ?? "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [submitting, setSubmitting] = useState(false);
 
   const effectiveProjectId = fixedProjectId ?? selectedProjectId;
   const effectiveMaterialId = fixedMaterialId ?? selectedMaterialId;
@@ -119,48 +93,10 @@ export function AdjustStockForm() {
   const material = effectiveMaterialId ? (materials.find((item) => item.id === effectiveMaterialId) ?? null) : null;
   const unitLabel = material ? formatMaterialUnitCode(material.unit_code, material.unit_custom_label) : null;
 
-  // SUPPLY-FRONTEND-01C1 §5/§7: PurchaseOrder/GoodsReceipt are real API
-  // — fetched fresh for whichever Obra is effectively selected, never a
-  // local mirror. `purchasesError` fails CLOSED: the balance is hidden
-  // (never shown as if received=0) and `handleConfirm` refuses to
-  // validate against an incomplete ledger.
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | undefined>(undefined);
-  const [purchasesError, setPurchasesError] = useState(false);
-
-  function loadPurchases() {
-    if (!effectiveProjectId) {
-      setPurchaseOrders(undefined);
-      setPurchasesError(false);
-      return;
-    }
-    setPurchasesError(false);
-    listPurchaseOrderDetailsForProject(effectiveProjectId)
-      .then((orders) => setPurchaseOrders(orders))
-      .catch(() => setPurchasesError(true));
-  }
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPurchaseOrders(undefined);
-    loadPurchases();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveProjectId]);
-
-  const receivedEvents = useMemo(
-    () => (purchaseOrders ? purchaseOrdersToReceivedEvents(purchaseOrders) : []),
-    [purchaseOrders]
-  );
-
-  const currentBalance =
-    project && material && purchaseOrders !== undefined
-      ? getStockBalance(effectiveProjectId, effectiveMaterialId, receivedEvents)
-      : null;
+  // Context only — never a submit-blocking authority (§34).
+  const { position, error: positionError } = useStockPosition(effectiveProjectId, effectiveMaterialId);
 
   function destination(): string {
-    // Came from a specific detail page -> return to that same detail.
-    // Otherwise (from the listing, with or without an Obra filter) ->
-    // back to the listing. Matches how the Dialog used to close back
-    // into whichever screen opened it.
     if (fixedProjectId && fixedMaterialId) {
       return `/estoque/${fixedProjectId}/${fixedMaterialId}`;
     }
@@ -171,45 +107,65 @@ export function AdjustStockForm() {
     router.push(destination());
   }
 
-  function handleConfirm() {
+  const submitCompanyId = activeCompanyIdRef.current;
+  const submitRawProjectId = rawProjectIdRef.current;
+  const submitRawMaterialId = rawMaterialIdRef.current;
+  function isStale(): boolean {
+    return (
+      activeCompanyIdRef.current !== submitCompanyId ||
+      rawProjectIdRef.current !== submitRawProjectId ||
+      rawMaterialIdRef.current !== submitRawMaterialId
+    );
+  }
+
+  async function handleConfirm() {
     if (!effectiveProjectId || !effectiveMaterialId || !project) {
       setError("Selecione a obra e o material.");
       return;
     }
-    const quantity = parseQuantity(quantityInput);
-    if (quantity === null || quantity <= 0) {
-      setError("Informe uma quantidade maior que zero.");
+    const quantity = stockQuantityInputToApi(quantityInput);
+    if (quantity === null) {
+      setError("Informe uma quantidade válida, maior que zero e com até 3 casas decimais.");
       return;
     }
-    // §7: never validate an ADJUSTMENT_OUT (or any adjustment) against
-    // an incomplete ledger — a pending/failed Purchase fetch blocks the
-    // write entirely, fail-closed.
-    if (purchasesError) {
-      setError("Não foi possível carregar os recebimentos agora. Tente novamente.");
-      return;
-    }
-    if (purchaseOrders === undefined) {
-      setError("Aguarde o carregamento dos recebimentos antes de confirmar.");
+    if (occurredAt.trim() === "") {
+      setError("Informe a data.");
       return;
     }
 
-    const result = createStockAdjustment(
-      {
-        projectId: effectiveProjectId,
-        materialId: effectiveMaterialId,
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      await createStockAdjustment(effectiveProjectId, {
+        material_id: effectiveMaterialId,
         type,
         quantity,
-        occurredAt,
-        reason,
-      },
-      Boolean(material),
-      receivedEvents
-    );
-    if (!result.ok) {
-      setError(result.error);
-      return;
+        occurred_at: occurredAt,
+        reason: reason.trim() || null,
+      });
+      if (isStale()) return;
+      setSubmitting(false);
+      router.push(destination());
+    } catch (submitError) {
+      if (isStale()) return;
+      setSubmitting(false);
+      if (submitError instanceof ApiValidationError) {
+        const firstMessage =
+          submitError.errors.material_id?.[0] ??
+          submitError.errors.quantity?.[0] ??
+          submitError.errors.occurred_at?.[0] ??
+          submitError.errors.type?.[0] ??
+          Object.values(submitError.errors)[0]?.[0];
+        setError(firstMessage ?? submitError.serverMessage ?? "Não foi possível registrar. Verifique os campos.");
+        return;
+      }
+      if (submitError instanceof ApiError) {
+        setError(submitError.message || "Não foi possível registrar agora. Tente novamente.");
+        return;
+      }
+      setError("Não foi possível registrar agora. Tente novamente.");
     }
-    router.push(destination());
   }
 
   return (
@@ -288,20 +244,17 @@ export function AdjustStockForm() {
           </div>
         )}
 
-        {material && purchasesError ? (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3.5 py-2.5">
+        {material && positionError ? (
+          <div className="rounded-lg border border-border bg-muted/30 px-3.5 py-2.5">
             <p role="alert" className="text-xs text-muted-foreground">
-              Não foi possível carregar os recebimentos agora.
+              Não foi possível carregar o saldo atual agora.
             </p>
-            <button type="button" onClick={loadPurchases} className="shrink-0 text-xs font-medium text-primary hover:underline">
-              Tentar novamente
-            </button>
           </div>
-        ) : material && currentBalance !== null ? (
+        ) : material && position ? (
           <div className="rounded-lg border border-border bg-muted/30 px-3.5 py-2.5">
             <p className="text-xs font-medium text-muted-foreground">Saldo atual</p>
             <p className="text-base font-semibold tabular-nums text-foreground">
-              {formatQuantity(currentBalance)} {unitLabel}
+              {formatStockQuantity(position.stock_quantity)} {unitLabel}
             </p>
           </div>
         ) : null}
@@ -375,17 +328,49 @@ export function AdjustStockForm() {
           />
         </div>
 
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <Button type="button" variant="outline" onClick={handleCancel}>
+        <Button type="button" variant="outline" onClick={handleCancel} disabled={submitting}>
           Cancelar
         </Button>
-        <Button type="button" onClick={handleConfirm}>
+        <Button type="button" onClick={() => void handleConfirm()} disabled={submitting}>
           Confirmar
         </Button>
       </div>
     </div>
+  );
+}
+
+export function AdjustStockForm() {
+  const searchParams = useSearchParams();
+  const rawProjectId = searchParams.get("projectId");
+  const rawMaterialId = searchParams.get("materialId");
+
+  const auth = useAuth();
+  const activeCompanyId = auth.activeCompany?.id;
+  const activeCompanyIdRef = useRef(activeCompanyId);
+  const rawProjectIdRef = useRef(rawProjectId);
+  const rawMaterialIdRef = useRef(rawMaterialId);
+  useLayoutEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+    rawProjectIdRef.current = rawProjectId;
+    rawMaterialIdRef.current = rawMaterialId;
+  }, [activeCompanyId, rawProjectId, rawMaterialId]);
+
+  return (
+    <AdjustStockFormInner
+      key={`${activeCompanyId}:${rawProjectId ?? ""}:${rawMaterialId ?? ""}`}
+      rawProjectId={rawProjectId}
+      rawMaterialId={rawMaterialId}
+      activeCompanyIdRef={activeCompanyIdRef}
+      rawProjectIdRef={rawProjectIdRef}
+      rawMaterialIdRef={rawMaterialIdRef}
+    />
   );
 }

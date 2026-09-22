@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  requirementQuantityApiToInput,
-  requirementQuantityForLegacyPlanning,
-  requirementQuantityInputToApi,
-} from "../requirement-quantity";
+import { requirementQuantityApiToInput, requirementQuantityInputToApi } from "../requirement-quantity";
 
 /**
  * SUPPLY-FRONTEND-01B §6/§19/§30/§51 (Q1-Q6). `required_quantity` is a
@@ -58,10 +54,5 @@ describe("requirement-quantity — SUPPLY-FRONTEND-01B §51 (Q1-Q6)", () => {
     expect(requirementQuantityApiToInput("1.250")).toBe("1,250");
     expect(requirementQuantityApiToInput("2.500")).toBe("2,500");
     expect(requirementQuantityApiToInput("5")).toBe("5");
-  });
-
-  it("requirementQuantityForLegacyPlanning is a transient number bridge only", () => {
-    expect(requirementQuantityForLegacyPlanning("1.250")).toBe(1.25);
-    expect(requirementQuantityForLegacyPlanning("8.5")).toBe(8.5);
   });
 });

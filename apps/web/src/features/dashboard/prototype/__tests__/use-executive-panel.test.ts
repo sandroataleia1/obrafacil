@@ -12,20 +12,15 @@ vi.mock("@/features/projects/projects-client", () => ({
   listAllProjectsFromApi: vi.fn(),
 }));
 
-vi.mock("@/features/materials/material-requirements-client", () => ({
-  listMaterialRequirementsForProjects: vi.fn(),
-}));
-
-vi.mock("@/features/purchases/purchase-orders-client", () => ({
-  listPurchaseOrderDetailsForProjects: vi.fn(),
+vi.mock("@/features/stock/stock-client", () => ({
+  listAllStockPositions: vi.fn(),
 }));
 
 import { listAllProjectsFromApi } from "@/features/projects/projects-client";
-import { listMaterialRequirementsForProjects } from "@/features/materials/material-requirements-client";
-import { listPurchaseOrderDetailsForProjects } from "@/features/purchases/purchase-orders-client";
+import { listAllStockPositions } from "@/features/stock/stock-client";
 import { useExecutivePanel } from "../use-executive-panel";
 import type { ProjectListItem } from "@/features/projects/types";
-import type { MaterialRequirement } from "@/features/materials/types";
+import type { StockPosition } from "@/features/stock/types";
 
 function projectItem(id: string, overrides: Partial<ProjectListItem> = {}): ProjectListItem {
   return {
@@ -44,23 +39,26 @@ function projectItem(id: string, overrides: Partial<ProjectListItem> = {}): Proj
   };
 }
 
-function requirement(id: string, projectId: string): MaterialRequirement {
+function position(id: string, projectId: string): StockPosition {
   return {
-    id,
-    project_id: projectId,
+    project: { id: projectId, number: `OBR-00000${projectId}`, name: `Obra ${projectId}` },
     material: { id: `mat-${id}`, name: "Cimento", unit_code: "sc", unit_custom_label: null, active: true },
     required_quantity: "1.000",
-    notes: null,
-    created_at: "2026-09-10T00:00:00Z",
-    updated_at: "2026-09-10T00:00:00Z",
+    purchased_quantity: "0.000",
+    received_quantity: "0.000",
+    consumed_quantity: "0.000",
+    stock_quantity: "0.000",
+    pending_receipt_quantity: "0.000",
+    missing_to_purchase_quantity: "1.000",
+    total_in: "0.000",
+    total_out: "0.000",
   };
 }
 
 describe("useExecutivePanel — FRONTEND-PROJECTS-01A §14 (TD9)", () => {
   beforeEach(() => {
     vi.mocked(listAllProjectsFromApi).mockReset();
-    vi.mocked(listMaterialRequirementsForProjects).mockReset().mockResolvedValue(new Map());
-    vi.mocked(listPurchaseOrderDetailsForProjects).mockReset().mockResolvedValue(new Map());
+    vi.mocked(listAllStockPositions).mockReset().mockResolvedValue([]);
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
     window.localStorage.clear();
   });
@@ -115,15 +113,15 @@ describe("useExecutivePanel — FRONTEND-PROJECTS-01A §14 (TD9)", () => {
 });
 
 /**
- * SUPPLY-FRONTEND-01B1 §8-10/§28 (EP1-EP6). Requirements per Project now
- * come from the real API via `listMaterialRequirementsForProjects` —
- * never the removed local store.
+ * SUPPLY-FRONTEND-01D §37-44/§71. Supply planning per Project now comes
+ * from real `StockPosition` (`listAllStockPositions()`, fetched ONCE for
+ * the whole Company, never fanned out per Project) — never the removed
+ * local Requirement/Purchase fan-out.
  */
-describe("useExecutivePanel Requirement migration — SUPPLY-FRONTEND-01B1 §28 (EP1-EP6)", () => {
+describe("useExecutivePanel Stock migration — SUPPLY-FRONTEND-01D §71", () => {
   beforeEach(() => {
     vi.mocked(listAllProjectsFromApi).mockReset();
-    vi.mocked(listMaterialRequirementsForProjects).mockReset();
-    vi.mocked(listPurchaseOrderDetailsForProjects).mockReset().mockResolvedValue(new Map());
+    vi.mocked(listAllStockPositions).mockReset();
     authState.activeCompany = { id: "company-a", name: "Empresa A" };
     window.localStorage.clear();
   });
@@ -132,46 +130,54 @@ describe("useExecutivePanel Requirement migration — SUPPLY-FRONTEND-01B1 §28 
     vi.clearAllMocks();
   });
 
-  it("EP1/EP2: two Projects each receive their own real Requirements", async () => {
+  it("fetches StockPosition exactly once for the whole Company, never per Project", async () => {
     vi.mocked(listAllProjectsFromApi).mockResolvedValue([projectItem("1"), projectItem("2")]);
-    vi.mocked(listMaterialRequirementsForProjects).mockResolvedValue(
-      new Map([
-        ["1", [requirement("r1", "1")]],
-        ["2", [requirement("r2", "2")]],
-      ])
-    );
+    vi.mocked(listAllStockPositions).mockResolvedValue([position("r1", "1"), position("r2", "2")]);
 
     const { result } = renderHook(() => useExecutivePanel("2026-09"));
     await waitFor(() => expect(result.current.data).not.toBeUndefined());
 
-    expect(listMaterialRequirementsForProjects).toHaveBeenCalledWith(["1", "2"]);
+    expect(listAllStockPositions).toHaveBeenCalledTimes(1);
     expect(result.current.error).toBe(false);
   });
 
-  it("EP3: a Requirements-API failure for any Project puts the panel in error:true, never a fabricated empty result for that Project", async () => {
+  it("groups positions by project.id so each Project entry only sees its own materials", async () => {
+    vi.mocked(listAllProjectsFromApi).mockResolvedValue([projectItem("1"), projectItem("2")]);
+    vi.mocked(listAllStockPositions).mockResolvedValue([position("r1", "1")]);
+
+    const { result } = renderHook(() => useExecutivePanel("2026-09"));
+    await waitFor(() => expect(result.current.data).not.toBeUndefined());
+
+    const entry1 = result.current.data!.projectEntries.find((entry) => entry.project.id === "1")!;
+    const entry2 = result.current.data!.projectEntries.find((entry) => entry.project.id === "2")!;
+    expect(entry1.facts.materials.pendingToBuyCount).toBe(1);
+    expect(entry2.facts.materials.pendingToBuyCount).toBe(0);
+  });
+
+  it("a StockPosition-API failure for the Company puts the panel in error:true, never a fabricated empty result", async () => {
     vi.mocked(listAllProjectsFromApi).mockResolvedValue([projectItem("1")]);
-    vi.mocked(listMaterialRequirementsForProjects).mockRejectedValue(new Error("500"));
+    vi.mocked(listAllStockPositions).mockRejectedValue(new Error("500"));
 
     const { result } = renderHook(() => useExecutivePanel("2026-09"));
     await waitFor(() => expect(result.current.error).toBe(true));
     expect(result.current.data).toBeUndefined();
   });
 
-  it("EP4: a late Requirements response for Company A resolving after switching to B is discarded", async () => {
+  it("a late StockPosition response for Company A resolving after switching to B is discarded", async () => {
     vi.mocked(listAllProjectsFromApi).mockResolvedValue([projectItem("1")]);
-    let resolveA!: (value: Map<string, MaterialRequirement[]>) => void;
-    vi.mocked(listMaterialRequirementsForProjects)
+    let resolveA!: (value: StockPosition[]) => void;
+    vi.mocked(listAllStockPositions)
       .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
-      .mockResolvedValueOnce(new Map());
+      .mockResolvedValueOnce([]);
 
     const { result, rerender } = renderHook(() => useExecutivePanel("2026-09"));
-    await waitFor(() => expect(listMaterialRequirementsForProjects).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(listAllStockPositions).toHaveBeenCalledTimes(1));
 
     authState.activeCompany = { id: "company-b", name: "Empresa B" };
     rerender();
-    resolveA(new Map([["1", [requirement("stale", "1")]]]));
+    resolveA([position("stale", "1")]);
 
     await waitFor(() => expect(result.current.data).not.toBeUndefined());
-    expect(listMaterialRequirementsForProjects).toHaveBeenCalledTimes(2);
+    expect(listAllStockPositions).toHaveBeenCalledTimes(2);
   });
 });
